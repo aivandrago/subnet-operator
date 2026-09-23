@@ -1,0 +1,416 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.22.0
+  name: networkscopes.aws.hypersurgery
+spec:
+  group: aws.hypersurgery
+  names:
+    kind: NetworkScope
+    listKind: NetworkScopeList
+    plural: networkscopes
+    shortNames:
+    - nscope
+    singular: networkscope
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.vpcs
+      name: VPCs
+      type: integer
+    - jsonPath: .status.subnets
+      name: Subnets
+      type: integer
+    - jsonPath: .status.unmanaged
+      name: Unmanaged
+      type: integer
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
+      name: Ready
+      type: string
+    - jsonPath: .status.lastSyncTime
+      name: Last sync
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: NetworkScope selects AWS accounts and regions whose VPCs and
+          subnets are discovered.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: spec defines the desired state of NetworkScope
+            properties:
+              accounts:
+                description: accounts to discover.
+                items:
+                  description: AccountSpec describes one AWS account the operator
+                    discovers.
+                  properties:
+                    externalID:
+                      description: externalID is passed to sts:AssumeRole when the
+                        role trust policy requires it.
+                      type: string
+                    id:
+                      description: id is the 12-digit AWS account ID.
+                      pattern: ^[0-9]{12}$
+                      type: string
+                    regions:
+                      description: regions overrides spec.regions for this account.
+                      items:
+                        type: string
+                      type: array
+                    roleARN:
+                      description: |-
+                        roleARN is assumed (sts:AssumeRole) to reach the account.
+                        When empty, the operator's own credentials (EKS Pod Identity / IRSA) are used,
+                        which only works for the account the operator runs in.
+                      pattern: ^arn:aws[a-z-]*:iam::[0-9]{12}:role/.+$
+                      type: string
+                    writeRoleARN:
+                      description: |-
+                        writeRoleARN is assumed for SubnetClaims in Create mode. It is separate from roleARN
+                        so that discovery never carries write permissions. When empty, claims for this
+                        account can only be allocated, not created.
+                      pattern: ^arn:aws[a-z-]*:iam::[0-9]{12}:role/.+$
+                      type: string
+                  required:
+                  - id
+                  type: object
+                minItems: 1
+                type: array
+                x-kubernetes-list-map-keys:
+                - id
+                x-kubernetes-list-type: map
+              autoImport:
+                description: |-
+                  autoImport tags unmanaged resources on its own, deriving the tags from who created the
+                  resource, from its VPC, or from the account. Off unless configured.
+                properties:
+                  accountDefaults:
+                    description: accountDefaults are the last resort, per account.
+                    items:
+                      description: AccountDefault gives an account a set of fallback
+                        tags.
+                      properties:
+                        account:
+                          description: account is the 12-digit AWS account ID.
+                          pattern: ^[0-9]{12}$
+                          type: string
+                        tags:
+                          additionalProperties:
+                            type: string
+                          description: tags are applied to resources in that account
+                            when nothing more specific matched.
+                          minProperties: 1
+                          type: object
+                      required:
+                      - account
+                      - tags
+                      type: object
+                    type: array
+                    x-kubernetes-list-type: atomic
+                  fromCreator:
+                    description: |-
+                      fromCreator derives tags from the principal that created the resource, which CloudTrail
+                      reports. Rules are tried in order and the first match wins.
+                    items:
+                      description: CreatorRule maps the principal that created a resource
+                        to the tags it should carry.
+                      properties:
+                        principalPrefix:
+                          description: |-
+                            principalPrefix is matched against the CloudTrail principal, e.g.
+                            "arn:aws:sts::222222222222:assumed-role/payments-deploy/". A prefix, not a pattern:
+                            the operator never guesses an owner from a partial match in the middle of an ARN.
+                          minLength: 1
+                          type: string
+                        tags:
+                          additionalProperties:
+                            type: string
+                          description: tags are applied when the prefix matches.
+                          minProperties: 1
+                          type: object
+                      required:
+                      - principalPrefix
+                      - tags
+                      type: object
+                    type: array
+                    x-kubernetes-list-type: atomic
+                  inheritFromVPC:
+                    description: |-
+                      inheritFromVPC copies these tag keys from the parent VPC onto an unmanaged subnet.
+                      Tried after fromCreator, for the common case of a subnet added by hand to a VPC that
+                      already has an owner.
+                    items:
+                      type: string
+                    type: array
+                    x-kubernetes-list-type: set
+                  managedTag:
+                    default: hs/managed
+                    description: |-
+                      managedTag and managedValue are added to every generated import, because that is what
+                      makes the resource part of the inventory.
+                    type: string
+                  managedValue:
+                    default: "true"
+                    type: string
+                  mode:
+                    default: "Off"
+                    description: mode is Off (report only), DryRun (record what would
+                      be applied) or Apply.
+                    enum:
+                    - "Off"
+                    - DryRun
+                    - Apply
+                    type: string
+                  namespace:
+                    default: default
+                    description: namespace holds the generated ResourceImport objects.
+                    type: string
+                  requiredTags:
+                    description: |-
+                      requiredTags must all be resolved before anything is imported. Defaults to the owner
+                      tag: a resource nobody owns stays unmanaged, and the alert asks a human to decide.
+                    items:
+                      type: string
+                    type: array
+                    x-kubernetes-list-type: set
+                  skip:
+                    description: skip keeps the policy away from matching resources
+                      entirely.
+                    items:
+                      description: |-
+                        SkipRule keeps the policy away from resources somebody else owns. Terraform is the usual
+                        reason: tagging a resource it manages makes the next plan want to remove the tags again.
+                      properties:
+                        principalPrefix:
+                          description: principalPrefix skips resources created by
+                            a matching principal, e.g. a CI role.
+                          type: string
+                        tagKey:
+                          description: tagKey, when present on the resource, skips
+                            it. With tagValue set, only that value skips.
+                          type: string
+                        tagValue:
+                          description: tagValue narrows tagKey to one value.
+                          type: string
+                      type: object
+                    type: array
+                    x-kubernetes-list-type: atomic
+                type: object
+              discoverUnmanaged:
+                default: true
+                description: |-
+                  discoverUnmanaged also lists the VPCs the selector does not match, and their subnets,
+                  so resources nobody has claimed are counted and can be imported instead of staying
+                  invisible. They are reported and alerted on, never mirrored as objects.
+                type: boolean
+              regions:
+                description: regions to discover in every account (unless the account
+                  overrides them).
+                items:
+                  type: string
+                minItems: 1
+                type: array
+              requiredSubnetTags:
+                description: |-
+                  requiredSubnetTags are tag keys every subnet must have. Missing keys are
+                  reported in the Subnet status and as metrics.
+                items:
+                  type: string
+                type: array
+              resyncInterval:
+                default: 10m
+                description: resyncInterval is how often the full inventory is refreshed.
+                type: string
+              tagKeys:
+                description: tagKeys maps inventory fields (owner, env, tier) to tag
+                  keys.
+                properties:
+                  env:
+                    default: hs/env
+                    description: env is the tag key holding the environment.
+                    type: string
+                  owner:
+                    default: hs/owner
+                    description: owner is the tag key holding the owning team.
+                    type: string
+                  tier:
+                    default: hs/tier
+                    description: tier is the tag key holding the subnet tier (public,
+                      private, db, ...).
+                    type: string
+                type: object
+              vpcTagSelector:
+                additionalProperties:
+                  type: string
+                description: |-
+                  vpcTagSelector limits discovery to VPCs that carry all of these tags.
+                  An empty value matches any value of the key. All subnets of a selected VPC
+                  are discovered, including untagged ones, so they show up in compliance reports.
+                  When the selector is empty, every VPC is discovered.
+                type: object
+            required:
+            - accounts
+            - regions
+            type: object
+          status:
+            description: status defines the observed state of NetworkScope
+            properties:
+              conditions:
+                description: 'conditions: Ready is True when every target synced successfully.'
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              lastSyncTime:
+                description: lastSyncTime is when the last full sync finished.
+                format: date-time
+                type: string
+              observedGeneration:
+                description: observedGeneration is the generation of the spec that
+                  was last synced.
+                format: int64
+                type: integer
+              subnets:
+                description: subnets is the number of subnets discovered across all
+                  targets.
+                format: int32
+                type: integer
+              targets:
+                description: targets reports each account/region pair.
+                items:
+                  description: TargetStatus reports the last sync of one account/region
+                    pair.
+                  properties:
+                    account:
+                      description: account is the AWS account ID.
+                      type: string
+                    error:
+                      description: error is the last sync error, empty when the last
+                        sync succeeded.
+                      type: string
+                    lastSyncTime:
+                      description: lastSyncTime is the time of the last successful
+                        sync.
+                      format: date-time
+                      type: string
+                    region:
+                      description: region is the AWS region.
+                      type: string
+                    subnets:
+                      description: subnets is the number of subnets discovered.
+                      format: int32
+                      type: integer
+                    unmanagedSubnets:
+                      description: unmanagedSubnets is the number of subnets inside
+                        those VPCs.
+                      format: int32
+                      type: integer
+                    unmanagedVPCs:
+                      description: unmanagedVPCs is the number of VPCs the tag selector
+                        does not match.
+                      format: int32
+                      type: integer
+                    vpcs:
+                      description: vpcs is the number of VPCs discovered.
+                      format: int32
+                      type: integer
+                  required:
+                  - account
+                  - region
+                  - subnets
+                  - vpcs
+                  type: object
+                type: array
+                x-kubernetes-list-type: atomic
+              unmanaged:
+                description: |-
+                  unmanaged is the number of discovered resources without the managed tag, across all
+                  targets. Anything above zero is something nobody has taken responsibility for.
+                format: int32
+                type: integer
+              vpcs:
+                description: vpcs is the number of VPCs discovered across all targets.
+                format: int32
+                type: integer
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+# A new push supersedes the previous run of the same branch.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # lint and test need no Docker, so they run on the Mac runner, which is usually free.
+  lint:
+    runs-on: mac
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Lint
+        run: make lint
+
+  test:
+    runs-on: mac
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Generated code and manifests are up to date
+        run: |
+          make manifests generate
+          git diff --exit-code
+      - name: Helm chart lints and renders
+        run: |
+          make helm-lint
+          git diff --exit-code charts/
+      - name: Unit and envtest tests
+        run: make test
+      - name: Build
+        run: make build
+
+  e2e:
+    # Both the qa VM and the MacBook carry this label, so a job lands wherever there is room.
+    # Three pull requests at once used to queue behind one host, and a host running two Kind
+    # clusters at its memory limit fails the rollout rather than the test.
+    runs-on: e2e
+    env:
+      # A cluster and kubeconfig per run, so parallel runs on the same runner do not collide.
+      KIND_CLUSTER: aso-e2e-${{ github.run_id }}
+      KUBECONFIG: ${{ github.workspace }}/.e2e-kubeconfig
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          # No module cache here. Go marks everything in the module cache read-only, and the
+          # cache archive is unpacked with the system tar, which on macOS cannot overwrite a
+          # read-only file — the restore dies with "Can't unlink already-existing object".
+          # This job compiles only the test binary; the operator itself is built in the image.
+          cache: false
+      - name: E2E tests (Kind + Moto)
+        run: make test-e2e KIND_CLUSTER="$KIND_CLUSTER"
+      - name: Clean up
+        if: always()
+        run: make cleanup-test-e2e KIND_CLUSTER="$KIND_CLUSTER" || true

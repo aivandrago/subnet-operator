@@ -1,0 +1,45 @@
+apiVersion: v2
+name: aws-subnet-operator
+description: Kubernetes operator that discovers AWS VPCs and subnets from resource tags and keeps a live inventory in the cluster
+type: application
+version: 0.4.0
+appVersion: "0.4.0"
+kubeVersion: ">=1.28.0-0"
+keywords:
+  - aws
+  - vpc
+  - subnet
+  - ipam
+  - networking
+  - inventory
+home: https://hypersurgery.dev
+sources:
+  - https://registry.hypersurgery.dev/gitadmin/aws-subnet-operator
+annotations:
+  artifacthub.io/license: Apache-2.0
+  artifacthub.io/operator: "true"
+  artifacthub.io/crds: |
+    - kind: NetworkScope
+      version: v1alpha1
+      name: networkscopes.aws.hypersurgery
+      description: Accounts and regions to discover
+    - kind: VPC
+      version: v1alpha1
+      name: vpcs.aws.hypersurgery
+      description: A discovered VPC
+    - kind: Subnet
+      version: v1alpha1
+      name: subnets.aws.hypersurgery
+      description: A discovered subnet
+    - kind: ResourceImport
+      version: v1alpha1
+      name: resourceimports.aws.hypersurgery
+      description: Takes an existing VPC or subnet under management by tagging it
+    - kind: SheetExport
+      version: v1alpha1
+      name: sheetexports.aws.hypersurgery
+      description: Read-only mirror of a scope in a Google Sheet
+    - kind: SubnetClaim
+      version: v1alpha1
+      name: subnetclaims.aws.hypersurgery
+      description: Subnets on demand, allocated from a VPC and optionally created

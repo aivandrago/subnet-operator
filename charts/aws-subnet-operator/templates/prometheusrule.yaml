@@ -1,0 +1,98 @@
+{{- if .Values.prometheusRule.enabled }}
+{{- $used := .Values.prometheusRule.thresholds.subnetUsedRatio }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "aws-subnet-operator.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "aws-subnet-operator.labels" . | nindent 4 }}
+    {{- with .Values.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: subnet-inventory
+      rules:
+        - alert: SubnetNearlyFull
+          expr: 1 - hs_aws_subnet_available_ips / hs_aws_subnet_total_ips >= {{ $used }}
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Subnet {{`{{ $labels.subnet_id }}`}} is {{`{{ $value | humanizePercentage }}`}} full"
+            description: >-
+              {{`{{ $labels.cidr }}`}} in {{`{{ $labels.account }}`}}/{{`{{ $labels.region }}`}}
+              (owner {{`{{ $labels.owner }}`}}) is running out of addresses.
+
+        - alert: SubnetFull
+          expr: hs_aws_subnet_available_ips == 0
+          for: 15m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Subnet {{`{{ $labels.subnet_id }}`}} has no free addresses"
+            description: >-
+              {{`{{ $labels.cidr }}`}} in {{`{{ $labels.account }}`}}/{{`{{ $labels.region }}`}}
+              cannot take another ENI.
+
+        - alert: SubnetInventoryTargetDown
+          expr: hs_aws_target_up == 0
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Discovery of {{`{{ $labels.account }}`}}/{{`{{ $labels.region }}`}} is failing"
+            description: >-
+              The inventory of this account and region is stale. Check the NetworkScope status
+              for the error, usually an IAM or trust policy problem.
+
+        - alert: VPCCIDROverlap
+          expr: hs_aws_vpc_cidr_overlaps > 0
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: "VPC {{`{{ $labels.vpc_id }}`}} overlaps another VPC"
+            description: >-
+              Overlapping CIDRs break VPC peering and Transit Gateway routing.
+              See status.overlapsWith on the VPC object.
+
+        - alert: SubnetInventoryStale
+          expr: time() - hs_aws_scope_last_sync_timestamp_seconds > {{ .Values.prometheusRule.thresholds.staleSyncSeconds }}
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Scope {{`{{ $labels.scope }}`}} has not fully synced recently"
+            description: >-
+              The operator is not completing full resyncs. Check that it is running and
+              that its credentials still work.
+
+        - alert: UnmanagedNetworkResource
+          # The counter rises once per resource the operator has never seen before, so an
+          # increase means something appeared that nobody has taken responsibility for.
+          expr: increase(hs_aws_unmanaged_resources_total[10m]) > 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{`{{ $value | printf \"%.0f\" }}`}} new unmanaged {{`{{ $labels.kind }}`}} resources in {{`{{ $labels.account }}`}}/{{`{{ $labels.region }}`}}"
+            description: >-
+              Something was created without the {{ .Values.managedTag | default "hs/managed" }} tag.
+              Import it to take it under management, or add an auto-import rule so the next one
+              is tagged on its own. The dashboard lists them:
+              https://hypersurgery.dev/dashboard/
+            runbook_url: "https://hypersurgery.dev/docs/#unmanaged"
+
+        - alert: AutoImportedResources
+          # Informational: a digest of what the policy took care of, not something to page on.
+          expr: increase(hs_aws_auto_imports_total{result="applied"}[24h]) > 0
+          labels:
+            severity: info
+          annotations:
+            summary: "{{`{{ $value | printf \"%.0f\" }}`}} resources auto-imported in {{`{{ $labels.account }}`}}/{{`{{ $labels.region }}`}}"
+            description: >-
+              The auto-import policy tagged these itself. Review them with
+              kubectl get resourceimports -A.
+{{- end }}
