@@ -1,0 +1,112 @@
+# Hub account: the SQS queue the operator reads, and the EventBridge rule that fills it.
+# Spoke accounts forward their EC2 change events to this account's default event bus
+# (see spoke-events.cfn.yaml); events of the hub account itself match the same rule.
+#
+# Requires CloudTrail to record management (write) events in every account and region,
+# for example with an organization trail: EventBridge receives "AWS API Call via CloudTrail"
+# events only for calls CloudTrail records.
+AWSTemplateFormatVersion: "2010-09-09"
+Description: aws-subnet-operator change events (hub)
+
+Parameters:
+  OrganizationId:
+    Type: String
+    Description: AWS Organizations ID (o-xxxxxxxxxx) allowed to put events on the hub bus.
+    AllowedPattern: "^o-[a-z0-9]{10,32}$"
+
+Resources:
+  DeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: aws-subnet-operator-events-dlq
+      MessageRetentionPeriod: 1209600
+      # Events name accounts, regions and resource IDs, so the dead letters are encrypted
+      # exactly like the live queue.
+      SqsManagedSseEnabled: true
+
+  EventsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: aws-subnet-operator-events
+      # Events older than a resync interval are covered by the periodic resync anyway.
+      MessageRetentionPeriod: 3600
+      VisibilityTimeout: 60
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt DeadLetterQueue.Arn
+        maxReceiveCount: 5
+
+  EventsQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues: [!Ref EventsQueue]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sqs:SendMessage
+            Resource: !GetAtt EventsQueue.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !GetAtt NetworkChangesRule.Arn
+
+  OrganizationPutEvents:
+    Type: AWS::Events::EventBusPolicy
+    Properties:
+      StatementId: aws-subnet-operator-organization
+      Statement:
+        Effect: Allow
+        Principal: "*"
+        Action: events:PutEvents
+        Resource: !Sub arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:event-bus/default
+        Condition:
+          StringEquals:
+            aws:PrincipalOrgID: !Ref OrganizationId
+
+  NetworkChangesRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: aws-subnet-operator-network-changes
+      Description: EC2 network changes for aws-subnet-operator
+      EventBusName: default
+      EventPattern:
+        source: [aws.ec2]
+        detail-type: [AWS API Call via CloudTrail]
+        detail:
+          eventSource: [ec2.amazonaws.com]
+          # Keep in sync with relevantEvents in internal/events/events.go.
+          eventName:
+            - CreateVpc
+            - DeleteVpc
+            - AssociateVpcCidrBlock
+            - DisassociateVpcCidrBlock
+            - CreateSubnet
+            - DeleteSubnet
+            - ModifySubnetAttribute
+            - AssociateSubnetCidrBlock
+            - DisassociateSubnetCidrBlock
+            - CreateTags
+            - DeleteTags
+            - CreateRouteTable
+            - DeleteRouteTable
+            - AssociateRouteTable
+            - DisassociateRouteTable
+            - ReplaceRouteTableAssociation
+            - CreateRoute
+            - DeleteRoute
+            - ReplaceRoute
+            - AttachInternetGateway
+            - DetachInternetGateway
+      Targets:
+        - Id: operator-queue
+          Arn: !GetAtt EventsQueue.Arn
+
+Outputs:
+  QueueUrl:
+    Description: Pass to the operator as --events-queue-url (or EVENTS_QUEUE_URL).
+    Value: !Ref EventsQueue
+  EventBusArn:
+    Description: Pass to spoke-events.cfn.yaml as HubEventBusArn.
+    Value: !Sub arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:event-bus/default

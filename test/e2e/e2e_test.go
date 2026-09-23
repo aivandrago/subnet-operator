@@ -1,0 +1,821 @@
+//go:build e2e
+// +build e2e
+
+/*
+Copyright 2026.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package e2e
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"time"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	awsv1alpha1 "hypersurgery.dev/subnet-operator/api/v1alpha1"
+	"hypersurgery.dev/subnet-operator/test/utils"
+)
+
+// namespace where the project is deployed in
+const namespace = "aws-subnet-operator-system"
+
+// serviceAccountName created for the project
+const serviceAccountName = "aws-subnet-operator-controller-manager"
+
+// metricsServiceName is the name of the metrics service of the project
+const metricsServiceName = "aws-subnet-operator-controller-manager-metrics-service"
+
+// deploymentName is the controller-manager Deployment
+const deploymentName = "aws-subnet-operator-controller-manager"
+
+// scopeName is the NetworkScope created by the discovery specs
+const scopeName = "e2e"
+
+// metricsRoleBindingName is the name of the RBAC that will be created to allow get the metrics data
+const metricsRoleBindingName = "aws-subnet-operator-metrics-binding"
+
+var _ = Describe("Manager", Ordered, func() {
+	var (
+		controllerPodName string
+		fix               fixture
+	)
+
+	// Before running the tests, set up the environment by creating the namespace,
+	// enforce the restricted security policy to the namespace, installing CRDs,
+	// and deploying the controller.
+	BeforeAll(func() {
+		By("creating manager namespace")
+		cmd := exec.Command("kubectl", "create", "ns", namespace)
+		_, err := utils.Run(cmd)
+		Expect(err).NotTo(HaveOccurred(), "Failed to create namespace")
+
+		By("labeling the namespace to enforce the restricted security policy")
+		cmd = exec.Command("kubectl", "label", "--overwrite", "ns", namespace,
+			"pod-security.kubernetes.io/enforce=restricted")
+		_, err = utils.Run(cmd)
+		Expect(err).NotTo(HaveOccurred(), "Failed to label namespace with restricted policy")
+
+		By("installing CRDs")
+		cmd = exec.Command("make", "install")
+		_, err = utils.Run(cmd)
+		Expect(err).NotTo(HaveOccurred(), "Failed to install CRDs")
+
+		By("deploying the controller-manager")
+		cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", managerImage))
+		_, err = utils.Run(cmd)
+		Expect(err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
+
+		By("creating the events queue in Moto")
+		queueURL := createEventsQueue(context.Background())
+
+		By("pointing the controller-manager at Moto")
+		cmd = exec.Command("kubectl", "set", "env", "deployment/"+deploymentName, "-n", namespace,
+			"AWS_ENDPOINT_URL="+motoClusterEndpoint, "AWS_REGION="+awsRegion, "EVENTS_QUEUE_URL="+queueURL,
+			"AWS_ACCESS_KEY_ID=test", "AWS_SECRET_ACCESS_KEY=test", "AWS_EC2_METADATA_DISABLED=true")
+		_, err = utils.Run(cmd)
+		Expect(err).NotTo(HaveOccurred(), "Failed to configure the controller-manager")
+
+		By("enabling writes, so SubnetClaims can create subnets")
+		cmd = exec.Command("kubectl", "patch", "deployment/"+deploymentName, "-n", namespace, "--type=json", "-p",
+			`[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--enable-writes"}]`)
+		_, err = utils.Run(cmd)
+		Expect(err).NotTo(HaveOccurred(), "Failed to enable writes")
+		cmd = exec.Command("kubectl", "rollout", "status", "deployment/"+deploymentName, "-n", namespace, "--timeout=3m")
+		if _, err = utils.Run(cmd); err != nil {
+			dumpManagerState()
+			Expect(err).NotTo(HaveOccurred(), "controller-manager rollout did not finish")
+		}
+	})
+
+	// After all tests have been executed, clean up by undeploying the controller, uninstalling CRDs,
+	// and deleting the namespace.
+	AfterAll(func() {
+		By("deleting the NetworkScope")
+		cmd := exec.Command("kubectl", "delete", "networkscope", scopeName, "--ignore-not-found", "--wait=false")
+		_, _ = utils.Run(cmd)
+
+		By("cleaning up the curl pod for metrics")
+		cmd = exec.Command("kubectl", "delete", "pod", "curl-metrics", "-n", namespace)
+		_, _ = utils.Run(cmd)
+
+		By("undeploying the controller-manager")
+		cmd = exec.Command("make", "undeploy")
+		_, _ = utils.Run(cmd)
+
+		By("uninstalling CRDs")
+		cmd = exec.Command("make", "uninstall")
+		_, _ = utils.Run(cmd)
+
+		By("removing manager namespace")
+		cmd = exec.Command("kubectl", "delete", "ns", namespace)
+		_, _ = utils.Run(cmd)
+	})
+
+	// After each test, check for failures and collect logs, events,
+	// and pod descriptions for debugging.
+	AfterEach(func() {
+		specReport := CurrentSpecReport()
+		if specReport.Failed() {
+			By("Fetching controller manager pod logs")
+			cmd := exec.Command("kubectl", "logs", controllerPodName, "-n", namespace)
+			controllerLogs, err := utils.Run(cmd)
+			if err == nil {
+				_, _ = fmt.Fprintf(GinkgoWriter, "Controller logs:\n %s", controllerLogs)
+			} else {
+				_, _ = fmt.Fprintf(GinkgoWriter, "Failed to get Controller logs: %s", err)
+			}
+
+			By("Fetching Kubernetes events")
+			cmd = exec.Command("kubectl", "get", "events", "-n", namespace, "--sort-by=.lastTimestamp")
+			eventsOutput, err := utils.Run(cmd)
+			if err == nil {
+				_, _ = fmt.Fprintf(GinkgoWriter, "Kubernetes events:\n%s", eventsOutput)
+			} else {
+				_, _ = fmt.Fprintf(GinkgoWriter, "Failed to get Kubernetes events: %s", err)
+			}
+
+			By("Fetching curl-metrics logs")
+			cmd = exec.Command("kubectl", "logs", "curl-metrics", "-n", namespace)
+			metricsOutput, err := utils.Run(cmd)
+			if err == nil {
+				_, _ = fmt.Fprintf(GinkgoWriter, "Metrics logs:\n %s", metricsOutput)
+			} else {
+				_, _ = fmt.Fprintf(GinkgoWriter, "Failed to get curl-metrics logs: %s", err)
+			}
+
+			By("Fetching controller manager pod description")
+			cmd = exec.Command("kubectl", "describe", "pod", controllerPodName, "-n", namespace)
+			podDescription, err := utils.Run(cmd)
+			if err == nil {
+				fmt.Println("Pod description:\n", podDescription)
+			} else {
+				fmt.Println("Failed to describe controller pod")
+			}
+		}
+	})
+
+	SetDefaultEventuallyTimeout(2 * time.Minute)
+	SetDefaultEventuallyPollingInterval(time.Second)
+
+	Context("Manager", func() {
+		It("should run successfully", func() {
+			By("validating that the controller-manager pod is running as expected")
+			verifyControllerUp := func(g Gomega) {
+				By("getting the name of the controller-manager pod")
+				cmd := exec.Command("kubectl", "get",
+					"pods", "-l", "control-plane=controller-manager",
+					"-o", "go-template={{ range .items }}"+
+						"{{ if not .metadata.deletionTimestamp }}"+
+						"{{ .metadata.name }}"+
+						"{{ \"\\n\" }}{{ end }}{{ end }}",
+					"-n", namespace,
+				)
+
+				podOutput, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred(), "Failed to retrieve controller-manager pod information")
+				podNames := utils.GetNonEmptyLines(podOutput)
+				g.Expect(podNames).To(HaveLen(1), "expected 1 controller pod running")
+				controllerPodName = podNames[0]
+				g.Expect(controllerPodName).To(ContainSubstring("controller-manager"))
+
+				By("validating the pod's status")
+				cmd = exec.Command("kubectl", "get",
+					"pods", controllerPodName, "-o", "jsonpath={.status.phase}",
+					"-n", namespace,
+				)
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal("Running"), "Incorrect controller-manager pod status")
+			}
+			Eventually(verifyControllerUp).Should(Succeed())
+		})
+
+		It("mirrors VPCs and subnets of the hub and a spoke account", func() {
+			By("seeding VPCs and subnets into Moto")
+			fix = seedAWS(context.Background())
+
+			By("creating the NetworkScope")
+			cmd := exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(fmt.Sprintf(`
+apiVersion: aws.hypersurgery/v1alpha1
+kind: NetworkScope
+metadata:
+  name: %s
+spec:
+  accounts:
+    - id: "%s"
+    - id: "%s"
+      roleARN: %s
+  regions: [%s]
+  vpcTagSelector:
+    hs/managed: "true"
+  requiredSubnetTags: [hs/owner, hs/env, hs/tier]
+  resyncInterval: 1m
+`, scopeName, hubAccount, spokeAccount, spokeRoleARN, awsRegion))
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create the NetworkScope")
+
+			By("waiting for the first sync")
+			Eventually(func(g Gomega) {
+				scope := &awsv1alpha1.NetworkScope{}
+				g.Expect(getObject("networkscope", scopeName, scope)).To(Succeed())
+				g.Expect(readyCondition(scope)).NotTo(BeNil())
+				g.Expect(readyCondition(scope).Status).To(Equal(metav1.ConditionTrue), readyCondition(scope).Message)
+				g.Expect(scope.Status.VPCs).To(Equal(int32(2)))
+				g.Expect(scope.Status.Subnets).To(Equal(int32(3)))
+			}, 3*time.Minute, 2*time.Second).Should(Succeed())
+
+			By("checking the public subnet")
+			sn := &awsv1alpha1.Subnet{}
+			Expect(getObject("subnet", fix.publicSubnet, sn)).To(Succeed())
+			Expect(sn.Labels).To(HaveKeyWithValue(awsv1alpha1.LabelAccount, hubAccount))
+			Expect(sn.Spec.VPCID).To(Equal(fix.hubVPC))
+			Expect(sn.Status.Name).To(Equal("prod-public-a"))
+			Expect(sn.Status.CIDRBlock).To(Equal("10.0.1.0/24"))
+			Expect(sn.Status.AvailabilityZone).To(Equal(awsRegion + "a"))
+			Expect(sn.Status.Public).To(BeTrue())
+			Expect(sn.Status.RouteTableID).To(HavePrefix("rtb-"))
+			Expect(sn.Status.TotalIPs).To(Equal(int64(251)))
+			Expect(sn.Status.AvailableIPs).To(Equal(int64(251)))
+			Expect(sn.Status.Owner).To(Equal("team-web"))
+			Expect(sn.Status.Tier).To(Equal("public"))
+			Expect(sn.Status.MissingTags).To(BeEmpty())
+
+			By("checking the untagged private subnet")
+			sn = &awsv1alpha1.Subnet{}
+			Expect(getObject("subnet", fix.privateSubnet, sn)).To(Succeed())
+			Expect(sn.Status.Public).To(BeFalse())
+			Expect(sn.Status.MissingTags).To(Equal([]string{"hs/owner", "hs/env", "hs/tier"}))
+
+			By("checking the spoke account subnet reached through AssumeRole")
+			sn = &awsv1alpha1.Subnet{}
+			Expect(getObject("subnet", fix.spokeSubnet, sn)).To(Succeed())
+			Expect(sn.Spec.Account).To(Equal(spokeAccount))
+			Expect(sn.Status.TotalIPs).To(Equal(int64(11)))
+			Expect(sn.Status.Owner).To(Equal("team-partner"))
+
+			By("checking VPC aggregates and the cross-account CIDR overlap")
+			vpc := &awsv1alpha1.VPC{}
+			Expect(getObject("vpc", fix.hubVPC, vpc)).To(Succeed())
+			Expect(vpc.Status.Name).To(Equal("prod"))
+			Expect(vpc.Status.Owner).To(Equal("platform"))
+			Expect(vpc.Status.Subnets).To(Equal(int32(2)))
+			Expect(vpc.Status.TotalIPs).To(Equal(int64(502)))
+			Expect(vpc.Status.OverlapsWith).To(Equal([]string{spokeAccount + "/" + awsRegion + "/" + fix.spokeVPC}))
+
+			By("checking that the VPC without hs/managed=true is ignored")
+			Expect(getObject("vpc", fix.unmanagedVPC, &awsv1alpha1.VPC{})).NotTo(Succeed())
+		})
+
+		It("counts the resources nobody tagged without mirroring them", func() {
+			By("waiting for the unmanaged sandbox VPC and its subnet to be counted")
+			Eventually(func(g Gomega) {
+				scope := &awsv1alpha1.NetworkScope{}
+				g.Expect(getObject("networkscope", scopeName, scope)).To(Succeed())
+				hub := targetStatus(scope, hubAccount)
+				g.Expect(hub).NotTo(BeNil(), "the hub account has no target status yet")
+				// Moto keeps a default VPC of its own in every account, so the sandbox VPC and
+				// its subnet raise counts that are not zero to begin with: assert what this
+				// fixture added, not a total that belongs to Moto.
+				g.Expect(hub.UnmanagedVPCs).To(BeNumerically(">=", 1))
+				g.Expect(hub.UnmanagedSubnets).To(BeNumerically(">=", 1))
+				g.Expect(scope.Status.Unmanaged).To(Equal(sumUnmanaged(scope)))
+			}, 3*time.Minute, 2*time.Second).Should(Succeed())
+
+			By("checking that counting them did not put them in the inventory")
+			Expect(getObject("vpc", fix.unmanagedVPC, &awsv1alpha1.VPC{})).NotTo(Succeed())
+			Expect(getObject("subnet", fix.unmanagedSubnet, &awsv1alpha1.Subnet{})).NotTo(Succeed())
+		})
+
+		It("removes a subnet deleted in AWS on the next resync", func() {
+			deleteSubnet(context.Background(), fix.privateSubnet)
+			Eventually(func(g Gomega) {
+				out, err := utils.Run(exec.Command("kubectl", "get", "subnet", fix.privateSubnet, "--ignore-not-found", "-o", "name"))
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(strings.TrimSpace(out)).To(BeEmpty())
+			}, 3*time.Minute, 5*time.Second).Should(Succeed())
+		})
+
+		It("reports an unreachable account without dropping the others", func() {
+			By("adding an account whose roleARN points to a different account")
+			cmd := exec.Command("kubectl", "patch", "networkscope", scopeName, "--type=json", "-p",
+				`[{"op":"add","path":"/spec/accounts/-","value":{"id":"333333333333","roleARN":"arn:aws:iam::444444444444:role/wrong"}}]`)
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func(g Gomega) {
+				scope := &awsv1alpha1.NetworkScope{}
+				g.Expect(getObject("networkscope", scopeName, scope)).To(Succeed())
+				cond := readyCondition(scope)
+				g.Expect(cond).NotTo(BeNil())
+				g.Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+				g.Expect(cond.Message).To(ContainSubstring("333333333333/" + awsRegion))
+				g.Expect(scope.Status.Subnets).To(Equal(int32(2)))
+			}, 2*time.Minute, 2*time.Second).Should(Succeed())
+			Expect(getObject("subnet", fix.publicSubnet, &awsv1alpha1.Subnet{})).To(Succeed())
+		})
+
+		It("syncs a changed account within seconds of an EC2 change event", func() {
+			By("making full resyncs rare, so only the event can explain a quick update")
+			cmd := exec.Command("kubectl", "patch", "networkscope", scopeName, "--type=merge", "-p",
+				`{"spec":{"resyncInterval":"1h"}}`)
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Eventually(func(g Gomega) {
+				scope := &awsv1alpha1.NetworkScope{}
+				g.Expect(getObject("networkscope", scopeName, scope)).To(Succeed())
+				g.Expect(scope.Status.ObservedGeneration).To(Equal(scope.Generation))
+			}, time.Minute, time.Second).Should(Succeed())
+
+			By("creating a subnet in the spoke account and reporting it through SQS")
+			ctx := context.Background()
+			subnet := createSpokeSubnet(ctx, fix.spokeVPC, "10.0.129.0/24")
+			sendChangeEvent(ctx, spokeAccount, "CreateSubnet")
+
+			Eventually(func(g Gomega) {
+				sn := &awsv1alpha1.Subnet{}
+				g.Expect(getObject("subnet", subnet, sn)).To(Succeed())
+				g.Expect(sn.Spec.Account).To(Equal(spokeAccount))
+				g.Expect(sn.Status.TotalIPs).To(Equal(int64(251)))
+			}, time.Minute, 2*time.Second).Should(Succeed())
+
+			By("checking that the event was consumed")
+			out, err := utils.Run(exec.Command("kubectl", "logs", "deployment/"+deploymentName, "-n", namespace))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(out).To(ContainSubstring("Consuming EC2 change events"))
+		})
+
+		It("creates the subnets a SubnetClaim asks for", func() {
+			By("claiming a /24 in two AZs of the hub VPC")
+			cmd := exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(fmt.Sprintf(`
+apiVersion: aws.hypersurgery/v1alpha1
+kind: SubnetClaim
+metadata:
+  name: payments
+  namespace: default
+spec:
+  scopeRef: %s
+  account: "%s"
+  region: %s
+  vpcID: %s
+  prefixLength: 24
+  availabilityZones: [%sa, %sb]
+  owner: team-payments
+  env: prod
+  tier: private
+  tags:
+    cost-center: cc-42
+`, scopeName, hubAccount, awsRegion, fix.hubVPC, awsRegion, awsRegion))
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create the SubnetClaim")
+
+			var claim awsv1alpha1.SubnetClaim
+			Eventually(func(g Gomega) {
+				out, err := utils.Run(exec.Command("kubectl", "get", "subnetclaim", "payments", "-n", "default", "-o", "json"))
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(json.Unmarshal([]byte(out), &claim)).To(Succeed())
+				g.Expect(claim.Status.Allocations).To(HaveLen(2))
+				for _, a := range claim.Status.Allocations {
+					g.Expect(a.State).To(Equal(awsv1alpha1.AllocationCreated), a.Error)
+					g.Expect(a.SubnetID).To(HavePrefix("subnet-"))
+				}
+				g.Expect(claimReady(&claim)).NotTo(BeNil())
+				g.Expect(claimReady(&claim).Status).To(Equal(metav1.ConditionTrue), claimReady(&claim).Message)
+			}, 2*time.Minute, 2*time.Second).Should(Succeed())
+
+			By("checking the subnets in AWS")
+			// 10.0.1.0/24 and 10.0.2.0/24 exist; the claim gets the next free blocks.
+			created := describeSubnetsByTag(context.Background(), "hs/claim", "default/payments")
+			Expect(created).To(HaveLen(2))
+			cidrs := []string{}
+			for _, sn := range created {
+				cidrs = append(cidrs, sn.cidr)
+				Expect(sn.tags).To(HaveKeyWithValue("hs/owner", "team-payments"))
+				Expect(sn.tags).To(HaveKeyWithValue("hs/tier", "private"))
+				Expect(sn.tags).To(HaveKeyWithValue("cost-center", "cc-42"))
+				Expect(sn.tags).To(HaveKeyWithValue("hs/managed-by", "subnet-operator"))
+				Expect(sn.tags["Name"]).To(HavePrefix("payments-"))
+			}
+			// First fit over 10.0.0.0/16: 10.0.0.0/24 was never used, and 10.0.2.0/24 became free
+			// when an earlier spec deleted the private subnet in AWS. 10.0.1.0/24 stays taken.
+			Expect(cidrs).To(ConsistOf("10.0.0.0/24", "10.0.2.0/24"))
+
+			By("checking that the inventory picked them up")
+			Eventually(func(g Gomega) {
+				for _, a := range claim.Status.Allocations {
+					sn := &awsv1alpha1.Subnet{}
+					g.Expect(getObject("subnet", a.SubnetID, sn)).To(Succeed())
+					g.Expect(sn.Status.CIDRBlock).To(Equal(a.CIDRBlock))
+					g.Expect(sn.Status.Owner).To(Equal("team-payments"))
+				}
+			}, 2*time.Minute, 2*time.Second).Should(Succeed())
+		})
+
+		It("should ensure the metrics endpoint is serving metrics", func() {
+			By("creating a ClusterRoleBinding for the service account to allow access to metrics")
+			cmd := exec.Command("kubectl", "create", "clusterrolebinding", metricsRoleBindingName,
+				"--clusterrole=aws-subnet-operator-metrics-reader",
+				fmt.Sprintf("--serviceaccount=%s:%s", namespace, serviceAccountName),
+			)
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create ClusterRoleBinding")
+
+			By("validating that the metrics service is available")
+			cmd = exec.Command("kubectl", "get", "service", metricsServiceName, "-n", namespace)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Metrics service should exist")
+
+			By("getting the service account token")
+			token, err := serviceAccountToken()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(token).NotTo(BeEmpty())
+
+			By("ensuring the controller pod is ready")
+			verifyControllerPodReady := func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "pod", controllerPodName, "-n", namespace,
+					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal("True"), "Controller pod not ready")
+			}
+			Eventually(verifyControllerPodReady, 3*time.Minute, time.Second).Should(Succeed())
+
+			By("verifying that the controller manager is serving the metrics server")
+			verifyMetricsServerStarted := func(g Gomega) {
+				cmd := exec.Command("kubectl", "logs", controllerPodName, "-n", namespace)
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(ContainSubstring("Serving metrics server"),
+					"Metrics server not yet started")
+			}
+			Eventually(verifyMetricsServerStarted, 3*time.Minute, time.Second).Should(Succeed())
+
+			// +kubebuilder:scaffold:e2e-metrics-webhooks-readiness
+
+			By("creating the curl-metrics pod to access the metrics endpoint")
+			cmd = exec.Command("kubectl", "run", "curl-metrics", "--restart=Never",
+				"--namespace", namespace,
+				"--image=curlimages/curl:latest",
+				"--overrides",
+				fmt.Sprintf(`{
+					"spec": {
+						"containers": [{
+							"name": "curl",
+							"image": "curlimages/curl:latest",
+							"command": ["/bin/sh", "-c"],
+							"args": [
+								"for i in $(seq 1 30); do curl -v -k -H 'Authorization: Bearer %s' https://%s.%s.svc.cluster.local:8443/metrics && exit 0 || sleep 2; done; exit 1"
+							],
+							"securityContext": {
+								"readOnlyRootFilesystem": true,
+								"allowPrivilegeEscalation": false,
+								"capabilities": {
+									"drop": ["ALL"]
+								},
+								"runAsNonRoot": true,
+								"runAsUser": 1000,
+								"seccompProfile": {
+									"type": "RuntimeDefault"
+								}
+							}
+						}],
+						"serviceAccountName": "%s"
+					}
+				}`, token, metricsServiceName, namespace, serviceAccountName))
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create curl-metrics pod")
+
+			By("waiting for the curl-metrics pod to complete.")
+			verifyCurlUp := func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "pods", "curl-metrics",
+					"-o", "jsonpath={.status.phase}",
+					"-n", namespace)
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal("Succeeded"), "curl pod in wrong status")
+			}
+			Eventually(verifyCurlUp, 5*time.Minute).Should(Succeed())
+
+			By("getting the metrics by checking curl-metrics logs")
+			verifyMetricsAvailable := func(g Gomega) {
+				metricsOutput, err := getMetricsOutput()
+				g.Expect(err).NotTo(HaveOccurred(), "Failed to retrieve logs from curl pod")
+				g.Expect(metricsOutput).NotTo(BeEmpty())
+				g.Expect(metricsOutput).To(ContainSubstring("< HTTP/1.1 200 OK"))
+			}
+			Eventually(verifyMetricsAvailable, 2*time.Minute).Should(Succeed())
+
+			By("checking the inventory metrics")
+			metricsOutput, err := getMetricsOutput()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(metricsOutput).To(MatchRegexp(
+				`hs_aws_subnet_available_ips\{[^}]*subnet_id="%s"[^}]*\} 251`, fix.publicSubnet))
+			Expect(metricsOutput).To(MatchRegexp(
+				`hs_aws_vpc_cidr_overlaps\{[^}]*vpc_id="%s"[^}]*\} 1`, fix.hubVPC))
+			Expect(metricsOutput).To(ContainSubstring(
+				`hs_aws_target_up{account="333333333333",region="%s",scope="%s"} 0`, awsRegion, scopeName))
+			Expect(metricsOutput).To(ContainSubstring(
+				`hs_aws_target_up{account="%s",region="%s",scope="%s"} 1`, spokeAccount, awsRegion, scopeName))
+
+			By("checking the unmanaged resource metrics the onboarding alert reads")
+			// This spec is declared before the import specs, so the sandbox VPC and its subnet
+			// are still untagged here: both the gauge and the counter must see them.
+			Expect(metricsOutput).To(MatchRegexp(
+				`hs_aws_unmanaged_resources\{account="%s",[^}]*kind="vpc"[^}]*\} [1-9]`, hubAccount))
+			Expect(metricsOutput).To(MatchRegexp(
+				`hs_aws_unmanaged_resources\{account="%s",[^}]*kind="subnet"[^}]*\} [1-9]`, hubAccount))
+			Expect(metricsOutput).To(MatchRegexp(
+				`hs_aws_unmanaged_resources_total\{account="%s",[^}]*kind="vpc"[^}]*\} [1-9]`, hubAccount))
+			Expect(metricsOutput).To(MatchRegexp(
+				`hs_aws_unmanaged_resources_total\{account="%s",[^}]*kind="subnet"[^}]*\} [1-9]`, hubAccount))
+		})
+
+		It("takes an unmanaged VPC and its subnet over with ResourceImports", func() {
+			By("importing the sandbox VPC and the untagged subnet inside it")
+			applyImports(fmt.Sprintf(`
+apiVersion: aws.hypersurgery/v1alpha1
+kind: ResourceImport
+metadata:
+  name: sandbox-vpc-import
+  namespace: default
+spec:
+  scopeRef: %[1]s
+  account: "%[2]s"
+  region: %[3]s
+  resourceID: %[4]s
+  requestedBy: e2e
+  tags:
+    hs/managed: "true"
+    hs/owner: team-sandbox
+---
+apiVersion: aws.hypersurgery/v1alpha1
+kind: ResourceImport
+metadata:
+  name: sandbox-subnet-import
+  namespace: default
+spec:
+  scopeRef: %[1]s
+  account: "%[2]s"
+  region: %[3]s
+  resourceID: %[5]s
+  requestedBy: e2e
+  tags:
+    hs/owner: team-sandbox
+    hs/env: dev
+    hs/tier: private
+`, scopeName, hubAccount, awsRegion, fix.unmanagedVPC, fix.unmanagedSubnet))
+
+			for _, name := range []string{"sandbox-vpc-import", "sandbox-subnet-import"} {
+				Eventually(func(g Gomega) {
+					imp := &awsv1alpha1.ResourceImport{}
+					g.Expect(getNamespaced("resourceimport", "default", name, imp)).To(Succeed())
+					g.Expect(imp.Status.State).To(Equal(awsv1alpha1.ImportApplied), imp.Status.Error)
+					g.Expect(importReady(imp)).NotTo(BeNil())
+					g.Expect(importReady(imp).Status).To(Equal(metav1.ConditionTrue), importReady(imp).Message)
+					g.Expect(imp.Status.AppliedTags).To(Equal(imp.Spec.Tags))
+					g.Expect(imp.Status.AppliedTime).NotTo(BeNil())
+				}, 2*time.Minute, 2*time.Second).Should(Succeed())
+			}
+
+			By("checking the tags in AWS, and that the ones already there survived")
+			Expect(tagsOf(context.Background(), fix.unmanagedVPC)).To(SatisfyAll(
+				HaveKeyWithValue("hs/managed", "true"),
+				HaveKeyWithValue("hs/owner", "team-sandbox"),
+				HaveKeyWithValue("Name", "sandbox"),
+			))
+			Expect(tagsOf(context.Background(), fix.unmanagedSubnet)).To(SatisfyAll(
+				HaveKeyWithValue("hs/owner", "team-sandbox"),
+				HaveKeyWithValue("hs/tier", "private"),
+			))
+
+			By("waiting for the inventory to pick both up")
+			Eventually(func(g Gomega) {
+				vpc := &awsv1alpha1.VPC{}
+				g.Expect(getObject("vpc", fix.unmanagedVPC, vpc)).To(Succeed())
+				g.Expect(vpc.Status.Owner).To(Equal("team-sandbox"))
+
+				sn := &awsv1alpha1.Subnet{}
+				g.Expect(getObject("subnet", fix.unmanagedSubnet, sn)).To(Succeed())
+				g.Expect(sn.Spec.VPCID).To(Equal(fix.unmanagedVPC))
+				g.Expect(sn.Status.Owner).To(Equal("team-sandbox"))
+				g.Expect(sn.Status.MissingTags).To(BeEmpty())
+			}, 3*time.Minute, 2*time.Second).Should(Succeed())
+		})
+
+		It("changes nothing for a dry-run import", func() {
+			By("creating one more untagged subnet in AWS")
+			subnet := createSubnet(context.Background(), hubEC2(context.Background()),
+				fix.unmanagedVPC, "10.50.2.0/24", awsRegion+"b")
+
+			applyImports(fmt.Sprintf(`
+apiVersion: aws.hypersurgery/v1alpha1
+kind: ResourceImport
+metadata:
+  name: dry-run-import
+  namespace: default
+spec:
+  scopeRef: %s
+  account: "%s"
+  region: %s
+  resourceID: %s
+  requestedBy: e2e
+  dryRun: true
+  tags:
+    hs/owner: team-sandbox
+`, scopeName, hubAccount, awsRegion, subnet))
+
+			Eventually(func(g Gomega) {
+				imp := &awsv1alpha1.ResourceImport{}
+				g.Expect(getNamespaced("resourceimport", "default", "dry-run-import", imp)).To(Succeed())
+				g.Expect(imp.Status.State).To(Equal(awsv1alpha1.ImportSkipped))
+				g.Expect(importReady(imp)).NotTo(BeNil())
+				g.Expect(importReady(imp).Reason).To(Equal("DryRun"))
+				g.Expect(importReady(imp).Message).To(ContainSubstring("hs/owner=team-sandbox"))
+				g.Expect(imp.Status.AppliedTags).To(BeEmpty())
+				g.Expect(imp.Status.AppliedTime).To(BeNil())
+			}, 2*time.Minute, 2*time.Second).Should(Succeed())
+
+			By("checking that AWS never heard about it")
+			// Give a wrong reconcile time to show itself: a dry run that tags anyway would have
+			// done so long before the import reported Skipped.
+			Consistently(func(g Gomega) {
+				g.Expect(tagsOf(context.Background(), subnet)).To(BeEmpty())
+			}, 15*time.Second, 3*time.Second).Should(Succeed())
+		})
+
+		// +kubebuilder:scaffold:e2e-webhooks-checks
+
+		// TODO: Customize the e2e test suite with scenarios specific to your project.
+		// Consider applying sample/CR(s) and check their status and/or verifying
+		// the reconciliation by using the metrics, i.e.:
+		// metricsOutput, err := getMetricsOutput()
+		// Expect(err).NotTo(HaveOccurred(), "Failed to retrieve logs from curl pod")
+		// Expect(metricsOutput).To(ContainSubstring(
+		//    fmt.Sprintf(`controller_runtime_reconcile_total{controller="%s",result="success"} 1`,
+		//    strings.ToLower(<Kind>),
+		// ))
+	})
+})
+
+// serviceAccountToken returns a token for the specified service account in the given namespace.
+// It uses the Kubernetes TokenRequest API to generate a token by directly sending a request
+// and parsing the resulting token from the API response.
+func serviceAccountToken() (string, error) {
+	const tokenRequestRawString = `{
+		"apiVersion": "authentication.k8s.io/v1",
+		"kind": "TokenRequest"
+	}`
+
+	By("creating temporary file to store the token request")
+	secretName := fmt.Sprintf("%s-token-request", serviceAccountName)
+	tokenRequestFile := filepath.Join("/tmp", secretName)
+	err := os.WriteFile(tokenRequestFile, []byte(tokenRequestRawString), os.FileMode(0o644))
+	if err != nil {
+		return "", err
+	}
+
+	var out string
+	verifyTokenCreation := func(g Gomega) {
+		By("executing kubectl command to create the token")
+		cmd := exec.Command("kubectl", "create", "--raw", fmt.Sprintf(
+			"/api/v1/namespaces/%s/serviceaccounts/%s/token",
+			namespace,
+			serviceAccountName,
+		), "-f", tokenRequestFile)
+
+		output, err := cmd.CombinedOutput()
+		g.Expect(err).NotTo(HaveOccurred())
+
+		By("parsing the JSON output to extract the token")
+		var token tokenRequest
+		err = json.Unmarshal(output, &token)
+		g.Expect(err).NotTo(HaveOccurred())
+
+		out = token.Status.Token
+	}
+	Eventually(verifyTokenCreation).Should(Succeed())
+
+	return out, err
+}
+
+// dumpManagerState prints what the manager pods are doing, so a failed rollout says why.
+func dumpManagerState() {
+	for _, args := range [][]string{
+		{"get", "pods", "-n", namespace, "-o", "wide"},
+		{"describe", "deployment/" + deploymentName, "-n", namespace},
+		{"logs", "-n", namespace, "-l", "control-plane=controller-manager", "--all-containers", "--tail=200"},
+		{"logs", "-n", namespace, "-l", "control-plane=controller-manager", "--all-containers", "--tail=200", "--previous"},
+	} {
+		out, err := utils.Run(exec.Command("kubectl", args...))
+		_, _ = fmt.Fprintf(GinkgoWriter, "\n--- kubectl %s ---\n%s\nerr: %v\n", strings.Join(args, " "), out, err)
+	}
+}
+
+// getObject reads a cluster-scoped object with kubectl into obj.
+func getObject(kind, name string, obj any) error {
+	out, err := utils.Run(exec.Command("kubectl", "get", kind, name, "-o", "json"))
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal([]byte(out), obj)
+}
+
+// getNamespaced reads a namespaced object with kubectl into obj.
+func getNamespaced(kind, ns, name string, obj any) error {
+	out, err := utils.Run(exec.Command("kubectl", "get", kind, name, "-n", ns, "-o", "json"))
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal([]byte(out), obj)
+}
+
+// applyImports applies a manifest given as text.
+func applyImports(manifest string) {
+	cmd := exec.Command("kubectl", "apply", "-f", "-")
+	cmd.Stdin = strings.NewReader(manifest)
+	_, err := utils.Run(cmd)
+	Expect(err).NotTo(HaveOccurred(), "Failed to apply the ResourceImports")
+}
+
+// targetStatus returns the status of one account's target in the scope's region, or nil.
+func targetStatus(scope *awsv1alpha1.NetworkScope, account string) *awsv1alpha1.TargetStatus {
+	for i := range scope.Status.Targets {
+		if scope.Status.Targets[i].Account == account && scope.Status.Targets[i].Region == awsRegion {
+			return &scope.Status.Targets[i]
+		}
+	}
+	return nil
+}
+
+// sumUnmanaged adds up the per-target counts, which is what the scope total should be.
+func sumUnmanaged(scope *awsv1alpha1.NetworkScope) int32 {
+	var total int32
+	for _, t := range scope.Status.Targets {
+		total += t.UnmanagedVPCs + t.UnmanagedSubnets
+	}
+	return total
+}
+
+func importReady(imp *awsv1alpha1.ResourceImport) *metav1.Condition {
+	for i := range imp.Status.Conditions {
+		if imp.Status.Conditions[i].Type == "Ready" {
+			return &imp.Status.Conditions[i]
+		}
+	}
+	return nil
+}
+
+func claimReady(claim *awsv1alpha1.SubnetClaim) *metav1.Condition {
+	for i := range claim.Status.Conditions {
+		if claim.Status.Conditions[i].Type == "Ready" {
+			return &claim.Status.Conditions[i]
+		}
+	}
+	return nil
+}
+
+func readyCondition(scope *awsv1alpha1.NetworkScope) *metav1.Condition {
+	for i := range scope.Status.Conditions {
+		if scope.Status.Conditions[i].Type == "Ready" {
+			return &scope.Status.Conditions[i]
+		}
+	}
+	return nil
+}
+
+// getMetricsOutput retrieves and returns the logs from the curl pod used to access the metrics endpoint.
+func getMetricsOutput() (string, error) {
+	By("getting the curl-metrics logs")
+	cmd := exec.Command("kubectl", "logs", "curl-metrics", "-n", namespace)
+	return utils.Run(cmd)
+}
+
+// tokenRequest is a simplified representation of the Kubernetes TokenRequest API response,
+// containing only the token field that we need to extract.
+type tokenRequest struct {
+	Status struct {
+		Token string `json:"token"`
+	} `json:"status"`
+}

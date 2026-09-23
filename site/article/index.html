@@ -1,0 +1,607 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>I Must Break Your Spreadsheet</title>
+<meta name="description" content="Your subnet inventory is a rumour in a table. A Kubernetes operator reads the tags instead, across every account, and tells you who created the thing nobody tagged.">
+<link rel="canonical" href="https://hypersurgery.dev/article/">
+<meta name="author" content="Ivan Drago">
+<meta property="og:site_name" content="hypersurgery">
+<meta property="og:title" content="I Must Break Your Spreadsheet">
+<meta property="og:description" content="Your subnet inventory is a rumour in a table. A Kubernetes operator reads the tags instead, across every account, and tells you who created the thing nobody tagged.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://hypersurgery.dev/article/">
+<meta property="og:image" content="https://hypersurgery.dev/article/img/cover.png?v=2">
+<meta property="article:published_time" content="2026-09-23">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="I Must Break Your Spreadsheet">
+<meta name="twitter:description" content="Your subnet inventory is a rumour in a table. A Kubernetes operator reads the tags instead.">
+<meta name="twitter:image" content="https://hypersurgery.dev/article/img/cover.png?v=2">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=PT+Serif:ital,wght@0,400;0,700;1,400;1,700&family=PT+Sans+Narrow:wght@400;700&family=PT+Mono&display=swap" rel="stylesheet">
+<style>
+/* A newspaper has two inks and the paper underneath. Everything here obeys that. */
+:root {
+  --paper: #f2ece0;
+  --paper-2: #f7f3ea;
+  --paper-3: #e9e1d2;
+  --ink: #1a1714;
+  --ink-soft: #4a443c;
+  --faint: #7b7266;
+  --red: #c1121f;
+  --red-dark: #8f0d17;
+  --hair: #c9bfae;
+  --serif: "PT Serif", Georgia, "Times New Roman", serif;
+  --narrow: "PT Sans Narrow", "Arial Narrow", sans-serif;
+  --mono: "PT Mono", "JetBrains Mono", ui-monospace, monospace;
+  --max: 860px;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  background: var(--paper);
+  /* the tooth of cheap newsprint, kept faint enough to read through */
+  background-image:
+    radial-gradient(rgba(26,23,20,0.035) 1px, transparent 1px),
+    radial-gradient(rgba(26,23,20,0.025) 1px, transparent 1px);
+  background-size: 3px 3px, 7px 7px;
+  background-position: 0 0, 2px 3px;
+  color: var(--ink);
+  font-family: var(--serif);
+  font-size: 18px;
+  line-height: 1.68;
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--red); text-decoration: none; border-bottom: 1px solid rgba(193,18,31,.35); }
+a:hover { border-bottom-color: var(--red); }
+.wrap { max-width: var(--max); margin: 0 auto; padding: 0 20px; }
+
+/* ── index strip ─────────────────────────────────────────────────────── */
+.strip { border-bottom: 1px solid var(--ink); background: var(--paper-2); }
+.strip .wrap { display: flex; align-items: center; gap: 18px; height: 40px;
+  font-family: var(--narrow); text-transform: uppercase; letter-spacing: .08em; font-size: 13px; }
+.strip a { color: var(--ink); border: 0; }
+.strip a:hover { color: var(--red); }
+.strip .sp { flex: 1; }
+
+/* ── masthead ────────────────────────────────────────────────────────── */
+header.mast { padding: 26px 0 0; }
+.rule-red { height: 7px; background: var(--red); }
+.rule-thick { border-top: 4px solid var(--ink); border-bottom: 1px solid var(--ink); height: 7px; margin: 0; }
+.rule-thin { border-top: 1px solid var(--ink); margin: 0; }
+.mast h1 {
+  font-family: var(--serif); font-weight: 700;
+  font-size: clamp(34px, 7.2vw, 74px); line-height: 1.02; letter-spacing: .02em;
+  text-transform: uppercase; text-align: center; margin: 18px 0 14px;
+}
+.mast h1 .red { color: var(--red); }
+.dateline { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 18px;
+  font-family: var(--narrow); text-transform: uppercase; letter-spacing: .1em; font-size: 12.5px;
+  color: var(--ink-soft); padding: 8px 0 10px; }
+.standfirst { font-size: 21px; line-height: 1.5; text-align: center; font-style: italic;
+  margin: 18px auto 14px; max-width: 46ch; }
+.byline { font-family: var(--narrow); text-transform: uppercase; letter-spacing: .1em;
+  font-size: 13px; text-align: center; color: var(--ink-soft); padding-bottom: 20px; }
+.byline b { color: var(--ink); }
+
+/* ── body ────────────────────────────────────────────────────────────── */
+article { padding: 26px 0 40px; }
+article p { margin: 0 0 16px; text-align: justify; hyphens: auto; }
+article p strong { font-weight: 700; }
+.first p:first-of-type::first-letter {
+  float: left; font-size: 74px; line-height: .78; font-weight: 700;
+  padding: 6px 10px 0 0; color: var(--red);
+}
+h2 { font-family: var(--narrow); font-weight: 700; text-transform: uppercase;
+  letter-spacing: .06em; font-size: clamp(22px, 3.4vw, 30px); line-height: 1.15;
+  text-align: center; margin: 48px 0 18px; padding: 10px 0;
+  border-top: 3px solid var(--ink); border-bottom: 1px solid var(--ink); }
+h3 { font-family: var(--narrow); font-weight: 700; text-transform: uppercase; letter-spacing: .05em;
+  font-size: 18px; margin: 30px 0 8px; }
+blockquote { margin: 32px 0; padding: 18px 0; text-align: center;
+  border-top: 3px double var(--ink); border-bottom: 3px double var(--ink); }
+blockquote p { margin: 0; text-align: center; font-size: 23px; line-height: 1.35; font-weight: 700; }
+blockquote cite { display: block; margin-top: 8px; font-family: var(--narrow); font-style: normal;
+  text-transform: uppercase; letter-spacing: .1em; font-size: 12px; color: var(--faint); }
+code { font-family: var(--mono); font-size: .84em; background: var(--paper-3); padding: 0 4px; }
+pre { background: var(--paper-2); border: 1px solid var(--ink); padding: 14px 16px;
+  overflow-x: auto; font-family: var(--mono); font-size: 13px; line-height: 1.55; margin: 22px 0; }
+pre code { background: none; padding: 0; font-size: inherit; }
+
+figure { margin: 34px 0; }
+figure img { display: block; width: 100%; height: auto; border: 1px solid var(--ink); }
+figcaption { margin-top: 8px; font-size: 14px; font-style: italic; color: var(--ink-soft);
+  text-align: center; border-bottom: 1px solid var(--hair); padding-bottom: 10px; }
+figcaption b { font-family: var(--narrow); font-style: normal; text-transform: uppercase;
+  letter-spacing: .08em; font-size: 12.5px; color: var(--ink); }
+
+.box { border: 3px double var(--ink); padding: 18px 20px; margin: 30px 0; background: var(--paper-2); }
+.box .box-head { font-family: var(--narrow); font-weight: 700; text-transform: uppercase;
+  letter-spacing: .1em; font-size: 13px; text-align: center; color: var(--red);
+  border-bottom: 1px solid var(--hair); padding-bottom: 8px; margin-bottom: 12px; }
+.box p { margin: 0; }
+
+.results { border: 3px double var(--ink); margin: 36px 0; padding: 20px; text-align: center; background: var(--paper-2); }
+.results .head { font-family: var(--narrow); text-transform: uppercase; letter-spacing: .14em;
+  font-size: 12.5px; color: var(--faint); margin-bottom: 12px; }
+.results table { width: 100%; border-collapse: collapse; }
+.results td { padding: 6px 4px; font-size: 19px; }
+.results td.n { font-family: var(--narrow); font-weight: 700; font-size: 34px; width: 90px; }
+.results td.l { text-align: left; text-transform: uppercase; font-family: var(--narrow);
+  letter-spacing: .06em; font-size: 17px; }
+.results tr + tr td { border-top: 1px solid var(--hair); }
+.results .win { color: var(--red); }
+
+footer { border-top: 4px solid var(--ink); margin-top: 40px; padding: 18px 0 48px;
+  font-family: var(--narrow); text-transform: uppercase; letter-spacing: .06em;
+  font-size: 13px; color: var(--ink-soft); }
+footer .wrap { display: flex; flex-wrap: wrap; gap: 8px 18px; justify-content: space-between; }
+footer a { color: var(--ink); border: 0; }
+footer a:hover { color: var(--red); }
+.colophon { font-family: var(--serif); text-transform: none; letter-spacing: 0; font-size: 14px;
+  font-style: italic; color: var(--faint); margin-top: 14px; }
+
+@media (max-width: 620px) {
+  body { font-size: 17px; }
+  article p { text-align: left; }
+  .standfirst { font-size: 19px; }
+}
+</style>
+</head>
+<body>
+
+<div class="strip">
+  <div class="wrap">
+    <a href="https://hypersurgery.dev">Subnet Operator</a>
+    <span class="sp"></span>
+    <a href="https://hypersurgery.dev/docs/">Install</a>
+    <a href="https://hypersurgery.dev/dashboard/">Dashboard</a>
+    <a href="https://github.com/aivandrago/subnet-operator">Source</a>
+  </div>
+</div>
+
+<header class="mast">
+  <div class="wrap">
+    <div class="rule-red"></div>
+    <div class="dateline">
+      <span>No. 1</span><span>Wednesday, 23 September 2026</span>
+      <span>Organ of the Network Department</span><span>Price: free</span>
+    </div>
+    <hr class="rule-thin">
+    <h1>I must break <span class="red">your spreadsheet</span></h1>
+    <hr class="rule-thick">
+    <p class="standfirst">
+      One thousand rows. Four owners. A column named “temporary — delete after migration”,
+      added in 2021. This is not an inventory. This is a rumour, in a table.
+    </p>
+    <div class="byline">
+      By <b>Ivan Drago</b> · Maintainer, subnet-operator · Reading time 12 minutes
+    </div>
+    <hr class="rule-thin">
+  </div>
+</header>
+
+<article>
+<div class="wrap">
+
+  <figure>
+    <img src="https://hypersurgery.dev/article/img/hero-punch.png?v=2" width="1800" height="930"
+         alt="A heavy blocky boxer lands a punch on a spreadsheet, which shatters into flying cells full of broken formulas and half-remembered CIDR blocks, under the line I must break your spreadsheet">
+    <figcaption><b>Fig. 1.</b> The moment of contact. No spreadsheets were harmed; they were simply made unnecessary.</figcaption>
+  </figure>
+
+  <div class="first">
+  <p>
+    I do not hate your spreadsheet. Hatred is inefficient. I observe only that it is
+    <strong>wrong</strong>, that everyone in the room knows it is wrong, and that the meeting
+    continues.
+  </p>
+  </div>
+
+  <p>
+    Somewhere in your company there is a tab named <code>Sheet1</code>. It lists VPCs and subnets
+    across fifteen accounts. It is what a person opens when someone asks “can we put the new
+    service in eu-central-1?”. It was accurate once. On a Tuesday. Since then: four Terraform
+    applies, one incident, one intern, and one architect who created a VPC by hand “just to test
+    something” and then went on holiday.
+  </p>
+
+  <figure>
+    <img src="https://hypersurgery.dev/article/img/fig1-patient.png?v=2" width="1640" height="600"
+         alt="A spreadsheet lying on a hospital stretcher with a drip labelled manual, a monitor showing a flat line marked TRUTH 0 bpm, and a counter reading plus 37 untracked subnets">
+    <figcaption><b>Fig. 2.</b> The patient is stable. The patient also describes a network that stopped existing four months ago.</figcaption>
+  </figure>
+
+  <blockquote>
+    <p>You do not maintain an inventory. The inventory maintains you.</p>
+    <cite>Observation, not insult</cite>
+  </blockquote>
+
+  <h2>I do not read your list. I read your tags.</h2>
+
+  <p>The idea is small. Small is good. Complicated things lose.</p>
+
+  <p>
+    <strong>The cloud already knows what exists.</strong> Every subnet, every VPC, every CIDR
+    block, in every account, in every region. It knows this perfectly, constantly, for free.
+    Nobody types it. The only thing the cloud does not know is who owns each piece and what it is
+    for — and that has an answer too, if you write it where the resource lives:
+    <strong>on the resource, as a tag</strong>.
+  </p>
+
+  <p>
+    So the operator keeps no list. It goes and looks. Every ten minutes, and within ten seconds
+    of any change, because CloudTrail tells it. What it finds becomes Kubernetes objects you can
+    query with <code>kubectl</code>, scrape with Prometheus and — if you truly cannot let go —
+    export back into a Google Sheet that is rewritten on every refresh and never read back. You
+    may keep your spreadsheet. You may not maintain it.
+  </p>
+
+  <figure>
+    <img src="https://hypersurgery.dev/article/img/fig2-architecture.png?v=2" width="1640" height="800"
+         alt="Architecture diagram: the operator in an EKS cluster assumes a read-only role in each spoke account, calls EC2 describe APIs, mirrors VPCs and subnets into Kubernetes objects, and receives change events through CloudTrail, EventBridge and SQS">
+    <figcaption><b>Fig. 3.</b> The entire read path. Boring on purpose. Boring things do not wake you at three in the morning.</figcaption>
+  </figure>
+
+  <h2>You give me one file. I give you the truth.</h2>
+
+  <p>
+    There is no wizard. There is no onboarding call. There is one object that says which accounts
+    and which regions belong to you, and what a subnet must carry to be considered documented.
+  </p>
+
+<pre><code>apiVersion: aws.hypersurgery/v1alpha1
+kind: NetworkScope
+metadata:
+  name: organization
+spec:
+  accounts:
+    - id: "111111111111"                      # the hub: the operator's own credentials
+    - id: "222222222222"
+      roleARN: arn:aws:iam::222222222222:role/aws-subnet-operator-readonly
+    - id: "333333333333"
+      roleARN: arn:aws:iam::333333333333:role/aws-subnet-operator-readonly
+      externalID: a-shared-secret-from-the-stackset
+      regions: [us-east-1]                    # this one matters in one region only
+  regions: [eu-central-1, eu-west-1]
+  vpcTagSelector:
+    hs/managed: "true"                        # drop this to discover every VPC
+  requiredSubnetTags: [hs/owner, hs/env, hs/tier]
+  tagKeys:                                    # rename to whatever your company already uses
+    owner: hs/owner
+    env: hs/env
+    tier: hs/tier
+  resyncInterval: 10m</code></pre>
+
+  <p>Apply it. Then ask the cluster a question you previously asked a person:</p>
+
+<pre><code>$ kubectl get subnets -o wide
+
+NAME              VPC        CIDR           AZ              PUBLIC   FREE IPS   USED %   OWNER
+subnet-0a1b2c3d   vpc-0aaa   10.20.1.0/24   eu-central-1a   false    51         79       team-payments
+subnet-0b19c7d2   vpc-0aaa   10.20.2.0/24   eu-central-1b   false    44         82       team-web
+subnet-07c8d9e0   vpc-0bbb   10.30.4.0/22   eu-west-1a      true     812        80       &lt;none&gt;
+
+$ kubectl get subnets -l aws.hypersurgery/account=222222222222,aws.hypersurgery/env=prod
+$ kubectl get networkscope organization -o yaml | yq '.status'</code></pre>
+
+  <p>That third row has no owner. Hold that thought. We will return to him.</p>
+
+  <div class="box">
+    <div class="box-head">The uncomfortable part</div>
+    <p>
+      Point this at your accounts on day one and it will show you every network carrying no owner
+      tag. In every estate I have seen, that number is not zero and it is not small. This is not a
+      defect in the tool. This is the report you have been avoiding.
+    </p>
+  </div>
+
+  <h2>He appears in the ring</h2>
+
+  <figure>
+    <img src="https://hypersurgery.dev/article/img/fig3-ring.png?v=2" width="1640" height="640"
+         alt="A boxing ring: a heavy blocky figure labelled subnet-operator faces a small untagged subnet in tiny gloves, labelled created by hand at 14:52">
+    <figcaption><b>Fig. 4.</b> Somebody clicked “Create subnet” in the console. This happens in the best organisations. The only question is whether you find out.</figcaption>
+  </figure>
+
+  <p>
+    A subnet with no tags is not a crime. It is a fact. What matters is what happens in the next
+    five minutes. There are three answers, and you choose the one you deserve.
+  </p>
+
+  <h3>One: I tell you.</h3>
+  <p>
+    A metric rises. An alert fires with the resource ID, the account, the region and — the part
+    people enjoy — <strong>the principal that created it</strong>, taken straight from the
+    CloudTrail event. Slack or Teams receives a message that names a human being. I am told this
+    changes behaviour faster than any policy document.
+  </p>
+
+  <figure>
+    <img src="https://hypersurgery.dev/article/img/fig7-slack-teams.png?v=2" width="1640" height="765"
+         alt="The same alert delivered twice: a Slack message in a net-ops channel and a Microsoft Teams adaptive card, both naming the subnet, the account, the region, the person who created it and the policy decision, with buttons to import it or open the dashboard">
+    <figcaption><b>Fig. 5.</b> One alert, two destinations. Alertmanager shapes the payload; the operator only supplies the facts — including the name of the person who created the thing.</figcaption>
+  </figure>
+
+  <h3>Two: you press a button.</h3>
+  <p>
+    The dashboard lists every unmanaged network next to a button. You choose owner, environment,
+    tier. The operator writes those tags onto the real resource in AWS with
+    <code>ec2:CreateTags</code> and nothing else — the resource keeps its configuration, and tags
+    the import does not name are left alone.
+  </p>
+
+<pre><code>apiVersion: aws.hypersurgery/v1alpha1
+kind: ResourceImport
+metadata:
+  name: subnet-04d1c2b3a4e5f607-import
+spec:
+  scopeRef: organization
+  account: "333333333333"
+  region: eu-central-1
+  resourceID: subnet-04d1c2b3a4e5f607
+  tags:
+    hs/managed: "true"
+    hs/owner: team-data
+    hs/env: prod
+    hs/tier: private
+  requestedBy: anton (ticket NET-412)   # free text, for the audit trail
+  dryRun: false</code></pre>
+
+  <h3>Three: you press nothing.</h3>
+  <p>
+    Switch the policy on and the operator decides for itself, in a fixed order. If Terraform made
+    the resource, it is left alone — Terraform owns it, and a tag fight between two systems
+    benefits nobody. If the creator maps to a team, that team owns it. Otherwise it inherits from
+    the parent VPC. And if even that fails, it is marked <code>no_owner</code> and a human is
+    asked, because <strong>a wrong owner is worse than an admitted unknown</strong>.
+  </p>
+
+  <figure>
+    <img src="https://hypersurgery.dev/article/img/fig4-policy.png?v=2" width="1640" height="680"
+         alt="Decision tree: created by Terraform means skip; creator maps to a team means tag with that team; parent VPC has an owner means inherit it; otherwise mark no owner, alert a human, never guess">
+    <figcaption><b>Fig. 6.</b> The policy in full. Note the last line: the operator would rather admit ignorance than write a plausible lie into your infrastructure.</figcaption>
+  </figure>
+
+<pre><code>  # in the same NetworkScope
+  discoverUnmanaged: true               # count what the selector leaves out
+
+  autoImport:
+    mode: DryRun                        # Off | DryRun | Apply
+    namespace: platform                 # where generated ResourceImports land
+
+    fromCreator:                        # first rule wins; a prefix matches a whole role
+      - principalPrefix: "arn:aws:sts::222222222222:assumed-role/payments-"
+        tags: { hs/owner: team-payments, hs/env: prod }
+      - principalPrefix: "arn:aws:sts::111111111111:assumed-role/data-platform-"
+        tags: { hs/owner: team-data }
+
+    inheritFromVPC: [hs/owner, hs/env]  # a subnet usually belongs to whoever owns the network
+
+    accountDefaults:
+      - account: "111111111111"
+        tags: { hs/owner: team-platform, hs/env: prod }
+
+    skip:                               # never touch what another system manages
+      - tagKey: managed-by
+        tagValue: terraform</code></pre>
+
+  <p>
+    Start in <code>DryRun</code>. The operator still creates the import objects but changes
+    nothing. Read a day of them — <code>kubectl get resourceimports -A</code> — and switch to
+    <code>Apply</code> when the rules stop surprising you. This is not caution. This is
+    arithmetic: the cost of a wrong tag applied automatically at three in the morning is higher
+    than the cost of reading a list once.
+  </p>
+
+  <h2>I show you on the screen</h2>
+
+  <p>
+    Numbers in a terminal are for me. People need a picture. The dashboard ships with the project
+    and runs on demo data, so you can look at it before installing anything:
+    <a href="https://hypersurgery.dev/dashboard/">hypersurgery.dev/dashboard</a>. It installs as
+    an app, and it has four themes, because taste is not an engineering argument and I lost that
+    one.
+  </p>
+
+  <figure>
+    <img src="https://hypersurgery.dev/article/img/dashboard.png?v=2" width="1440" height="900"
+         alt="The subnet inventory dashboard: tiles for subnets tracked, free addresses, subnets above 80 percent, missing tags, overlapping CIDRs and unreachable accounts; utilisation by environment; free addresses by account over 24 hours; the fullest subnets; and discovery state per account and region with CloudTrail events">
+    <figcaption><b>Fig. 7.</b> The live demo dashboard. Tiles that matter, the fullest subnets, and — bottom right — which account last failed and why.</figcaption>
+  </figure>
+
+  <p>
+    And this is the panel the whole article is about. Who created the thing, what the policy
+    decided, and a button that ends the argument:
+  </p>
+
+  <figure>
+    <img src="https://hypersurgery.dev/article/img/panel-unmanaged.png?v=2" width="1170" height="390"
+         alt="The unmanaged resources panel: five resources with the person or system that created each one, the CIDR, and the policy decision — skipped because Terraform owns it, would import as team-data, would import as team-payments, or no owner rule with an alert sent — each with an import button">
+    <figcaption><b>Fig. 8.</b> Two were made by Terraform, so they are skipped. Two get an owner from the policy. One has no rule that fits, so it stays unmanaged and a person is asked.</figcaption>
+  </figure>
+
+  <h2>Grafana. Numbers do not lie.</h2>
+
+  <p>
+    The chart installs a Grafana dashboard and a <code>PrometheusRule</code>. You do not build
+    panels by hand. Every metric carries the account, the region, the VPC, the owner and the
+    environment as labels, so the same query answers “which team is running out of addresses”
+    and “which account is not answering”.
+  </p>
+
+  <figure>
+    <img src="https://hypersurgery.dev/article/img/fig6-grafana.png?v=2" width="1640" height="957"
+         alt="A Grafana dashboard: stat tiles including unmanaged resources highlighted, free IPv4 addresses by account over time, utilisation by environment against an 80 percent threshold, resources appearing without the managed tag by kind, alert rules with UnmanagedNetworkResource firing, and the resulting message naming the subnet, the account and the person who created it">
+    <figcaption><b>Fig. 9.</b> What it looks like when somebody creates a subnet from the console on a Friday afternoon.</figcaption>
+  </figure>
+
+  <p>The alerts that ship, and what each one actually means:</p>
+
+<pre><code>UnmanagedNetworkResource   a network appeared that carries no hs/managed tag
+SubnetNearlyFull           free addresses below the threshold, per subnet
+SubnetFull                 zero usable IPv4 addresses left
+MissingRequiredTags        a tracked subnet lost a tag you declared required
+VPCCIDRsOverlap            two VPCs in the scope claim the same range
+TargetUnreachable          an account or region stopped answering; last state kept</code></pre>
+
+  <p>
+    The last one deserves a sentence. When an account cannot be reached, the operator does
+    <strong>not</strong> erase what it knew. It keeps the last state, marks the target
+    unreachable and says so in the status and in the alert. An inventory that quietly loses rows
+    during an outage is worse than no inventory, because you will trust it.
+  </p>
+
+  <h2>You want capacity? Ask me.</h2>
+
+  <p>
+    Reading is most of the value. But once the operator knows every CIDR in the VPC, the next
+    question answers itself: where is the free space? So a team can ask for a subnet instead of
+    opening a ticket and waiting two days for a person with a calculator.
+  </p>
+
+<pre><code>apiVersion: aws.hypersurgery/v1alpha1
+kind: SubnetClaim
+metadata:
+  name: payments
+spec:
+  scopeRef: organization
+  account: "222222222222"
+  region: eu-central-1
+  vpcID: vpc-0aa11bb2cc33dd44e
+  prefixLength: 24
+  availabilityZones: [eu-central-1a, eu-central-1b, eu-central-1c]
+  mode: Create                 # Allocate = reserve the CIDRs only, and let Terraform build
+  owner: team-payments
+  env: prod
+  tier: private
+  tags:
+    cost-center: cc-42</code></pre>
+
+  <p>
+    Three free <code>/24</code>s are found, respecting what already exists and what other claims
+    have reserved, and the subnets are created with your tags. Terraform-first teams set
+    <code>mode: Allocate</code>: the operator reserves the ranges, publishes them in
+    <code>status.allocations</code>, and Terraform creates the subnets from there. Nobody has to
+    give up their pipeline to stop guessing at CIDRs.
+  </p>
+
+  <h2>Training montage</h2>
+
+  <p>
+    Your method is heroic. A person, in the snow, pulling a sledge of binders. My method is a
+    laboratory with sensors, and it is not heroic at all. One of us is measured. One of us is a
+    spreadsheet.
+  </p>
+
+  <figure>
+    <img src="https://hypersurgery.dev/article/img/fig5-chart.png?v=2" width="1640" height="640"
+         alt="Bar chart of how long the inventory takes to become true again after a change: someone remembers, days or never; quarterly audit, 90 days; operator with resync only, 10 minutes; operator with events, about 10 seconds">
+    <figcaption><b>Fig. 10.</b> The two lower bars are measured in CI against a mock AWS. The two upper bars are measured against every organisation I have ever asked.</figcaption>
+  </figure>
+
+  <h2>If it drifts, it drifts</h2>
+
+  <p>Now the part where I disappoint you. On purpose.</p>
+
+  <p>
+    <strong>The operator never deletes a cloud resource.</strong> Not when you delete the
+    Kubernetes object. Not when a subnet leaves the scope. Not when the thing is obviously,
+    embarrassingly unused. Deletion stays a decision a human makes, in daylight, with their name
+    on it. A tool that can tidy your network by itself is a tool that can remove your network by
+    itself, and I have no interest in winning that fight.
+  </p>
+
+  <p>
+    <strong>It is read-only until you say otherwise.</strong> Writing needs a separate IAM role
+    and a flag on the process. Two deliberate acts. If you never perform them, the operator
+    spends its entire career as a very well-informed observer — which is already most of the
+    value.
+  </p>
+
+  <p>
+    <strong>And it refuses impossible work at the door.</strong> An admission webhook rejects a
+    claim that cannot be satisfied — a prefix that does not fit the VPC, an availability zone
+    from another region, a scope that does not cover the account — at <code>kubectl apply</code>,
+    with a readable message, instead of accepting it and failing quietly in a reconcile loop
+    forty seconds later.
+  </p>
+
+  <div class="box">
+    <div class="box-head">What it does not know yet</div>
+    <p>
+      Everything above is exercised in CI: unit tests, a real Kubernetes API server, and an
+      end-to-end suite in a Kind cluster against a mock AWS across two accounts. A conformance
+      run against a genuine AWS organisation is still an open item, and until it passes, the
+      project page says so and so do I. You will not be sold production readiness by someone who
+      has not been to production.
+    </p>
+  </div>
+
+  <div class="results">
+    <div class="head">Result of the bout</div>
+    <table>
+      <tr><td class="n">0</td><td class="l">Spreadsheet</td><td>rows typed by hand, last true on a Tuesday</td></tr>
+      <tr><td class="n win">1</td><td class="l">Tags</td><td>written where the resource lives, and they travel with it</td></tr>
+    </table>
+  </div>
+
+  <h2>Whatever it takes</h2>
+
+  <p>
+    Do not believe an article. Point it at one account, read-only, for one afternoon. It needs
+    three EC2 <code>Describe</code> permissions and a Helm install:
+  </p>
+
+<pre><code>helm repo add hypersurgery https://charts.hypersurgery.dev
+helm install subnet-operator hypersurgery/aws-subnet-operator \
+  -n aws-subnet-operator-system --create-namespace \
+  -f examples/values-minimal.yaml
+
+kubectl apply -f examples/01-single-account.yaml
+kubectl get subnets -o wide</code></pre>
+
+  <p>
+    If what comes back matches your spreadsheet, you have my respect and you do not need me. If
+    it does not — and it will not — then you have learned something true about your network,
+    which is more than the meeting was going to give you.
+  </p>
+
+  <blockquote>
+    <p>I do not want to break your spreadsheet. I want it to be unnecessary.</p>
+    <cite>The same thing, said politely</cite>
+  </blockquote>
+
+  <p>
+    The operator is Apache-2.0 and lives at
+    <a href="https://github.com/aivandrago/subnet-operator">github.com/aivandrago/subnet-operator</a>.
+    The install guide is at <a href="https://hypersurgery.dev/docs/">hypersurgery.dev/docs</a>,
+    the dashboard at <a href="https://hypersurgery.dev/dashboard/">hypersurgery.dev/dashboard</a>,
+    and what CI thinks of all of it is on the
+    <a href="https://hypersurgery.dev/#evidence">evidence section</a> of the project page.
+  </p>
+
+</div>
+</article>
+
+<footer>
+  <div class="wrap">
+    <span><a href="https://hypersurgery.dev">Project page</a> · <a href="https://hypersurgery.dev/docs/">Install</a> · <a href="https://hypersurgery.dev/dashboard/">Dashboard</a> · <a href="https://github.com/aivandrago/subnet-operator">GitHub</a></span>
+    <span>Apache-2.0 · 2026</span>
+  </div>
+  <div class="wrap">
+    <p class="colophon">
+      Set in PT Serif and PT Sans Narrow. Ivan Drago is the maintainer name this project
+      publishes under, and the voice here is an affectionate parody of a film character — not a
+      quotation from one, and not a claim of any association with the film or its rights holders.
+      Every drawing is original. The technical claims are not a parody: each one is checkable in
+      the source or on the project page.
+    </p>
+  </div>
+</footer>
+
+</body>
+</html>

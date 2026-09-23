@@ -1,0 +1,20 @@
+apiVersion: aws.hypersurgery/v1alpha1
+kind: NetworkScope
+metadata:
+  name: organization
+spec:
+  # The account the operator runs in needs no roleARN; every other account is
+  # reached with sts:AssumeRole (see deploy/iam).
+  accounts:
+    - id: "111111111111"
+    - id: "222222222222"
+      roleARN: arn:aws:iam::222222222222:role/aws-subnet-operator-readonly
+    - id: "333333333333"
+      roleARN: arn:aws:iam::333333333333:role/aws-subnet-operator-readonly
+      regions: [us-east-1]
+  regions: [eu-central-1, eu-west-1]
+  # Only VPCs tagged hs/managed=true; all of their subnets are discovered.
+  vpcTagSelector:
+    hs/managed: "true"
+  requiredSubnetTags: [hs/owner, hs/env, hs/tier]
+  resyncInterval: 10m
