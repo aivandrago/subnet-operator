@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Subnet inventory</title>
+<meta name="description" content="Installable demo dashboard for the subnet operator: live-looking inventory, utilization, compliance and change events.">
+<meta name="theme-color" content="#0c1222">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Subnet inventory">
+<link rel="manifest" href="/dashboard/manifest.webmanifest">
+<link rel="canonical" href="https://hypersurgery.dev/dashboard/">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://hypersurgery.dev/dashboard/">
+<meta property="og:title" content="Subnet inventory — live demo">
+<meta property="og:description" content="Installable demo dashboard for the subnet operator: inventory, utilization, tag compliance, cost and change events.">
+<meta property="og:image" content="https://hypersurgery.dev/dashboard/icon-512.png">
+<meta name="twitter:card" content="summary">
+<link rel="icon" href="/dashboard/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/dashboard/icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="/assets/dashboard.css?v=7">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root { color-scheme: dark light; }
+  body {
+    margin: 0; min-height: 100dvh; background: #070b16;
+    padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right))
+             max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+    font-family: "Inter", system-ui, sans-serif;
+  }
+  #app { max-width: 1200px; margin: 0 auto; }
+  .offline {
+    display: none; margin: 0 auto 10px; max-width: 1200px; padding: 8px 12px; border-radius: 10px;
+    font: 500 13px "Inter", system-ui, sans-serif; color: #fbbf24;
+    border: 1px solid rgba(251, 191, 36, .4); background: rgba(251, 191, 36, .08);
+  }
+  body.is-offline .offline { display: block; }
+  .back { display: block; max-width: 1200px; margin: 12px auto 0; font: 13px "Inter", system-ui, sans-serif; color: #8e97ad; text-decoration: none; }
+  .back:hover { color: #e7eaf3; }
+</style>
+</head>
+<body>
+  <p class="offline">Offline — showing the demo data cached on this device.</p>
+  <div id="app"></div>
+  <a class="back" href="/">← Project page</a>
+
+<script src="/assets/dashboard.js?v=7" defer></script>
+<script>
+window.addEventListener('DOMContentLoaded', function () {
+  var dash = window.SubnetDashboard.mount(document.getElementById('app'), {
+    onTheme: function (id) {
+      // Keep the OS chrome in step with the dashboard theme.
+      var bg = getComputedStyle(document.getElementById('app')).getPropertyValue('--d-bg').trim();
+      document.querySelector('meta[name="theme-color"]').setAttribute('content', bg || '#0c1222');
+      document.body.style.background = id === 'daylight' ? '#e6ebf5' : '#070b16';
+    }
+  });
+  dash.start();
+
+  // Installability: browsers fire this when the app qualifies; Safari installs from the share sheet.
+  var deferred = null;
+  window.addEventListener('beforeinstallprompt', function (e) {
+    e.preventDefault();
+    deferred = e;
+    dash.installButton.hidden = false;
+  });
+  dash.installButton.addEventListener('click', function () {
+    if (!deferred) return;
+    deferred.prompt();
+    deferred.userChoice.finally(function () { deferred = null; dash.installButton.hidden = true; });
+  });
+  window.addEventListener('appinstalled', function () { dash.installButton.hidden = true; });
+
+  function offline() { document.body.classList.toggle('is-offline', !navigator.onLine); }
+  window.addEventListener('online', offline);
+  window.addEventListener('offline', offline);
+  offline();
+
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/dashboard/sw.js', { scope: '/dashboard/' }).catch(function () {});
+  }
+});
+</script>
+</body>
+</html>

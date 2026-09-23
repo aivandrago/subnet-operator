@@ -1,0 +1,506 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Install — Subnet Operator</title>
+<meta name="description" content="Install the subnet operator into an EKS cluster with Helm from the hypersurgery chart repository: IAM, chart, first NetworkScope, change events, dashboard and the Google Sheet mirror.">
+<link rel="canonical" href="https://hypersurgery.dev/docs/">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://hypersurgery.dev/docs/">
+<meta property="og:title" content="Install Subnet Operator with Helm">
+<meta property="og:description" content="From nothing to a live subnet inventory in four steps: IAM, the chart repository, the first NetworkScope, change events, dashboard and the Google Sheet mirror.">
+<meta property="og:image" content="https://hypersurgery.dev/dashboard/icon-512.png">
+<meta name="twitter:card" content="summary">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230b1020'/%3E%3Cg fill='none' stroke='%232dd4bf' stroke-width='2.4'%3E%3Crect x='7' y='7' width='8' height='8' rx='2'/%3E%3Crect x='17' y='17' width='8' height='8' rx='2'/%3E%3C/g%3E%3Crect x='17' y='7' width='8' height='8' rx='2' fill='%238b5cf6'/%3E%3Crect x='7' y='17' width='8' height='8' rx='2' fill='%2360a5fa'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #070b16; --surface: #0f162a; --border: rgba(148, 163, 255, 0.12);
+  --border-strong: rgba(148, 163, 255, 0.22); --text: #e7eaf3; --muted: #8e97ad; --faint: #5d6680;
+  --teal: #2dd4bf; --violet: #8b5cf6; --blue: #60a5fa; --amber: #fbbf24; --red: #f87171; --green: #4ade80;
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; scroll-padding-top: 84px; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.7 var(--sans); -webkit-font-smoothing: antialiased; }
+a { color: var(--teal); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code, pre { font-family: var(--mono); }
+.wrap { max-width: 1160px; margin: 0 auto; padding: 0 24px; }
+
+nav {
+  position: sticky; top: 0; z-index: 50; border-bottom: 1px solid var(--border);
+  background: rgba(7, 11, 22, 0.8); backdrop-filter: saturate(160%) blur(14px); -webkit-backdrop-filter: saturate(160%) blur(14px);
+}
+nav .wrap { display: flex; align-items: center; gap: 24px; height: 64px; }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 700; color: var(--text); letter-spacing: -0.01em; }
+.brand:hover { text-decoration: none; }
+.brand svg { width: 28px; height: 28px; }
+.nav-right { margin-left: auto; display: flex; align-items: center; gap: 18px; font-size: 14px; }
+.nav-right a { color: var(--muted); }
+.nav-right a:hover { color: var(--text); text-decoration: none; }
+.pill {
+  display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600;
+  padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border-strong); color: var(--muted);
+}
+.pill .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--amber); box-shadow: 0 0 10px var(--amber); }
+
+header.page { padding: 56px 0 28px; border-bottom: 1px solid var(--border); }
+header.page .kicker { color: var(--violet); font-size: 13px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; }
+header.page h1 { font-size: clamp(32px, 4.4vw, 46px); line-height: 1.1; letter-spacing: -0.03em; margin: 10px 0 12px; font-weight: 800; }
+header.page p { color: var(--muted); font-size: 18px; margin: 0; max-width: 680px; }
+
+.layout { display: grid; grid-template-columns: 220px 1fr; gap: 48px; padding: 40px 0 80px; }
+aside { position: sticky; top: 88px; align-self: start; font-size: 14px; }
+aside b { display: block; font-size: 11.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint); margin-bottom: 12px; }
+aside a { display: block; color: var(--muted); padding: 5px 0; border-left: 2px solid transparent; padding-left: 12px; margin-left: -14px; }
+aside a:hover { color: var(--text); border-left-color: var(--border-strong); text-decoration: none; }
+
+main h2 { font-size: 26px; letter-spacing: -0.02em; margin: 48px 0 12px; font-weight: 700; }
+main h2:first-child { margin-top: 0; }
+main h3 { font-size: 17px; margin: 28px 0 8px; font-weight: 600; }
+main p { color: #c3cadb; margin: 0 0 14px; }
+main ul, main ol { color: #c3cadb; padding-left: 20px; margin: 0 0 16px; }
+main li { margin-bottom: 6px; }
+main li::marker { color: var(--faint); }
+
+pre {
+  background: #0a1020; border: 1px solid var(--border-strong); border-radius: 12px;
+  padding: 16px 18px; overflow-x: auto; font-size: 13px; line-height: 1.7; color: #c9d1e6; margin: 0 0 18px;
+}
+p code, li code, td code { background: rgba(148, 163, 255, 0.10); padding: 1.5px 6px; border-radius: 6px; font-size: 13px; color: #cfd6e6; }
+.c { color: var(--faint); } .s { color: #a7f3d0; } .k { color: #7dd3fc; } .n { color: #fcd34d; }
+
+.step { display: grid; grid-template-columns: 34px 1fr; gap: 16px; margin-bottom: 28px; }
+.step .num {
+  width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center;
+  border: 1px solid var(--border-strong); color: var(--teal); font: 600 13px var(--mono); background: rgba(45,212,191,.08);
+}
+.step h3 { margin: 4px 0 8px; }
+
+table { width: 100%; border-collapse: collapse; font-size: 14px; margin: 0 0 20px; }
+th { text-align: left; color: var(--faint); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; padding: 0 12px 10px 0; }
+td { padding: 9px 12px 9px 0; border-top: 1px solid var(--border); color: #c3cadb; vertical-align: top; }
+
+.note, .warn {
+  border-radius: 12px; padding: 14px 16px; margin: 0 0 18px; font-size: 14.5px;
+  border: 1px solid var(--border-strong); background: rgba(45, 212, 191, 0.06); color: #cdd3e3;
+}
+.warn { border-color: rgba(251, 191, 36, 0.45); background: rgba(251, 191, 36, 0.07); }
+.note b, .warn b { color: var(--text); }
+
+footer { border-top: 1px solid var(--border); padding: 32px 0 48px; color: var(--faint); font-size: 13.5px; }
+footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+
+@media (max-width: 900px) {
+  .layout { grid-template-columns: 1fr; gap: 0; }
+  aside { position: static; margin-bottom: 32px; }
+  aside a { display: inline-block; margin: 0 14px 0 0; padding-left: 0; border-left: 0; }
+  .nav-right .hide-sm { display: none; }
+}
+@media (max-width: 640px) { .wrap { padding: 0 16px; } header.page { padding: 40px 0 24px; } }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <a class="brand" href="/">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="#0f162a" stroke="rgba(148,163,255,.25)"/><g fill="none" stroke="#2dd4bf" stroke-width="2.4"><rect x="7" y="7" width="8" height="8" rx="2"/><rect x="17" y="17" width="8" height="8" rx="2"/></g><rect x="17" y="7" width="8" height="8" rx="2" fill="#8b5cf6"/><rect x="7" y="17" width="8" height="8" rx="2" fill="#60a5fa"/></svg>
+      Subnet Operator
+    </a>
+    <div class="nav-right">
+      <a href="/">Overview</a>
+      <a href="/dashboard/">Dashboard app</a>
+      <span class="pill hide-sm"><span class="dot"></span>Alpha · v1alpha1</span>
+    </div>
+  </div>
+</nav>
+
+<header class="page">
+  <div class="wrap">
+    <div class="kicker">Documentation</div>
+    <h1>Install with Helm</h1>
+    <p>From nothing to a live subnet inventory in four steps. The chart comes from
+      <code>charts.hypersurgery.dev</code> and the operator only reads your AWS accounts.</p>
+  </div>
+</header>
+
+<div class="wrap layout">
+  <aside>
+    <b>On this page</b>
+    <a href="#before">Before you start</a>
+    <a href="#quickstart">Quick start</a>
+    <a href="#verify">Verify</a>
+    <a href="#events">Change events</a>
+    <a href="#monitoring">Dashboard &amp; alerts</a>
+    <a href="#sheet">Google Sheet</a>
+    <a href="#claims">Subnets on demand</a>
+    <a href="#import">Take resources over</a>
+    <a href="#alerts">Alerts</a>
+    <a href="#values">Common values</a>
+    <a href="#upgrade">Upgrade &amp; uninstall</a>
+    <a href="#app">Dashboard app</a>
+    <a href="#trouble">Troubleshooting</a>
+  </aside>
+
+  <main>
+    <h2 id="before">Before you start</h2>
+    <p>You need:</p>
+    <ul>
+      <li>a Kubernetes cluster, 1.28 or newer (EKS is the usual home, but any cluster that can reach the AWS APIs works);</li>
+      <li>Helm 3.8 or newer and <code>kubectl</code>;</li>
+      <li>an IAM role the operator can use, with <code>ec2:DescribeVpcs</code>, <code>ec2:DescribeSubnets</code>
+        and <code>ec2:DescribeRouteTables</code>; add <code>sts:AssumeRole</code> when you discover more than one account;</li>
+      <li>VPCs tagged so the operator can find them, <code>hs/managed=true</code> by default.</li>
+    </ul>
+    <div class="note">
+      <b>The operator never writes to AWS.</b> The inventory uses three <code>Describe</code> calls.
+      Creating subnets from a <code>SubnetClaim</code> is a separate, opt-in switch with its own IAM role.
+    </div>
+
+    <h2 id="quickstart">Quick start</h2>
+
+    <div class="step">
+      <div class="num">1</div>
+      <div>
+        <h3>Add the chart repository</h3>
+<pre>helm repo add hypersurgery https://charts.hypersurgery.dev
+helm repo update hypersurgery
+helm search repo hypersurgery/aws-subnet-operator</pre>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="num">2</div>
+      <div>
+        <h3>Give the operator AWS credentials</h3>
+        <p>With EKS Pod Identity, associate your role with the service account that the release creates:</p>
+<pre><span class="c"># after step 3, the service account is</span>
+<span class="c"># aws-subnet-operator-system/subnet-operator-aws-subnet-operator</span>
+aws eks create-pod-identity-association \
+  --cluster-name <span class="s">my-cluster</span> \
+  --namespace aws-subnet-operator-system \
+  --service-account subnet-operator-aws-subnet-operator \
+  --role-arn arn:aws:iam::<span class="n">111111111111</span>:role/aws-subnet-operator</pre>
+        <p>With IRSA, annotate the service account instead (step 3 shows where).
+          For other accounts, deploy the read-only role from
+          <code>deploy/iam/spoke-readonly-role.cfn.yaml</code> with a CloudFormation StackSet.</p>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="num">3</div>
+      <div>
+        <h3>Install the chart</h3>
+        <p>The image lives in a registry that needs a login, so create a pull secret first:</p>
+<pre>kubectl create namespace aws-subnet-operator-system
+kubectl create secret docker-registry registry -n aws-subnet-operator-system \
+  --docker-server=registry.hypersurgery.dev \
+  --docker-username=<span class="s">&lt;user&gt;</span> --docker-password=<span class="s">&lt;token&gt;</span></pre>
+<pre>helm install subnet-operator hypersurgery/aws-subnet-operator \
+  --namespace aws-subnet-operator-system \
+  --set imagePullSecrets[0].name=registry \
+  --set aws.region=<span class="s">eu-central-1</span> \
+  --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"=<span class="s">arn:aws:iam::111111111111:role/aws-subnet-operator</span></pre>
+        <p>The chart installs the CRDs, RBAC, the manager and a metrics service. Drop the
+          <code>serviceAccount.annotations</code> line if you use Pod Identity.</p>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="num">4</div>
+      <div>
+        <h3>Tell it what to discover</h3>
+<pre>kubectl apply -f - &lt;&lt;'EOF'
+<span class="k">apiVersion</span>: <span class="s">aws.hypersurgery/v1alpha1</span>
+<span class="k">kind</span>: <span class="s">NetworkScope</span>
+<span class="k">metadata</span>:
+  <span class="k">name</span>: <span class="s">organization</span>
+<span class="k">spec</span>:
+  <span class="k">accounts</span>:
+    - <span class="k">id</span>: <span class="n">"111111111111"</span>              <span class="c"># the operator's own account</span>
+    - <span class="k">id</span>: <span class="n">"222222222222"</span>
+      <span class="k">roleARN</span>: <span class="s">arn:aws:iam::222222222222:role/aws-subnet-operator-readonly</span>
+  <span class="k">regions</span>: [<span class="s">eu-central-1</span>, <span class="s">eu-west-1</span>]
+  <span class="k">vpcTagSelector</span>:
+    <span class="k">hs/managed</span>: <span class="n">"true"</span>
+  <span class="k">requiredSubnetTags</span>: [<span class="s">hs/owner</span>, <span class="s">hs/env</span>, <span class="s">hs/tier</span>]
+  <span class="k">resyncInterval</span>: <span class="s">10m</span>
+EOF</pre>
+        <p>Leave <code>vpcTagSelector</code> out to take every VPC in the listed regions.</p>
+      </div>
+    </div>
+
+    <h2 id="verify">Verify</h2>
+<pre>kubectl get networkscopes
+<span class="c">NAME           VPCS   SUBNETS   READY   LAST SYNC</span>
+organization   42     318       True    12s
+
+kubectl get subnets -o wide
+kubectl get vpcs -o wide
+kubectl get subnets -l aws.hypersurgery/account=<span class="n">222222222222</span></pre>
+    <p>If <code>READY</code> stays <code>False</code>, the scope status names the account and region that failed:</p>
+<pre>kubectl get networkscope organization -o jsonpath='{.status.targets}' | jq</pre>
+
+    <h2 id="events">Change events (optional)</h2>
+    <p>Without events, changes appear at the next resync. With them, a changed account and region
+      is re-read about ten seconds after the API call.</p>
+    <ol>
+      <li>Make sure CloudTrail records management events in every account, for example with an organization trail.</li>
+      <li>Deploy <code>deploy/events/hub-events.cfn.yaml</code> in the operator's account, and
+        <code>deploy/events/spoke-events.cfn.yaml</code> to every other account and region with a StackSet.</li>
+      <li>Point the release at the queue:</li>
+    </ol>
+<pre>helm upgrade subnet-operator hypersurgery/aws-subnet-operator \
+  --namespace aws-subnet-operator-system --reuse-values \
+  --set events.queueUrl=<span class="s">https://sqs.eu-central-1.amazonaws.com/111111111111/aws-subnet-operator-events</span></pre>
+
+    <h2 id="monitoring">Dashboard and alerts</h2>
+    <p>With kube-prometheus-stack in the cluster:</p>
+<pre>helm upgrade subnet-operator hypersurgery/aws-subnet-operator \
+  --namespace aws-subnet-operator-system --reuse-values \
+  --set metrics.serviceMonitor.enabled=true \
+  --set metrics.serviceMonitor.labels.release=kube-prometheus-stack \
+  --set prometheusRule.enabled=true \
+  --set prometheusRule.labels.release=kube-prometheus-stack \
+  --set grafanaDashboard.enabled=true</pre>
+    <p>The dashboard ConfigMap is labelled <code>grafana_dashboard: "1"</code>, which the Grafana sidecar
+      imports on its own. You get headline counts, utilization by environment, free addresses per account,
+      the fullest subnets, tag compliance, target health and the age of the last full sync — the same panels
+      as the <a href="/#dashboard">live demo</a>.</p>
+    <p>The alerts are: a subnet at 85% or more, a subnet with no free addresses, an account that
+      cannot be discovered, overlapping VPC CIDRs, and an inventory that has not fully resynced for an hour.</p>
+
+    <h2 id="sheet">Google Sheet mirror (optional)</h2>
+    <p>For people who still want a table. The operator writes the sheet and never reads it back.</p>
+<pre><span class="c"># share the spreadsheet with the service account address first</span>
+kubectl create secret generic google-sheets -n aws-subnet-operator-system \
+  --from-file=credentials.json=./service-account.json
+
+kubectl apply -f - &lt;&lt;'EOF'
+<span class="k">apiVersion</span>: <span class="s">aws.hypersurgery/v1alpha1</span>
+<span class="k">kind</span>: <span class="s">SheetExport</span>
+<span class="k">metadata</span>:
+  <span class="k">name</span>: <span class="s">organization</span>
+<span class="k">spec</span>:
+  <span class="k">scopeRef</span>: <span class="s">organization</span>
+  <span class="k">spreadsheetID</span>: <span class="s">1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789</span>
+  <span class="k">credentialsSecretRef</span>:
+    <span class="k">name</span>: <span class="s">google-sheets</span>
+    <span class="k">namespace</span>: <span class="s">aws-subnet-operator-system</span>
+  <span class="k">refreshInterval</span>: <span class="s">5m</span>
+EOF</pre>
+    <p>Only service account keys are accepted: other credential configurations can make the Google
+      client run a local command, which a Secret should never be able to do.</p>
+
+    <h2 id="claims">Subnets on demand (optional)</h2>
+    <p>A <code>SubnetClaim</code> asks for one subnet per availability zone. The operator reserves free
+      CIDRs in the VPC, skipping existing subnets and other claims, and creates the subnets with your
+      tags. This is the only thing the operator ever writes to AWS, and it is off until you turn it on.</p>
+    <ol>
+      <li>Deploy <code>deploy/iam/spoke-write-role.cfn.yaml</code> to the accounts that may get new
+        subnets. It is a separate role from discovery and cannot delete anything.</li>
+      <li>Reference it in the scope as <code>spec.accounts[].writeRoleARN</code>.</li>
+      <li>Enable writes on the release:</li>
+    </ol>
+<pre>helm upgrade subnet-operator hypersurgery/aws-subnet-operator \
+  --namespace aws-subnet-operator-system --reuse-values \
+  --set writes.enabled=true</pre>
+<pre>kubectl apply -f - &lt;&lt;'EOF'
+<span class="k">apiVersion</span>: <span class="s">aws.hypersurgery/v1alpha1</span>
+<span class="k">kind</span>: <span class="s">SubnetClaim</span>
+<span class="k">metadata</span>:
+  <span class="k">name</span>: <span class="s">payments</span>
+  <span class="k">namespace</span>: <span class="s">default</span>
+<span class="k">spec</span>:
+  <span class="k">scopeRef</span>: <span class="s">organization</span>
+  <span class="k">account</span>: <span class="n">"222222222222"</span>
+  <span class="k">region</span>: <span class="s">eu-central-1</span>
+  <span class="k">vpcID</span>: <span class="s">vpc-0aa11bb2cc33dd44e</span>
+  <span class="k">prefixLength</span>: <span class="n">24</span>
+  <span class="k">availabilityZones</span>: [<span class="s">eu-central-1a</span>, <span class="s">eu-central-1b</span>]
+  <span class="k">owner</span>: <span class="s">team-payments</span>
+  <span class="k">env</span>: <span class="s">prod</span>
+  <span class="k">tier</span>: <span class="s">private</span>
+EOF
+kubectl get subnetclaim payments -o jsonpath='{.status.allocations}' | jq</pre>
+    <p>Each allocation carries the CIDR and, once created, the subnet ID. Subnets are tagged
+      <code>hs/owner</code>, <code>hs/env</code>, <code>hs/tier</code>,
+      <code>hs/managed-by=subnet-operator</code> and <code>hs/claim=&lt;namespace&gt;/&lt;name&gt;</code>.</p>
+    <div class="note">
+      <b>Nothing is ever deleted.</b> Deleting a claim leaves its subnets in AWS. Terraform-first teams
+      set <code>mode: Allocate</code>: the operator only reserves CIDRs and Terraform creates the subnets
+      from <code>status.allocations</code>.
+    </div>
+
+    <h2 id="import">Taking resources under management</h2>
+    <p>Discovery does not stop at the tag selector. With <code>discoverUnmanaged</code> — on by default —
+      the operator also lists the VPCs the selector leaves out, and their subnets, and reports them as
+      counts and metrics rather than as objects: they are not managed, and the inventory should keep
+      meaning what it says.</p>
+<pre>kubectl get networkscopes
+<span class="c">NAME           TARGETS   VPCS   SUBNETS   UNMANAGED   READY</span>
+<span class="c">organization   6         14     212       9           True</span>
+
+<span class="c"># hs_aws_unmanaged_resources{kind="subnet"} says where they are</span>
+kubectl get networkscope organization -o jsonpath='{.status.targets}' | jq</pre>
+    <p>A <code>ResourceImport</code> takes one of them over. The operator applies exactly these tags with
+      <code>ec2:CreateTags</code> and does nothing else: the resource keeps its configuration and every tag
+      the import does not name, and running the same import twice changes nothing.</p>
+<pre>kubectl apply -f - &lt;&lt;'EOF'
+<span class="k">apiVersion</span>: <span class="s">aws.hypersurgery/v1alpha1</span>
+<span class="k">kind</span>: <span class="s">ResourceImport</span>
+<span class="k">metadata</span>:
+  <span class="k">name</span>: <span class="s">subnet-04d1c2b3a4e5f607-import</span>
+  <span class="k">namespace</span>: <span class="s">default</span>
+<span class="k">spec</span>:
+  <span class="k">scopeRef</span>: <span class="s">organization</span>
+  <span class="k">account</span>: <span class="n">"333333333333"</span>
+  <span class="k">region</span>: <span class="s">eu-central-1</span>
+  <span class="k">resourceID</span>: <span class="s">subnet-04d1c2b3a4e5f607</span>
+  <span class="k">tags</span>:
+    <span class="k">hs/managed</span>: <span class="n">"true"</span>
+    <span class="k">hs/owner</span>: <span class="s">team-data</span>
+  <span class="k">requestedBy</span>: <span class="s">anton (ticket NET-412)</span>
+  <span class="k">dryRun</span>: <span class="n">false</span>
+EOF
+kubectl get resourceimports -A</pre>
+    <p>Imports need <code>writes.enabled=true</code> and, for another account, a write role — but only
+      <code>ec2:CreateTags</code> from it, so they can be allowed where subnet creation is not. With
+      <code>dryRun: true</code> the object records what it would apply and stays <code>Skipped</code>.</p>
+
+    <h3>The auto-import policy</h3>
+    <p>The alternative to importing by hand is letting the scope do it. The CloudTrail event that says a
+      subnet was created also says <em>who</em> created it, so the tags can usually be worked out without
+      asking anybody. Add a policy to the scope:</p>
+<pre><span class="k">spec</span>:
+  <span class="k">autoImport</span>:
+    <span class="k">mode</span>: <span class="s">DryRun</span>                    <span class="c"># Off | DryRun | Apply</span>
+    <span class="k">namespace</span>: <span class="s">platform</span>              <span class="c"># where the generated imports land</span>
+    <span class="k">fromCreator</span>:                       <span class="c"># 1. who made it</span>
+      - <span class="k">principalPrefix</span>: <span class="s">"arn:aws:sts::222222222222:assumed-role/payments-"</span>
+        <span class="k">tags</span>: { <span class="k">hs/owner</span>: <span class="s">team-payments</span> }
+    <span class="k">inheritFromVPC</span>: [<span class="s">hs/owner</span>, <span class="s">hs/env</span>]   <span class="c"># 2. the VPC it lives in</span>
+    <span class="k">accountDefaults</span>:                       <span class="c"># 3. the account it is in</span>
+      - <span class="k">account</span>: <span class="n">"111111111111"</span>
+        <span class="k">tags</span>: { <span class="k">hs/owner</span>: <span class="s">team-platform</span> }
+    <span class="k">skip</span>:
+      - <span class="k">tagKey</span>: <span class="s">managed-by</span>
+        <span class="k">tagValue</span>: <span class="s">terraform</span>
+      - <span class="k">principalPrefix</span>: <span class="s">"arn:aws:sts::222222222222:assumed-role/terraform-"</span>
+    <span class="k">requiredTags</span>: [<span class="s">hs/owner</span>]</pre>
+    <p>The three sources are tried in that order and the first match wins. What the policy produces is an
+      ordinary <code>ResourceImport</code>, so an automatic decision and one somebody wrote by hand take the
+      same path and leave the same audit trail; <code>spec.requestedBy</code> names the creator the tags
+      came from. The <a href="/dashboard/">demo dashboard</a> shows the same decisions as a review queue.</p>
+    <div class="note">
+      <b>Four rules keep it from being a surprise.</b> Start in <code>DryRun</code> and read a day of
+      decisions before anything changes. Nothing whose owner no rule can name is ever tagged — it stays
+      unmanaged and the alert asks a human. Terraform is left alone, by tag or by the principal that created
+      the resource. And without <code>writes.enabled</code> the imports are created but stay
+      <code>Pending</code>, saying why.
+    </div>
+
+    <h2 id="alerts">Alerts</h2>
+    <p>With <code>prometheusRule.enabled=true</code> the chart ships these rules. They carry the account,
+      region and resource labels, so routing them per team in Alertmanager is a matter of matchers.</p>
+    <table>
+      <thead><tr><th>Alert</th><th>Fires when</th><th>Severity</th></tr></thead>
+      <tbody>
+        <tr><td><code>SubnetNearlyFull</code></td><td>a subnet is at or above <code>prometheusRule.thresholds.subnetUsedRatio</code> (0.85) for 15 minutes</td><td>warning</td></tr>
+        <tr><td><code>SubnetFull</code></td><td>a subnet has no free IPv4 address for 15 minutes</td><td>critical</td></tr>
+        <tr><td><code>SubnetInventoryTargetDown</code></td><td>an account/region cannot be discovered for 15 minutes</td><td>warning</td></tr>
+        <tr><td><code>VPCCIDROverlap</code></td><td>two VPCs in the scope overlap for 30 minutes</td><td>warning</td></tr>
+        <tr><td><code>SubnetInventoryStale</code></td><td>no full resync for <code>prometheusRule.thresholds.staleSyncSeconds</code> (1 hour)</td><td>warning</td></tr>
+        <tr><td><code>UnmanagedNetworkResource</code></td><td>a VPC or subnet without the <code>hs/managed</code> tag is seen for the first time</td><td>warning</td></tr>
+        <tr><td><code>AutoImportedResources</code></td><td>the auto-import policy took resources over, as a record of what changed</td><td>info</td></tr>
+      </tbody>
+    </table>
+    <p>Routing them into Slack or Teams is ordinary Alertmanager configuration; the
+      <a href="/#alerting">alerting section</a> on the project page shows both, including the button that
+      links back to the dashboard.</p>
+    <div class="note">
+      <b><code>UnmanagedNetworkResource</code> is the onboarding alert.</b> It fires once per resource that
+      has never been seen before, not on every resync, so it stays quiet until something actually appears
+      untagged. <a href="#import">Taking resources under management</a> is what it asks you to do.
+    </div>
+
+    <h2 id="values">Common values</h2>
+    <table>
+      <thead><tr><th>Value</th><th>Default</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td><code>image.repository</code></td><td><code>ghcr.io/example/aws-subnet-operator</code></td><td>Manager image; set it to your registry.</td></tr>
+        <tr><td><code>aws.region</code></td><td>empty</td><td>Region for the operator's own calls.</td></tr>
+        <tr><td><code>discovery.concurrency</code></td><td><code>4</code></td><td>Account/region pairs discovered in parallel.</td></tr>
+        <tr><td><code>events.queueUrl</code></td><td>empty</td><td>SQS queue with EC2 change events.</td></tr>
+        <tr><td><code>metrics.secure</code></td><td><code>true</code></td><td>HTTPS with authn/authz on the metrics endpoint.</td></tr>
+        <tr><td><code>metrics.serviceMonitor.enabled</code></td><td><code>false</code></td><td>ServiceMonitor for the Prometheus operator.</td></tr>
+        <tr><td><code>prometheusRule.enabled</code></td><td><code>false</code></td><td>Alerting rules.</td></tr>
+        <tr><td><code>grafanaDashboard.enabled</code></td><td><code>false</code></td><td>Dashboard ConfigMap for the Grafana sidecar.</td></tr>
+        <tr><td><code>writes.enabled</code></td><td><code>false</code></td><td>Let <code>SubnetClaim</code>s in <code>Create</code> mode create subnets and <code>ResourceImport</code>s apply tags. Needs a write role per account.</td></tr>
+        <tr><td><code>networkScope.create</code></td><td><code>false</code></td><td>Create a scope with the release instead of by hand.</td></tr>
+        <tr><td><code>resources</code></td><td>500m / 256Mi</td><td>Container resources.</td></tr>
+      </tbody>
+    </table>
+    <p>Everything else: <code>helm show values hypersurgery/aws-subnet-operator</code>.</p>
+
+    <h2 id="upgrade">Upgrade and uninstall</h2>
+<pre>helm repo update hypersurgery
+helm upgrade subnet-operator hypersurgery/aws-subnet-operator \
+  --namespace aws-subnet-operator-system --reuse-values</pre>
+    <div class="warn">
+      <b>Upgrading adds CRDs.</b> v0.2.0 brought <code>SubnetClaim</code> and v0.3.0 brings
+      <code>ResourceImport</code>. Helm never upgrades CRDs, so apply them before the upgrade:
+      <code>helm pull hypersurgery/aws-subnet-operator --untar &amp;&amp; kubectl apply -f aws-subnet-operator/crds/</code>
+    </div>
+<pre>helm uninstall subnet-operator -n aws-subnet-operator-system</pre>
+    <p>Uninstalling removes the operator and, with it, the mirrored <code>VPC</code> and <code>Subnet</code>
+      objects. Nothing happens to your AWS networks: they were never touched.</p>
+
+    <h2 id="app">The dashboard app</h2>
+    <p><a href="/dashboard/">hypersurgery.dev/dashboard/</a> is the same set of panels as an installable
+      web app: open it in Chrome or Edge and use the install icon in the address bar, or the
+      <b>Install app</b> button in its header; on iOS and macOS Safari use Share → Add to Home Screen
+      or Add to Dock. It keeps working offline and carries four themes
+      (<a href="/dashboard/?theme=terminal">terminal</a>, <a href="/dashboard/?theme=cyberpunk">cyberpunk</a>,
+      midnight and daylight).</p>
+    <div class="note">
+      The app shows <b>demo data</b>, so it is a way to see the shape of the inventory before you
+      install anything. Your own numbers live in the Grafana dashboard the chart ships, and in
+      <code>kubectl get subnets</code>.
+    </div>
+
+    <h2 id="trouble">Troubleshooting</h2>
+    <h3>The scope says <code>Ready=False</code></h3>
+    <p>Read <code>status.targets</code>: each account and region carries its own error.
+      <code>AccessDenied</code> usually means the spoke role's trust policy does not list the operator's
+      role, or the <code>externalID</code> does not match. The operator also refuses a <code>roleARN</code>
+      whose account does not match the declared account ID, so a typo shows up here rather than as
+      someone else's networks.</p>
+    <h3>No subnets appear</h3>
+    <p>The tag selector matches VPCs, not subnets: a VPC without <code>hs/managed=true</code> is skipped
+      together with everything inside it. Check with
+      <code>aws ec2 describe-vpcs --filters Name=tag:hs/managed,Values=true</code>.</p>
+    <h3>Utilization looks stale</h3>
+    <p>Free-address counts change with every ENI and are refreshed by the full resync, not by events.
+      Lower <code>resyncInterval</code> if you need them fresher.</p>
+    <h3>Metrics are not scraped</h3>
+    <p>With <code>metrics.secure=true</code> Prometheus needs a token and must accept the self-signed
+      serving certificate; the chart's ServiceMonitor sets both. Check the labels your Prometheus
+      selects ServiceMonitors on.</p>
+  </main>
+</div>
+
+<footer>
+  <div class="wrap">
+    <span>Subnet Operator · alpha · 2026</span>
+    <span><a href="/">Overview</a> · <a href="https://charts.hypersurgery.dev">Chart repository</a></span>
+  </div>
+</footer>
+</body>
+</html>

@@ -1,0 +1,15 @@
+# helm install subnet-operator charts/aws-subnet-operator -n aws-subnet-operator-system \
+#   --create-namespace -f examples/values-minimal.yaml
+image:
+  repository: registry.hypersurgery.dev/gitadmin/aws-subnet-operator
+  tag: v0.1.0
+imagePullSecrets:
+  - name: registry
+
+serviceAccount:
+  annotations:
+    # IRSA. With EKS Pod Identity, drop this and create an association instead.
+    eks.amazonaws.com/role-arn: arn:aws:iam::111111111111:role/aws-subnet-operator
+
+aws:
+  region: eu-central-1

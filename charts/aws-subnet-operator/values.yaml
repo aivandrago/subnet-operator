@@ -1,0 +1,133 @@
+# Default values for aws-subnet-operator.
+
+replicaCount: 1
+
+image:
+  repository: registry.hypersurgery.dev/gitadmin/aws-subnet-operator
+  tag: ""            # defaults to .Chart.AppVersion
+  pullPolicy: IfNotPresent
+# The registry needs credentials today, so create a pull secret and list it here:
+#   kubectl create secret docker-registry registry -n <namespace> #     --docker-server=registry.hypersurgery.dev --docker-username=<user> --docker-password=<token>
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  name: ""
+  # For IRSA, set eks.amazonaws.com/role-arn here. EKS Pod Identity needs no annotation.
+  annotations: {}
+
+# Discovery
+discovery:
+  # Account/region pairs discovered in parallel per NetworkScope.
+  concurrency: 4
+
+# EC2 change events (EventBridge -> SQS). Leave queueUrl empty to rely on the resync interval.
+events:
+  queueUrl: ""
+  debounce: 10s
+
+aws:
+  # Region for the operator's own API calls; each NetworkScope target sets its own.
+  region: ""
+  # Non-AWS endpoint, for testing against emulators.
+  endpointURL: ""
+
+# SubnetClaims. Allocation always works; creating subnets in AWS needs this switch and a
+# write role per account (spec.accounts[].writeRoleARN in the NetworkScope).
+writes:
+  enabled: false
+
+leaderElection:
+  enabled: true
+
+metrics:
+  # Serve metrics over HTTPS with authn/authz (recommended). Set false for plain HTTP.
+  secure: true
+  port: 8443
+  service:
+    annotations: {}
+  serviceMonitor:
+    enabled: false
+    labels: {}
+    interval: 60s
+    scrapeTimeout: 30s
+    # Self-signed serving certificate by default.
+    insecureSkipVerify: true
+
+# Alerting rules for kube-prometheus-stack.
+prometheusRule:
+  enabled: false
+  labels: {}
+  thresholds:
+    # Warn when a subnet is this full.
+    subnetUsedRatio: 0.85
+    # Warn when the inventory has not fully resynced for this long.
+    staleSyncSeconds: 3600
+
+# Dashboard ConfigMap picked up by the Grafana sidecar.
+grafanaDashboard:
+  enabled: false
+  labels:
+    grafana_dashboard: "1"
+  annotations: {}
+
+# Optionally create a NetworkScope with the release.
+networkScope:
+  create: false
+  name: organization
+  accounts: []
+  # - id: "111111111111"
+  # - id: "222222222222"
+  #   roleARN: arn:aws:iam::222222222222:role/aws-subnet-operator-readonly
+  regions: []
+  vpcTagSelector:
+    hs/managed: "true"
+  requiredSubnetTags:
+    - hs/owner
+    - hs/env
+    - hs/tier
+  resyncInterval: 10m
+
+# Optionally create a SheetExport with the release.
+sheetExport:
+  create: false
+  name: organization
+  spreadsheetID: ""
+  sheetName: Subnets
+  credentialsSecret:
+    name: google-sheets
+    namespace: ""      # defaults to the release namespace
+    key: credentials.json
+  extraTagColumns: []
+  refreshInterval: 5m
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 256Mi
+  requests:
+    cpu: 50m
+    memory: 128Mi
+
+podAnnotations: {}
+podLabels: {}
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: [ALL]
+  readOnlyRootFilesystem: true
+
+extraArgs: []
+extraEnv: []
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []
+priorityClassName: ""

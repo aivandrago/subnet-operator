@@ -1,0 +1,22 @@
+{{- if .Values.networkScope.create }}
+apiVersion: aws.hypersurgery/v1alpha1
+kind: NetworkScope
+metadata:
+  name: {{ .Values.networkScope.name }}
+  labels:
+    {{- include "aws-subnet-operator.labels" . | nindent 4 }}
+spec:
+  accounts:
+    {{- toYaml .Values.networkScope.accounts | nindent 4 }}
+  regions:
+    {{- toYaml .Values.networkScope.regions | nindent 4 }}
+  {{- with .Values.networkScope.vpcTagSelector }}
+  vpcTagSelector:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.networkScope.requiredSubnetTags }}
+  requiredSubnetTags:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  resyncInterval: {{ .Values.networkScope.resyncInterval }}
+{{- end }}

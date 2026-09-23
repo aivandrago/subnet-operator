@@ -1,0 +1,44 @@
+{{ .Chart.Name }} {{ .Chart.Version }} is installed in namespace {{ .Release.Namespace }}.
+
+1. Give the operator AWS credentials:
+   - EKS Pod Identity: associate a role with service account
+     {{ .Release.Namespace }}/{{ include "aws-subnet-operator.serviceAccountName" . }}
+   - or IRSA: set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"
+   The role needs ec2:DescribeVpcs, ec2:DescribeSubnets, ec2:DescribeRouteTables and
+   sts:AssumeRole on the read-only roles in the other accounts.
+
+{{- if not .Values.networkScope.create }}
+
+2. Tell it what to discover:
+
+   kubectl apply -f - <<'EOF'
+   apiVersion: aws.hypersurgery/v1alpha1
+   kind: NetworkScope
+   metadata:
+     name: organization
+   spec:
+     accounts:
+       - id: "111111111111"
+     regions: [eu-central-1]
+     vpcTagSelector:
+       hs/managed: "true"
+     requiredSubnetTags: [hs/owner, hs/env, hs/tier]
+   EOF
+{{- end }}
+
+3. Read the inventory:
+
+   kubectl get networkscopes
+   kubectl get subnets -o wide
+{{- if not .Values.events.queueUrl }}
+
+Changes are picked up on the resync interval (10m by default). For updates within seconds,
+deploy deploy/events/*.cfn.yaml and set events.queueUrl.
+{{- end }}
+{{- if not .Values.metrics.serviceMonitor.enabled }}
+
+Metrics are served on port {{ .Values.metrics.port }}. Set metrics.serviceMonitor.enabled=true
+to scrape them with the Prometheus operator, and grafanaDashboard.enabled=true for the dashboard.
+{{- end }}
+
+Docs: https://hypersurgery.dev/docs/ · demo dashboard: https://hypersurgery.dev/dashboard/

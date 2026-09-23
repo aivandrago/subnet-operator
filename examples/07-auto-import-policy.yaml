@@ -1,0 +1,64 @@
+# Let policy do the importing.
+#
+# Somebody creates a subnet from the console on a Friday afternoon. The CloudTrail event that
+# tells the operator about it also says who did it, so the policy can work out the tags and
+# apply them within seconds instead of leaving a gap nobody notices.
+#
+# Start in DryRun: the operator still creates the ResourceImport objects, but applies nothing.
+# Read a day of them (kubectl get resourceimports -A) and switch to Apply when the rules look
+# right. A resource whose owner no rule can name is never tagged; it stays unmanaged and the
+# UnmanagedNetworkResource alert asks a human to decide.
+apiVersion: aws.hypersurgery/v1alpha1
+kind: NetworkScope
+metadata:
+  name: organization
+spec:
+  accounts:
+    - id: "111111111111"
+      writeRoleARN: arn:aws:iam::111111111111:role/aws-subnet-operator-write
+    - id: "222222222222"
+      roleARN: arn:aws:iam::222222222222:role/aws-subnet-operator-readonly
+      writeRoleARN: arn:aws:iam::222222222222:role/aws-subnet-operator-write
+  regions: [eu-central-1, eu-west-1]
+  vpcTagSelector:
+    hs/managed: "true"
+  requiredSubnetTags: [hs/owner, hs/env, hs/tier]
+
+  # Discovery lists what the selector leaves out, so unmanaged resources are counted and
+  # alerted on rather than invisible. On by default; set false to look only at what is tagged.
+  discoverUnmanaged: true
+
+  autoImport:
+    mode: DryRun                      # Off | DryRun | Apply
+    namespace: platform               # where the generated ResourceImports land
+
+    # Tried first: the principal that created the resource, as CloudTrail reports it. A
+    # prefix, so a whole role's sessions match. First rule wins.
+    fromCreator:
+      - principalPrefix: "arn:aws:sts::222222222222:assumed-role/payments-"
+        tags:
+          hs/owner: team-payments
+          hs/env: prod
+      - principalPrefix: "arn:aws:sts::111111111111:assumed-role/data-platform-"
+        tags:
+          hs/owner: team-data
+
+    # Then the parent VPC: a subnet added by hand usually belongs to whoever owns the network.
+    inheritFromVPC: [hs/owner, hs/env]
+
+    # Last resort, per account.
+    accountDefaults:
+      - account: "111111111111"
+        tags:
+          hs/owner: team-platform
+          hs/env: prod
+
+    # Never touch what somebody else manages. Terraform is the usual case: tagging a resource
+    # it owns makes the next plan want to remove the tags again.
+    skip:
+      - tagKey: managed-by
+        tagValue: terraform
+      - principalPrefix: "arn:aws:sts::222222222222:assumed-role/terraform-"
+
+    # Nothing is imported until these are resolved. Defaults to [hs/owner].
+    requiredTags: [hs/owner]
