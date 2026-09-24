@@ -1,0 +1,1191 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Subnet Operator</title>
+<meta name="description" content="A Kubernetes operator that discovers VPCs and subnets from cloud resource tags, keeps a live inventory in the cluster and can optionally allocate subnets automatically.">
+<link rel="canonical" href="https://hypersurgery.dev/">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://hypersurgery.dev/">
+<meta property="og:title" content="Subnet Operator">
+<meta property="og:description" content="A Kubernetes operator that discovers VPCs and subnets from cloud resource tags, keeps a live inventory in the cluster and can optionally allocate subnets automatically.">
+<meta property="og:image" content="https://hypersurgery.dev/dashboard/icon-512.png">
+<meta name="twitter:card" content="summary">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230b1020'/%3E%3Cg fill='none' stroke='%232dd4bf' stroke-width='2.4'%3E%3Crect x='7' y='7' width='8' height='8' rx='2'/%3E%3Crect x='17' y='17' width='8' height='8' rx='2'/%3E%3C/g%3E%3Crect x='17' y='7' width='8' height='8' rx='2' fill='%238b5cf6'/%3E%3Crect x='7' y='17' width='8' height='8' rx='2' fill='%2360a5fa'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="/assets/dashboard.css?v=11">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #070b16;
+  --bg-2: #0b1121;
+  --surface: #0f162a;
+  --surface-2: #131c34;
+  --border: rgba(148, 163, 255, 0.12);
+  --border-strong: rgba(148, 163, 255, 0.22);
+  --text: #e7eaf3;
+  --muted: #8e97ad;
+  --faint: #5d6680;
+  --teal: #2dd4bf;
+  --violet: #8b5cf6;
+  --blue: #60a5fa;
+  --amber: #fbbf24;
+  --red: #f87171;
+  --green: #4ade80;
+  --radius: 16px;
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --max: 1160px;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.6 var(--sans);
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+a { color: inherit; text-decoration: none; }
+code, pre { font-family: var(--mono); }
+.wrap { max-width: var(--max); margin: 0 auto; padding: 0 24px; }
+
+/* Background decoration */
+.glow {
+  position: absolute; inset: 0 0 auto 0; height: 900px; pointer-events: none; z-index: 0;
+  background:
+    radial-gradient(600px 380px at 15% 10%, rgba(45, 212, 191, 0.16), transparent 70%),
+    radial-gradient(700px 420px at 85% 0%, rgba(139, 92, 246, 0.20), transparent 70%),
+    radial-gradient(500px 300px at 60% 60%, rgba(96, 165, 250, 0.08), transparent 70%);
+}
+.grid-bg {
+  position: absolute; inset: 0 0 auto 0; height: 900px; pointer-events: none; z-index: 0;
+  background-image:
+    linear-gradient(rgba(148, 163, 255, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 163, 255, 0.06) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: radial-gradient(ellipse at 50% 0%, #000 30%, transparent 75%);
+  -webkit-mask-image: radial-gradient(ellipse at 50% 0%, #000 30%, transparent 75%);
+}
+
+/* Nav */
+nav {
+  position: sticky; top: 0; z-index: 50;
+  backdrop-filter: saturate(160%) blur(14px);
+  -webkit-backdrop-filter: saturate(160%) blur(14px);
+  background: rgba(7, 11, 22, 0.72);
+  border-bottom: 1px solid var(--border);
+}
+nav .wrap { display: flex; align-items: center; gap: 18px; height: 64px; }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 700; letter-spacing: -0.01em; white-space: nowrap; }
+.brand svg { width: 28px; height: 28px; }
+.nav-links { display: flex; gap: 16px; margin-left: auto; flex: none; font-size: 14px; color: var(--muted); white-space: nowrap; }
+.nav-links a:hover { color: var(--text); }
+.nav-gh { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px;
+  border-radius: 9px; border: 1px solid var(--border); color: var(--muted); }
+.nav-gh:hover { color: var(--text); border-color: var(--border-strong); background: rgba(255,255,255,0.03); }
+.pill {
+  /* In a crowded nav a shrinking flex item wraps its text and the rounded corners turn it
+     into a blob, so it keeps its width and its line. */
+  display: inline-flex; align-items: center; gap: 6px; flex: none; white-space: nowrap;
+  font-size: 12px; font-weight: 600; letter-spacing: 0.02em;
+  padding: 4px 10px; border-radius: 999px;
+  border: 1px solid var(--border-strong); color: var(--muted); background: rgba(255,255,255,0.02);
+}
+.pill .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--amber); box-shadow: 0 0 10px var(--amber); }
+
+/* Hero */
+header.hero { position: relative; padding: 96px 0 72px; }
+.hero .wrap { position: relative; z-index: 1; display: grid; grid-template-columns: 0.95fr 1.05fr; gap: 56px; align-items: center; }
+.eyebrow { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--teal); font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+h1 {
+  font-size: clamp(38px, 5.2vw, 60px); line-height: 1.05; letter-spacing: -0.035em; margin: 16px 0 20px; font-weight: 800;
+}
+.grad {
+  background: linear-gradient(100deg, var(--teal) 0%, var(--blue) 45%, var(--violet) 100%);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.lead { font-size: 19px; color: var(--muted); max-width: 560px; margin: 0 0 32px; }
+.lead strong { color: var(--text); font-weight: 600; }
+.cta { display: flex; gap: 12px; flex-wrap: wrap; }
+.btn {
+  display: inline-flex; align-items: center; gap: 8px; height: 46px; padding: 0 20px; border-radius: 12px;
+  font-weight: 600; font-size: 15px; transition: transform .15s ease, box-shadow .15s ease, background .15s ease;
+}
+.btn-primary { background: linear-gradient(100deg, var(--teal), var(--blue)); color: #04111a; box-shadow: 0 8px 30px -8px rgba(45, 212, 191, 0.55); }
+.btn-primary:hover { transform: translateY(-1px); box-shadow: 0 12px 34px -8px rgba(45, 212, 191, 0.7); }
+.btn-ghost { border: 1px solid var(--border-strong); color: var(--text); background: rgba(255,255,255,0.03); }
+.btn-ghost:hover { background: rgba(255,255,255,0.06); }
+.hero-meta { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 28px; font-size: 13px; color: var(--faint); }
+.hero-meta span { display: inline-flex; align-items: center; gap: 6px; }
+.hero-meta svg { width: 14px; height: 14px; color: var(--teal); }
+
+/* Terminal */
+.terminal {
+  background: linear-gradient(180deg, rgba(19, 28, 52, 0.92), rgba(11, 17, 33, 0.95));
+  border: 1px solid var(--border-strong); border-radius: 18px; overflow: hidden;
+  box-shadow: 0 40px 80px -30px rgba(0,0,0,0.8), 0 0 0 1px rgba(255,255,255,0.02) inset;
+}
+.term-bar { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+.term-bar i { width: 11px; height: 11px; border-radius: 50%; display: inline-block; }
+.term-bar i:nth-child(1) { background: #ff5f57; } .term-bar i:nth-child(2) { background: #febc2e; } .term-bar i:nth-child(3) { background: #28c840; }
+.term-bar span { margin-left: 10px; font: 12px var(--mono); color: var(--faint); }
+.term-body { padding: 18px 18px 20px; font: 12px/1.75 var(--mono); color: #c9d1e6; overflow-x: auto; white-space: pre; }
+.t-prompt { color: var(--teal); } .t-cmd { color: var(--text); } .t-head { color: var(--faint); }
+.t-ok { color: var(--green); } .t-warn { color: var(--amber); } .t-bad { color: var(--red); } .t-dim { color: var(--faint); } .t-vio { color: #b69cff; }
+
+/* Sections */
+section { position: relative; padding: 96px 0; }
+section.alt { background: linear-gradient(180deg, transparent, rgba(15, 22, 42, 0.55) 12%, rgba(15, 22, 42, 0.55) 88%, transparent); }
+.section-head { max-width: 720px; margin-bottom: 48px; }
+.section-head .kicker { font-size: 13px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--violet); }
+h2 { font-size: clamp(28px, 3.6vw, 42px); line-height: 1.12; letter-spacing: -0.028em; margin: 10px 0 14px; font-weight: 800; }
+.section-head p { color: var(--muted); font-size: 17px; margin: 0; }
+.section-note { margin: 22px 0 0; color: var(--muted); font-size: 15.5px; max-width: 720px; }
+.checks li em { font-style: normal; color: var(--text); }
+
+/* Stats */
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); border: 1px solid var(--border); border-radius: var(--radius); background: rgba(15, 22, 42, 0.6); overflow: hidden; }
+.stat { padding: 26px 24px; border-right: 1px solid var(--border); }
+.stat:last-child { border-right: 0; }
+.stat b { display: block; font-size: 26px; letter-spacing: -0.02em; margin-bottom: 4px; }
+.stat span { color: var(--muted); font-size: 14px; }
+
+/* Cards */
+.cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+.card {
+  position: relative; padding: 26px; border-radius: var(--radius);
+  background: linear-gradient(180deg, rgba(19, 28, 52, 0.7), rgba(15, 22, 42, 0.5));
+  border: 1px solid var(--border); transition: border-color .2s ease, transform .2s ease;
+}
+.card:hover { border-color: var(--border-strong); transform: translateY(-2px); }
+.card h3 { font-size: 18px; margin: 14px 0 8px; letter-spacing: -0.01em; }
+.card p { color: var(--muted); margin: 0; font-size: 15px; }
+.icon {
+  width: 40px; height: 40px; border-radius: 11px; display: grid; place-items: center;
+  background: rgba(45, 212, 191, 0.1); color: var(--teal); border: 1px solid rgba(45, 212, 191, 0.25);
+}
+.icon.v { background: rgba(139, 92, 246, 0.12); color: #b69cff; border-color: rgba(139, 92, 246, 0.3); }
+.icon.b { background: rgba(96, 165, 250, 0.12); color: var(--blue); border-color: rgba(96, 165, 250, 0.3); }
+.icon.a { background: rgba(251, 191, 36, 0.1); color: var(--amber); border-color: rgba(251, 191, 36, 0.3); }
+.icon.r { background: rgba(248, 113, 113, 0.1); color: var(--red); border-color: rgba(248, 113, 113, 0.3); }
+.icon svg { width: 20px; height: 20px; }
+
+/* Two layers */
+.layers { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
+.layer { padding: 32px; border-radius: 20px; position: relative; }
+.layer.core { background: linear-gradient(160deg, rgba(45, 212, 191, 0.10), rgba(15, 22, 42, 0.7) 55%); border: 1px solid rgba(45, 212, 191, 0.35); }
+.layer.opt { background: linear-gradient(160deg, rgba(139, 92, 246, 0.10), rgba(15, 22, 42, 0.7) 55%); border: 1px dashed rgba(139, 92, 246, 0.55); }
+.layer .tag { font: 600 12px var(--mono); letter-spacing: 0.04em; padding: 4px 10px; border-radius: 8px; display: inline-block; }
+.layer.core .tag { color: var(--teal); background: rgba(45, 212, 191, 0.12); }
+.layer.opt .tag { color: #b69cff; background: rgba(139, 92, 246, 0.14); }
+.layer h3 { font-size: 24px; margin: 16px 0 6px; letter-spacing: -0.02em; }
+.layer > p { color: var(--muted); margin: 0 0 20px; }
+.checks { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; }
+.checks li { display: grid; grid-template-columns: 22px 1fr; gap: 10px; font-size: 15px; color: #cdd3e3; }
+.checks svg { width: 18px; height: 18px; margin-top: 3px; }
+.layer.core .checks svg { color: var(--teal); }
+.layer.opt .checks svg { color: #b69cff; }
+.layer .note { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--border); font-size: 13.5px; color: var(--faint); }
+
+/* Diagram */
+.diagram { border: 1px solid var(--border); border-radius: 20px; background: rgba(11, 17, 33, 0.7); padding: 28px; overflow-x: auto; }
+.diagram svg { display: block; width: 100%; min-width: 860px; height: auto; }
+.steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; margin-top: 26px; }
+.step { padding: 20px; border-radius: 14px; border: 1px solid var(--border); background: rgba(15, 22, 42, 0.5); }
+.step .n { font: 600 12px var(--mono); color: var(--teal); }
+.step h4 { margin: 6px 0 6px; font-size: 16px; }
+.step p { margin: 0; color: var(--muted); font-size: 14px; }
+
+/* Features */
+.features { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+.feature { padding: 22px; border-radius: 14px; border: 1px solid var(--border); background: rgba(15, 22, 42, 0.45); }
+.feature h4 { margin: 12px 0 6px; font-size: 15.5px; letter-spacing: -0.01em; }
+.feature p { margin: 0; color: var(--muted); font-size: 14px; }
+
+/* Code */
+.code-grid { display: grid; grid-template-columns: 1.2fr 0.8fr; gap: 20px; }
+.code { border: 1px solid var(--border-strong); border-radius: 16px; overflow: hidden; background: #0a1020; }
+.code-head { display: flex; justify-content: space-between; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--border); font: 12px var(--mono); color: var(--faint); }
+.code-head b { color: var(--muted); font-weight: 500; }
+.code pre { margin: 0; padding: 18px; font-size: 12.5px; line-height: 1.7; color: #c9d1e6; overflow-x: auto; }
+.k { color: #7dd3fc; } .s { color: #a7f3d0; } .c { color: var(--faint); } .n { color: #fcd34d; } .w { color: var(--amber); } .e { color: var(--red); }
+
+/* Principles */
+.principles { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+.principle { display: grid; grid-template-columns: 44px 1fr; gap: 16px; padding: 22px; border-radius: 14px; border: 1px solid var(--border); background: rgba(15, 22, 42, 0.45); }
+.principle h4 { margin: 0 0 4px; font-size: 16px; }
+.principle p { margin: 0; color: var(--muted); font-size: 14.5px; }
+
+/* Roadmap */
+.timeline { position: relative; display: grid; gap: 14px; }
+.timeline::before { content: ""; position: absolute; left: 19px; top: 8px; bottom: 8px; width: 2px; background: linear-gradient(var(--teal), var(--violet), rgba(139,92,246,0.1)); }
+.phase { position: relative; display: grid; grid-template-columns: 40px 1fr; gap: 20px; }
+.bullet { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; background: var(--bg); border: 2px solid var(--border-strong); z-index: 1; font: 600 13px var(--mono); color: var(--muted); }
+.phase.done .bullet { border-color: var(--teal); color: var(--teal); box-shadow: 0 0 18px rgba(45, 212, 191, 0.35); }
+.phase.now .bullet { border-color: var(--blue); color: var(--blue); box-shadow: 0 0 18px rgba(96, 165, 250, 0.4); }
+.phase-body { padding: 18px 22px; border-radius: 14px; border: 1px solid var(--border); background: rgba(15, 22, 42, 0.5); }
+.phase-body header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.phase-body h4 { margin: 0; font-size: 17px; }
+.status { font: 600 11.5px var(--mono); padding: 3px 9px; border-radius: 999px; letter-spacing: 0.03em; }
+.status.done { color: var(--teal); background: rgba(45, 212, 191, 0.12); }
+.status.now { color: var(--blue); background: rgba(96, 165, 250, 0.14); }
+.status.next { color: var(--muted); background: rgba(255, 255, 255, 0.05); }
+.phase-body p { margin: 8px 0 0; color: var(--muted); font-size: 14.5px; }
+.readnext { display: grid; grid-template-columns: 300px 1fr; gap: 24px; align-items: center;
+  border: 1px solid var(--border-strong); border-radius: var(--radius); overflow: hidden;
+  background: linear-gradient(180deg, rgba(19,28,51,.9), rgba(15,22,42,.9)); }
+.readnext img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.readnext .rn-body { padding: 26px 28px 26px 4px; }
+.readnext h3 { margin: 0 0 8px; font-size: 22px; letter-spacing: -0.01em; }
+.readnext p { margin: 0 0 16px; color: var(--muted); font-size: 15px; }
+.readnext .rn-meta { font-family: var(--mono); font-size: 12px; color: var(--faint); margin-bottom: 14px; }
+@media (max-width: 720px) { .readnext { grid-template-columns: 1fr; } .readnext .rn-body { padding: 0 20px 24px; } }
+.badges { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 4px; }
+.badges img { height: 20px; display: block; }
+.badges a { display: block; line-height: 0; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.chip { font-size: 12.5px; padding: 4px 10px; border-radius: 8px; border: 1px solid var(--border); color: #cdd3e3; background: rgba(255,255,255,0.02); }
+.chip.ok::before { content: "✓ "; color: var(--teal); }
+
+/* Clouds */
+.clouds { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.cloud { padding: 24px; border-radius: 16px; border: 1px solid var(--border); background: rgba(15, 22, 42, 0.5); }
+.cloud.active { border-color: rgba(45, 212, 191, 0.4); }
+.cloud h4 { margin: 0 0 4px; font-size: 18px; }
+.cloud code { font-size: 12.5px; color: var(--teal); }
+.cloud p { margin: 10px 0 0; color: var(--muted); font-size: 14px; }
+
+/* CNCF */
+.cncf { display: grid; grid-template-columns: 1.1fr 1fr; gap: 40px; align-items: start; }
+.fit { display: grid; gap: 12px; }
+.fit div { display: grid; grid-template-columns: 170px 1fr; gap: 16px; padding: 16px 18px; border-radius: 12px; border: 1px solid var(--border); background: rgba(15, 22, 42, 0.5); font-size: 14.5px; }
+.fit b { color: var(--text); font-weight: 600; }
+.fit span { color: var(--muted); }
+.callout {
+  padding: 30px; border-radius: 20px;
+  background: linear-gradient(150deg, rgba(45, 212, 191, 0.14), rgba(139, 92, 246, 0.14));
+  border: 1px solid var(--border-strong);
+}
+.callout h3 { margin: 0 0 10px; font-size: 22px; letter-spacing: -0.02em; }
+.callout p { color: #cdd3e3; margin: 0 0 18px; }
+.callout ul { margin: 0; padding-left: 18px; color: var(--muted); font-size: 14.5px; display: grid; gap: 6px; }
+
+footer { padding: 48px 0 56px; border-top: 1px solid var(--border); color: var(--faint); font-size: 13.5px; }
+footer .wrap { display: flex; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
+
+/* Live demo dashboard: the panel itself is styled by assets/dashboard.css */
+.btn-demo {
+  display: inline-flex; align-items: center; gap: 8px; height: 34px; padding: 0 14px; border-radius: 10px;
+  flex: none; white-space: nowrap;
+  font-size: 13.5px; font-weight: 600; cursor: pointer;
+  border: 1px solid rgba(45, 212, 191, 0.45); color: var(--teal); background: rgba(45, 212, 191, 0.08);
+  transition: background .15s ease, border-color .15s ease;
+}
+.btn-demo:hover { background: rgba(45, 212, 191, 0.16); border-color: var(--teal); }
+.btn-demo .live { width: 7px; height: 7px; border-radius: 50%; background: var(--teal); box-shadow: 0 0 10px var(--teal); }
+@media (prefers-reduced-motion: no-preference) { .btn-demo .live { animation: pulse 2.4s ease-in-out infinite; } }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+
+.demo-backdrop {
+  position: fixed; inset: 0; z-index: 100; display: none;
+  background: rgba(4, 7, 14, 0.82); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  padding: 24px; overflow-y: auto;
+}
+.demo-backdrop[open] { display: block; }
+.demo-backdrop .dash { max-width: 1200px; margin: 0 auto; }
+@media (max-width: 640px) { .demo-backdrop { padding: 10px; } }
+
+/* Onboarding section: a static mock built from the dashboard's own classes */
+.onboard { display: grid; grid-template-columns: 1.25fr 1fr; gap: 26px; align-items: start; }
+.onboard-mock { font-size: 13px; }
+.onboard-mock .dash-body { padding: 14px; }
+.onboard-mock .dash-import-btn { display: inline-flex; align-items: center; height: 26px; }
+.onboard-field { display: flex; align-items: center; height: 28px; padding: 0 8px; border-radius: 8px;
+  font: 12.5px var(--d-mono); color: var(--d-text); background: var(--d-bg); border: 1px solid var(--d-border-strong); }
+.onboard-btn { display: inline-flex; align-items: center; height: 30px; padding: 0 12px; border-radius: 8px;
+  font: 600 12px var(--d-font); border: 1px solid var(--d-border-strong); color: var(--d-muted); }
+.onboard-btn.primary { background: var(--d-accent); border-color: var(--d-accent); color: var(--d-bg); }
+.onboard-points { display: grid; gap: 12px; }
+.onboard-points .btn { justify-self: start; margin-top: 6px; }
+@media (max-width: 980px) { .onboard { grid-template-columns: 1fr; } }
+
+/* Automatic mode block inside onboarding */
+.auto { display: grid; grid-template-columns: 1fr 1.1fr; gap: 26px; align-items: start; margin-top: 40px; padding-top: 36px; border-top: 1px solid var(--border); }
+.auto h3 { font-size: 24px; letter-spacing: -0.02em; margin: 10px 0 10px; }
+.auto p { color: var(--muted); margin: 0 0 16px; }
+.auto p em { font-style: normal; color: var(--text); }
+.auto .checks li { color: #cdd3e3; }
+.auto .checks svg { color: var(--teal); }
+.onboard-mock .hide-sm { display: none; }
+
+/* Alerting: a Grafana panel, a Slack message and a Teams card, all static */
+.alerts { display: grid; grid-template-columns: 1.15fr 1fr; gap: 22px; align-items: start; }
+.gpanel { border: 1px solid var(--border-strong); border-radius: 12px; background: #111217; padding: 12px 14px 10px; font-family: var(--sans); }
+.gpanel-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.gpanel-title { font-weight: 600; font-size: 14px; color: #d8d9da; }
+.gpanel-alert { display: inline-flex; align-items: center; gap: 6px; font: 600 11.5px var(--mono); color: #f2495c; }
+.gpanel-alert i { width: 8px; height: 8px; border-radius: 50%; background: #f2495c; box-shadow: 0 0 10px #f2495c; }
+.gpanel-meta { margin-left: auto; font-size: 11.5px; color: #8e8e8e; }
+.gchart { width: 100%; height: 190px; display: block; }
+.gchart .grid line { stroke: rgba(204,204,220,.12); stroke-width: 1; }
+.gchart text { fill: #8e8e8e; font: 10.5px var(--mono); }
+.gchart .threshold { stroke: #f2495c; stroke-width: 1; stroke-dasharray: 4 4; }
+.gchart .line { fill: none; stroke: #ff9830; stroke-width: 2; stroke-linejoin: round; }
+.gchart .area { fill: rgba(255,152,48,.12); }
+.gchart .firing { fill: rgba(242,73,92,.10); }
+.gchart .mark { stroke: #f2495c; stroke-width: 1.2; }
+.gchart .mark-text { fill: #f2495c; font-weight: 600; }
+.gtable { margin-top: 8px; border-top: 1px solid rgba(204,204,220,.12); font-size: 12px; color: #d8d9da; }
+.gtable-row { display: grid; grid-template-columns: 1.1fr .9fr 1.6fr .4fr; gap: 10px; padding: 6px 0; border-bottom: 1px solid rgba(204,204,220,.07); }
+.gtable-head { color: #8e8e8e; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+.gtable .mono { font-family: var(--mono); font-size: 11.5px; }
+.gtable .bad { color: #f2495c; font-family: var(--mono); }
+
+.chat-stack { display: grid; gap: 16px; }
+.slack { background: #1a1d21; border: 1px solid rgba(255,255,255,.08); border-radius: 12px; padding: 12px 14px; font-family: var(--sans); color: #d1d2d3; font-size: 13px; }
+.slack-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.slack-app { font-weight: 700; color: #fff; }
+.slack-badge { font-size: 9.5px; font-weight: 700; padding: 1px 4px; border-radius: 3px; background: #3f4144; color: #babbbc; }
+.slack-time { color: #9a9b9c; font-size: 11.5px; }
+.slack-att { border-left: 4px solid #e01e5a; padding-left: 12px; }
+.slack-title { font-weight: 700; color: #fff; margin-bottom: 4px; }
+.slack-text { margin-bottom: 8px; }
+.slack-text code { font: 12px var(--mono); background: #2c2d30; padding: 1px 4px; border-radius: 3px; color: #e8912d; }
+.slack-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px; margin-bottom: 10px; }
+.slack-fields b { display: block; font-size: 12px; color: #fff; }
+.slack-fields span { font-size: 12px; }
+.slack-fields .mono { font-family: var(--mono); font-size: 11.5px; }
+.slack-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.slack-btn { font-size: 12.5px; font-weight: 600; padding: 5px 10px; border-radius: 6px; border: 1px solid #565856; color: #d1d2d3; }
+.slack-btn.primary { background: #007a5a; border-color: #007a5a; color: #fff; }
+
+.teams { display: grid; grid-template-columns: 4px 1fr; background: #292929; border: 1px solid rgba(255,255,255,.08); border-radius: 10px; overflow: hidden; font-family: var(--sans); color: #f3f2f1; font-size: 13px; }
+.teams-bar { background: #d13438; }
+.teams-body { padding: 12px 14px; }
+.teams-title { font-weight: 700; display: flex; align-items: center; gap: 8px; }
+.teams-state { font-size: 10.5px; font-weight: 700; padding: 2px 6px; border-radius: 4px; background: #d13438; color: #fff; text-transform: uppercase; }
+.teams-sub { color: #a19f9d; font-size: 12px; margin: 2px 0 10px; }
+.teams-facts { display: grid; gap: 4px; margin-bottom: 10px; }
+.teams-facts div { display: grid; grid-template-columns: 90px 1fr; gap: 10px; }
+.teams-facts span { color: #a19f9d; }
+.teams-facts b { font-weight: 500; }
+.teams-facts .mono { font-family: var(--mono); font-size: 12px; }
+.teams-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.teams-btn { font-size: 12.5px; font-weight: 600; padding: 6px 12px; border-radius: 4px; background: #6264a7; color: #fff; }
+
+.alert-rules { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 22px; }
+@media (max-width: 980px) { .auto, .alerts, .alert-rules { grid-template-columns: 1fr; } }
+
+/* Reveal on scroll */
+.reveal { opacity: 0; transform: translateY(14px); transition: opacity .6s ease, transform .6s ease; }
+.reveal.in { opacity: 1; transform: none; }
+@media (prefers-reduced-motion: reduce) { .reveal { opacity: 1; transform: none; transition: none; } html { scroll-behavior: auto; } }
+
+@media (max-width: 1180px) {
+  .nav-links a[href="#onboarding"], .nav-links a[href="#alerting"] { display: none; }
+}
+@media (max-width: 1040px) {
+  .nav-links a[href="#evidence"], .nav-links a[href="#product"] { display: none; }
+}
+@media (max-width: 980px) {
+  .hero .wrap, .layers, .code-grid, .cncf { grid-template-columns: 1fr; }
+  .cards, .clouds { grid-template-columns: 1fr 1fr; }
+  .features, .steps { grid-template-columns: 1fr 1fr; }
+  .stats { grid-template-columns: 1fr 1fr; }
+  .stat:nth-child(2) { border-right: 0; }
+  .stat:nth-child(-n+2) { border-bottom: 1px solid var(--border); }
+  .nav-links { display: none; }
+  nav .pill { margin-left: auto; }
+}
+@media (max-width: 640px) {
+  .wrap { padding: 0 16px; }
+  header.hero { padding: 64px 0 48px; }
+  section { padding: 72px 0; }
+  .cards, .clouds, .features, .steps, .principles, .stats { grid-template-columns: 1fr; }
+  .stat { border-right: 0; border-bottom: 1px solid var(--border); }
+  .stat:last-child { border-bottom: 0; }
+  .fit div { grid-template-columns: 1fr; gap: 4px; }
+  .layer { padding: 24px; }
+}
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-check" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+</svg>
+
+<nav>
+  <div class="wrap">
+    <a class="brand" href="#top" aria-label="Subnet Operator home">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="#0f162a" stroke="rgba(148,163,255,.25)"/><g fill="none" stroke="#2dd4bf" stroke-width="2.4"><rect x="7" y="7" width="8" height="8" rx="2"/><rect x="17" y="17" width="8" height="8" rx="2"/></g><rect x="17" y="7" width="8" height="8" rx="2" fill="#8b5cf6"/><rect x="7" y="17" width="8" height="8" rx="2" fill="#60a5fa"/></svg>
+      Subnet Operator
+    </a>
+    <div class="nav-links">
+      <a href="#product">Product</a>
+      <a href="#how">How it works</a>
+      <a href="#onboarding">Onboarding</a>
+      <a href="#alerting">Alerting</a>
+      <a href="#evidence">Evidence</a>
+      <a href="/article/">Article</a>
+      <a href="#roadmap">Roadmap</a>
+      <a href="/dashboard/">App</a>
+      <a href="/docs/">Install</a>
+    </div>
+    <a class="nav-gh" href="https://github.com/aivandrago/subnet-operator" aria-label="Source on GitHub" title="Source on GitHub">
+      <svg viewBox="0 0 16 16" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+    </a>
+    <button class="btn-demo" id="demo-open" type="button" aria-haspopup="dialog">
+      <span class="live"></span>Live dashboard
+    </button>
+    <span class="pill hide-sm"><span class="dot"></span>Alpha · v0.7.0</span>
+  </div>
+</nav>
+
+<header class="hero" id="top">
+  <div class="glow"></div>
+  <div class="grid-bg"></div>
+  <div class="wrap">
+    <div>
+      <div class="eyebrow">Kubernetes operator · Cloud network inventory</div>
+      <h1>Your subnet inventory, <span class="grad">maintained by the cloud itself.</span></h1>
+      <p class="lead">
+        Subnet Operator discovers VPCs and subnets across every account and region from <strong>resource tags</strong>,
+        keeps them as Kubernetes objects and flags what is wrong. <strong>No more spreadsheets.</strong>
+        Untagged networks are one click from being managed, and when you are ready it can also
+        <strong>allocate subnets automatically</strong>.
+      </p>
+      <div class="cta">
+        <a class="btn btn-primary" href="#how">See how it works
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </a>
+        <a class="btn btn-ghost" href="/docs/">Install guide</a>
+        <a class="btn btn-ghost" href="/dashboard/">Open the app</a>
+        <a class="btn btn-ghost" href="https://github.com/aivandrago/subnet-operator">Source on GitHub</a>
+      </div>
+      <div class="hero-meta">
+        <span><svg viewBox="0 0 24 24"><use href="#i-check"/></svg>Read-only by default</span>
+        <span><svg viewBox="0 0 24 24"><use href="#i-check"/></svg>Multi-account</span>
+        <span><svg viewBox="0 0 24 24"><use href="#i-check"/></svg>Prometheus-native</span>
+        <span><svg viewBox="0 0 24 24"><use href="#i-check"/></svg>Apache-2.0</span>
+      </div>
+    </div>
+
+    <div class="terminal reveal" role="img" aria-label="Example output of kubectl get subnets">
+      <div class="term-bar"><i></i><i></i><i></i><span>kubectl — prod-hub</span></div>
+<div class="term-body"><span class="t-prompt">$</span> <span class="t-cmd">kubectl get networkscopes</span>
+<span class="t-head">NAME           VPCS   SUBNETS   READY   LAST SYNC</span>
+organization   42     318       <span class="t-ok">True</span>    12s
+
+<span class="t-prompt">$</span> <span class="t-cmd">kubectl get subnets</span>
+<span class="t-head">NAME             CIDR           AZ             FREE  USED%  OWNER</span>
+subnet-0a1b2c3d  10.20.1.0/24   eu-central-1a  203   <span class="t-ok">19</span>     team-web
+subnet-0e4f5a6b  10.20.2.0/24   eu-central-1b  <span class="t-warn">31</span>    <span class="t-warn">87</span>     team-payments
+subnet-07c8d9e0  10.20.3.0/24   eu-central-1c  249   <span class="t-ok">0</span>      <span class="t-bad">&lt;none&gt;</span>
+subnet-0f1a2b3c  100.64.0.0/20  eu-west-1a     3812  <span class="t-ok">6</span>      team-data
+
+<span class="t-prompt">$</span> <span class="t-cmd">kubectl get subnet subnet-07c8d9e0 -o jsonpath='{.status.missingTags}'</span>
+<span class="t-bad">["hs/owner"]</span>
+
+<span class="t-prompt">$</span> <span class="t-cmd">kubectl get vpc vpc-0aa11bb2 -o jsonpath='{.status.overlapsWith}'</span>
+<span class="t-bad">["222222222222/eu-central-1/vpc-0cc3d4e5"]</span>
+</div>
+    </div>
+  </div>
+</header>
+
+<div class="wrap reveal">
+  <div class="stats">
+    <div class="stat"><b class="grad">0</b><span>writes to your cloud unless you opt in</span></div>
+    <div class="stat"><b>~10&nbsp;s</b><span>from an EC2 API call to the cluster, via EventBridge</span></div>
+    <div class="stat"><b>N accounts</b><span>one operator, hub-and-spoke via AssumeRole</span></div>
+    <div class="stat"><b>AWS</b><span>today · GCP and Azure next</span></div>
+  </div>
+</div>
+
+<section id="problem">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <div class="kicker">The problem</div>
+      <h2>The network spreadsheet is always wrong.</h2>
+      <p>Most IT teams track VPCs and subnets by hand: a shared sheet, a wiki page, a CMDB export. It goes stale on
+        the first day, and the gaps show up at the worst possible moment.</p>
+    </div>
+    <div class="cards">
+      <div class="card reveal">
+        <div class="icon a"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/><path d="M12 7v5l3 2"/></svg></div>
+        <h3>Drift</h3>
+        <p>Subnets are created by Terraform, consoles and scripts. Nobody updates the sheet, so it slowly turns into fiction.</p>
+      </div>
+      <div class="card reveal">
+        <div class="icon r"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="12" r="6"/><circle cx="15" cy="12" r="6"/></svg></div>
+        <h3>Overlaps found too late</h3>
+        <p>Two teams pick the same CIDR in different accounts. You find out when peering or Transit Gateway routing breaks.</p>
+      </div>
+      <div class="card reveal">
+        <div class="icon v"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/><path d="M18 4l3 3M21 4l-3 3"/></svg></div>
+        <h3>No owner, no headroom</h3>
+        <p>Who owns this subnet? Is it 90% full? Answering takes a ticket, three consoles and a guess.</p>
+      </div>
+    </div>
+    <p class="section-note reveal">And every tool that promises to fix this starts with "first, tag everything" — which is
+      why the spreadsheet is still there.</p>
+  </div>
+</section>
+
+<section id="product" class="alt">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <div class="kicker">The product</div>
+      <h2>A minimal core that does one job well. Automation when you want it.</h2>
+      <p>The inventory is useful on its own and safe to run anywhere: it only reads. Automatic management is a
+        separate, opt-in layer on top of the same API.</p>
+    </div>
+    <div class="layers">
+      <div class="layer core reveal">
+        <span class="tag">CORE · READ-ONLY</span>
+        <h3>Live network inventory</h3>
+        <p>Everything the spreadsheet tried to be, generated from the cloud and kept current.</p>
+        <ul class="checks">
+          <li><svg viewBox="0 0 24 24"><use href="#i-check"/></svg>Discovers VPCs by tag across accounts and regions, including every subnet inside them</li>
+          <li><svg viewBox="0 0 24 24"><use href="#i-check"/></svg>CIDR, AZ, free IPs, utilization, public/private, owner, environment, tier</li>
+          <li><svg viewBox="0 0 24 24"><use href="#i-check"/></svg>Finds missing required tags and CIDR overlaps between VPCs, even across accounts</li>
+          <li><svg viewBox="0 0 24 24"><use href="#i-check"/></svg>Shows what is <em>not</em> managed yet and takes it under management in one step: a <code>ResourceImport</code> tags the resource in AWS, nothing else</li>
+          <li><svg viewBox="0 0 24 24"><use href="#i-check"/></svg>Updates within seconds from CloudTrail events, with a periodic full resync as a safety net</li>
+          <li><svg viewBox="0 0 24 24"><use href="#i-check"/></svg>Prometheus metrics, kubectl, and a read-only Google Sheet mirror for people who still want a table</li>
+        </ul>
+        <div class="note">Only <code>ec2:Describe*</code> calls. Nothing in your cloud is ever modified. The Google Sheet mirror is written, never read back, so the old spreadsheet stops being something anyone maintains.</div>
+      </div>
+      <div class="layer opt reveal">
+        <span class="tag">OPTIONAL · AUTOMATIC MANAGEMENT · v0.3.0</span>
+        <h3>Subnets on demand</h3>
+        <p>Teams ask for capacity; the operator picks a free CIDR and creates correctly tagged subnets.</p>
+        <ul class="checks">
+          <li><svg viewBox="0 0 24 24"><use href="#i-check"/></svg><span><code>SubnetClaim</code>: size, tier, AZ spread and target VPC selector</span></li>
+          <li><svg viewBox="0 0 24 24"><use href="#i-check"/></svg>CIDR allocation from Amazon VPC IPAM pools or a built-in allocator over tagged pools</li>
+          <li><svg viewBox="0 0 24 24"><use href="#i-check"/></svg>Route-table association and the tags ELB and Karpenter already select on</li>
+          <li><svg viewBox="0 0 24 24"><use href="#i-check"/></svg>"Allocate only" mode for Terraform-first teams: the CIDR is reserved, Terraform creates the subnet</li>
+          <li><svg viewBox="0 0 24 24"><use href="#i-check"/></svg>Never deletes subnets and never touches Terraform-owned resources</li>
+        </ul>
+        <div class="note">Shipped behind <code>--enable-writes</code> and a write role of its own:
+          subnets on demand in v0.2.0, <code>ResourceImport</code> and the auto-import policy in v0.3.0.
+          Tagging a resource needs nothing but <code>ec2:CreateTags</code>.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="how">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <div class="kicker">How it works</div>
+      <h2>One operator, every account, near real time.</h2>
+      <p>The operator runs in a hub cluster and reaches spoke accounts with short-lived AssumeRole credentials.
+        Change events tell it which account and region to look at again.</p>
+    </div>
+
+    <div class="diagram reveal">
+      <svg viewBox="0 0 1100 400" role="img" aria-label="Architecture: spoke accounts send CloudTrail events through EventBridge to an SQS queue in the hub account; the operator in EKS reads the queue, calls EC2 Describe APIs through AssumeRole and writes VPC and Subnet objects, exposed through kubectl and Prometheus.">
+        <defs>
+          <linearGradient id="gOp" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2dd4bf" stop-opacity=".22"/><stop offset="1" stop-color="#8b5cf6" stop-opacity=".22"/></linearGradient>
+          <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#8e97ad"/></marker>
+          <marker id="arrT" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#2dd4bf"/></marker>
+          <marker id="arrV" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#a78bfa"/></marker>
+        </defs>
+        <style>
+          .box { fill: #0f162a; stroke: rgba(148,163,255,.25); stroke-width: 1.2; }
+          .lbl { fill: #e7eaf3; font: 600 14px Inter, sans-serif; }
+          .sub { fill: #8e97ad; font: 12px Inter, sans-serif; }
+          .mono { fill: #8e97ad; font: 11.5px 'JetBrains Mono', monospace; }
+          .grp { fill: none; stroke: rgba(148,163,255,.18); stroke-dasharray: 5 5; }
+          .grpl { fill: #5d6680; font: 600 11px Inter, sans-serif; letter-spacing: .08em; }
+          .flow { fill: none; stroke: #8e97ad; stroke-width: 1.5; }
+          .flowT { fill: none; stroke: #2dd4bf; stroke-width: 1.8; }
+          .flowV { fill: none; stroke: #a78bfa; stroke-width: 1.6; stroke-dasharray: 6 5; }
+        </style>
+
+        <!-- Spokes -->
+        <rect class="grp" x="10" y="20" width="250" height="360" rx="16"/>
+        <text class="grpl" x="30" y="46">SPOKE ACCOUNTS · EVERY REGION</text>
+        <rect class="box" x="30" y="66" width="210" height="84" rx="12"/>
+        <text class="lbl" x="48" y="96">VPCs &amp; subnets</text>
+        <text class="mono" x="48" y="118">tag hs/managed=true</text>
+        <text class="mono" x="48" y="136">hs/owner · env · tier</text>
+        <rect class="box" x="30" y="176" width="210" height="60" rx="12"/>
+        <text class="lbl" x="48" y="203">CloudTrail</text>
+        <text class="sub" x="48" y="222">EC2 API calls</text>
+        <rect class="box" x="30" y="262" width="210" height="60" rx="12"/>
+        <text class="lbl" x="48" y="289">EventBridge rule</text>
+        <text class="sub" x="48" y="308">network changes only</text>
+        <rect class="box" x="30" y="334" width="210" height="28" rx="8" fill="#101a2e"/>
+        <text class="mono" x="48" y="353">roles: readonly · write</text>
+        <path class="flow" d="M135 150 V176" marker-end="url(#arr)"/>
+        <path class="flow" d="M135 236 V262" marker-end="url(#arr)"/>
+
+        <!-- Hub AWS -->
+        <rect class="grp" x="300" y="20" width="230" height="360" rx="16"/>
+        <text class="grpl" x="320" y="46">HUB ACCOUNT</text>
+        <rect class="box" x="320" y="176" width="190" height="60" rx="12"/>
+        <text class="lbl" x="338" y="203">Event bus</text>
+        <text class="sub" x="338" y="222">org-wide PutEvents</text>
+        <rect class="box" x="320" y="262" width="190" height="60" rx="12"/>
+        <text class="lbl" x="338" y="289">SQS queue</text>
+        <text class="sub" x="338" y="308">SSE · DLQ · 1h retention</text>
+        <path class="flow" d="M240 292 C 280 292, 280 206, 320 206" marker-end="url(#arr)"/>
+        <path class="flow" d="M415 236 V262" marker-end="url(#arr)"/>
+
+        <!-- Operator -->
+        <rect x="570" y="96" width="250" height="230" rx="18" fill="url(#gOp)" stroke="rgba(45,212,191,.55)" stroke-width="1.4"/>
+        <text class="grpl" x="590" y="122" style="fill:#2dd4bf">EKS · SUBNET OPERATOR</text>
+        <rect class="box" x="590" y="136" width="210" height="50" rx="10"/>
+        <text class="lbl" x="606" y="166">Event poller</text>
+        <text class="mono" x="712" y="166">debounce 10s</text>
+        <rect class="box" x="590" y="198" width="210" height="50" rx="10"/>
+        <text class="lbl" x="606" y="228">Scope controller</text>
+        <rect class="box" x="590" y="260" width="210" height="50" rx="10"/>
+        <text class="lbl" x="606" y="290">Discovery</text>
+        <text class="mono" x="690" y="290">ec2:Describe*</text>
+        <path class="flow" d="M510 292 C 550 292, 550 161, 590 161" marker-end="url(#arr)"/>
+        <path class="flow" d="M695 186 V198" marker-end="url(#arr)"/>
+        <path class="flow" d="M695 248 V260" marker-end="url(#arr)"/>
+        <path class="flowT" d="M590 272 H 558 V 108 H 240" marker-end="url(#arrT)"/>
+        <text class="mono" x="318" y="98" style="fill:#2dd4bf">sts:AssumeRole → Describe*</text>
+
+        <!-- Outputs -->
+        <rect class="grp" x="860" y="20" width="230" height="360" rx="16"/>
+        <text class="grpl" x="880" y="46">OUTPUTS</text>
+        <rect class="box" x="880" y="66" width="190" height="84" rx="12"/>
+        <text class="lbl" x="898" y="96">CRDs</text>
+        <text class="mono" x="898" y="118">NetworkScope · VPC</text>
+        <text class="mono" x="898" y="136">Subnet</text>
+        <rect class="box" x="880" y="170" width="190" height="60" rx="12"/>
+        <text class="lbl" x="898" y="197">Prometheus</text>
+        <text class="sub" x="898" y="216">alerts · Grafana</text>
+        <rect class="box" x="880" y="250" width="190" height="60" rx="12"/>
+        <text class="lbl" x="898" y="277">Google Sheet</text>
+        <text class="sub" x="898" y="296">read-only mirror</text>
+        <rect x="880" y="326" width="190" height="42" rx="10" fill="rgba(139,92,246,.10)" stroke="#a78bfa" stroke-dasharray="5 4"/>
+        <text class="lbl" x="898" y="352" style="fill:#c4b5fd">SubnetClaim (opt-in)</text>
+        <path class="flow" d="M800 223 C 840 223, 840 108, 880 108" marker-end="url(#arr)"/>
+        <path class="flow" d="M800 223 C 840 223, 840 200, 880 200" marker-end="url(#arr)"/>
+        <path class="flow" d="M800 223 C 840 223, 840 280, 880 280" marker-end="url(#arr)"/>
+        <path class="flowV" d="M880 347 H 250" marker-end="url(#arrV)"/>
+        <text class="mono" x="400" y="370" style="fill:#a78bfa">allocate CIDR · create tagged subnet (phase 3)</text>
+      </svg>
+    </div>
+
+    <div class="steps">
+      <div class="step reveal"><div class="n">01</div><h4>Tag, or import</h4><p>Mark VPCs with <code>hs/managed=true</code> and owners — by hand, in Terraform, or by importing what discovery found untagged. Tag policies keep the schema honest.</p></div>
+      <div class="step reveal"><div class="n">02</div><h4>Scope</h4><p>A <code>NetworkScope</code> lists accounts, regions and required tags.</p></div>
+      <div class="step reveal"><div class="n">03</div><h4>Discover</h4><p>The operator assumes a read-only role per account and mirrors what it finds.</p></div>
+      <div class="step reveal"><div class="n">04</div><h4>React</h4><p>CloudTrail events trigger a targeted resync of just the account/region that changed.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="onboarding" class="alt">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <div class="kicker">Onboarding</div>
+      <h2>From untagged to managed in one step.</h2>
+      <p>Discovery does not stop at the tag selector: it lists what it can see but nobody has claimed.
+        Importing a resource applies the organization's tags in AWS — nothing else changes — and the
+        inventory picks it up on the next CloudTrail event. <b>Shipped in v0.3.0</b>, by hand or by policy.</p>
+    </div>
+
+    <div class="onboard reveal">
+      <div class="dash onboard-mock" data-dash-theme="midnight" aria-label="Example of the import flow">
+        <div class="dash-body">
+          <div class="dash-card dash-unmanaged">
+            <h4>Unmanaged resources <span class="dash-count">3 found</span></h4>
+            <p class="sub">Discovered, but not tagged for the operator.</p>
+            <table>
+              <thead><tr><th></th><th class="mono">Resource</th><th class="hide-sm">Account</th><th>CIDR</th><th></th></tr></thead>
+              <tbody>
+                <tr><td><span class="dash-kind">vpc</span></td><td class="mono">vpc-0f3e2a1b7c9d4e56<span class="dash-tf">terraform</span></td><td class="hide-sm mono">333333333333 · eu-central-1</td><td class="mono">10.90.0.0/16</td><td style="text-align:right"><span class="dash-import-btn">Import</span></td></tr>
+                <tr><td><span class="dash-kind">subnet</span></td><td class="mono">subnet-04d1c2b3a4e5f607</td><td class="hide-sm mono">333333333333 · eu-central-1</td><td class="mono">10.30.4.0/24</td><td style="text-align:right"><span class="dash-import-btn">Import</span></td></tr>
+                <tr><td><span class="dash-kind">subnet</span></td><td class="mono">subnet-0b2c3d4e5f6a7b89</td><td class="hide-sm mono">222222222222 · eu-west-1</td><td class="mono">10.20.40.0/22</td><td style="text-align:right"><span class="dash-import-btn">Import</span></td></tr>
+              </tbody>
+            </table>
+            <div class="dash-drawer">
+              <div>
+                <h5>Import subnet-04d1c2b3a4e5f607</h5>
+                <div class="dash-form">
+                  <label>Owner <span class="onboard-field">team-data</span></label>
+                  <label>Environment <span class="onboard-field">prod</span></label>
+                  <label>Tier <span class="onboard-field">private</span></label>
+                  <div class="dash-actions"><span class="onboard-btn primary">Apply import</span><span class="onboard-btn">Copy YAML</span></div>
+                </div>
+              </div>
+              <div>
+                <h5>What gets applied</h5>
+<pre class="dash-yaml"><span class="k">apiVersion</span>: <span class="v">aws.hypersurgery/v1alpha1</span>
+<span class="k">kind</span>: <span class="v">ResourceImport</span>
+<span class="k">spec</span>:
+  <span class="k">account</span>: <span class="v">"333333333333"</span>
+  <span class="k">region</span>: <span class="v">eu-central-1</span>
+  <span class="k">resourceID</span>: <span class="v">subnet-04d1c2b3a4e5f607</span>
+  <span class="k">tags</span>:
+    <span class="k">hs/managed</span>: <span class="v">"true"</span>
+    <span class="k">hs/owner</span>: <span class="v">team-data</span>
+    <span class="k">hs/env</span>: <span class="v">prod</span>
+    <span class="k">hs/tier</span>: <span class="v">private</span></pre>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="onboard-points">
+        <div class="principle"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg></div><div><h4>Nothing stays hidden</h4><p>Every VPC and subnet in the accounts is discovered; the tag selector decides what is managed, not what is visible.</p></div></div>
+        <div class="principle"><div class="icon v"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.6 13.4l-7.2 7.2a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="8" cy="8" r="1.5"/></svg></div><div><h4>An import is a tag change</h4><p>A <code>ResourceImport</code> object, applied by hand or through GitOps, becomes one <code>ec2:CreateTags</code> call. Tags stay the source of truth; the CRD is not a second spreadsheet.</p></div></div>
+        <div class="principle"><div class="icon a"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17.5v.5"/></svg></div><div><h4>Terraform-aware</h4><p>Resources that carry <code>managed-by=terraform</code> get a warning and the <code>ignore_changes</code> snippet, so the next plan does not undo the import.</p></div></div>
+        <div class="principle"><div class="icon b"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></div><div><h4>Narrow permissions, full audit</h4><p>The write role for imports holds <code>ec2:CreateTags</code> and nothing else; who imported what, and when, is in the object and in CloudTrail.</p></div></div>
+        <a class="btn btn-primary" href="/dashboard/?import=subnet-04d1c2b3a4e5f607">Try the import in the demo
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </a>
+      </div>
+    </div>
+
+    <div class="auto reveal">
+      <div class="auto-text">
+        <div class="kicker">Automatic mode · v0.3.0</div>
+        <h3>Or let policy do the importing.</h3>
+        <p>Someone creates a subnet from the console at 5 pm on a Friday. The CloudTrail event that
+          tells the operator about it also says <em>who</em> did it. With an auto-import policy on the
+          scope, the operator derives the tags — from the creator's role, from the parent VPC, or from
+          the account's defaults — and applies them within seconds. What it cannot resolve becomes an
+          alert for a human instead of a silent gap.</p>
+        <ul class="checks">
+          <li><svg viewBox="0 0 24 24"><use href="#i-check"/></svg><span><b>Three sources for the owner</b>, tried in order: the creating principal, the VPC the subnet lives in, the account's default</span></li>
+          <li><svg viewBox="0 0 24 24"><use href="#i-check"/></svg><span><b>Skip rules</b> for Terraform: by tag or by the principal that created it, so pipelines keep their own state clean</span></li>
+          <li><svg viewBox="0 0 24 24"><use href="#i-check"/></svg><span><b>Dry run first.</b> The operator still creates the <code>ResourceImport</code> objects — you review a day of them before switching to Apply</span></li>
+          <li><svg viewBox="0 0 24 24"><use href="#i-check"/></svg><span><b>Nothing owner-less is tagged.</b> If no rule yields an owner, the resource stays unmanaged and the alert fires</span></li>
+        </ul>
+      </div>
+      <div class="code">
+        <div class="code-head"><b>networkscope.yaml</b><span>auto-import policy</span></div>
+<pre><span class="k">spec</span>:
+  <span class="k">autoImport</span>:
+    <span class="k">mode</span>: <span class="s">DryRun</span>                  <span class="c"># DryRun | Apply</span>
+    <span class="k">fromCreator</span>:
+      - <span class="k">principal</span>: <span class="s">"arn:aws:sts::*:assumed-role/payments-*"</span>
+        <span class="k">tags</span>: { <span class="k">hs/owner</span>: <span class="s">team-payments</span> }
+      - <span class="k">principal</span>: <span class="s">"arn:aws:sts::*:assumed-role/data-platform-*"</span>
+        <span class="k">tags</span>: { <span class="k">hs/owner</span>: <span class="s">team-data</span> }
+    <span class="k">inheritFromVPC</span>: [<span class="s">hs/owner</span>, <span class="s">hs/env</span>]
+    <span class="k">accountDefaults</span>:
+      - <span class="k">account</span>: <span class="n">"333333333333"</span>
+        <span class="k">tags</span>: { <span class="k">hs/env</span>: <span class="s">prod</span> }
+    <span class="k">skip</span>:
+      - <span class="k">tag</span>: <span class="s">managed-by=terraform</span>
+      - <span class="k">principal</span>: <span class="s">"arn:aws:sts::*:assumed-role/terraform-*"</span>
+    <span class="k">requireTags</span>: [<span class="s">hs/owner</span>]      <span class="c"># otherwise: leave unmanaged, alert</span></pre>
+      </div>
+    </div>
+    </div>
+  </div>
+</section>
+
+<section id="alerting">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <div class="kicker">Alerting</div>
+      <h2>Know the moment something appears that nobody owns.</h2>
+      <p>The operator's metrics carry every unmanaged resource with its account and region, so an
+        ordinary Prometheus rule turns a hand-made subnet into a Slack or Teams message a few
+        seconds after CloudTrail sees it — with the import one click away.</p>
+    </div>
+
+    <div class="alerts reveal">
+      <div class="gpanel" aria-label="Grafana panel: unmanaged resources with a firing alert">
+        <div class="gpanel-head">
+          <span class="gpanel-title">Unmanaged resources</span>
+          <span class="gpanel-alert"><i></i>Firing · 2</span>
+          <span class="gpanel-meta">last 7 days</span>
+        </div>
+        <svg class="gchart" viewBox="0 0 520 170" preserveAspectRatio="none" role="img" aria-label="Unmanaged resources over seven days; two appeared on Friday afternoon and fired the alert">
+          <g class="grid">
+            <line x1="40" x2="512" y1="30" y2="30"/><line x1="40" x2="512" y1="70" y2="70"/><line x1="40" x2="512" y1="110" y2="110"/><line x1="40" x2="512" y1="150" y2="150"/>
+          </g>
+          <text x="6" y="34">4</text><text x="6" y="74">3</text><text x="6" y="114">2</text><text x="6" y="154">1</text>
+          <text x="40" y="167">Mon</text><text x="118" y="167">Tue</text><text x="196" y="167">Wed</text><text x="274" y="167">Thu</text><text x="352" y="167">Fri</text><text x="430" y="167">Sat</text><text x="492" y="167">Sun</text>
+          <line class="threshold" x1="40" x2="512" y1="150" y2="150"/>
+          <path class="area" d="M40 150 L120 150 L120 110 L150 110 L150 150 L390 150 L390 70 L512 70 L512 150 Z"/>
+          <path class="line" d="M40 150 L120 150 L120 110 L150 110 L150 150 L390 150 L390 70 L512 70"/>
+          <rect class="firing" x="390" y="20" width="122" height="130"/>
+          <line class="mark" x1="390" x2="390" y1="20" y2="150"/>
+          <text class="mark-text" x="396" y="32">alert fired 17:04</text>
+        </svg>
+        <div class="gtable">
+          <div class="gtable-row gtable-head"><span>Account</span><span>Region</span><span>Resource</span><span>Age</span></div>
+          <div class="gtable-row"><span class="mono">333333333333</span><span>eu-central-1</span><span class="mono">subnet-04d1c2b3a4e5f607</span><span class="bad">4m</span></div>
+          <div class="gtable-row"><span class="mono">222222222222</span><span>eu-west-1</span><span class="mono">subnet-0b2c3d4e5f6a7b89</span><span class="bad">4m</span></div>
+        </div>
+      </div>
+
+      <div class="chat-stack">
+        <div class="slack" aria-label="Example Slack alert">
+          <div class="slack-head"><span class="slack-app">Alertmanager</span><span class="slack-badge">APP</span><span class="slack-time">17:04</span></div>
+          <div class="slack-att">
+            <div class="slack-title">🔥 FIRING · UnmanagedNetworkResource</div>
+            <div class="slack-text">2 new network resources without <code>hs/managed</code> in the last 10 minutes.</div>
+            <div class="slack-fields">
+              <div><b>Resource</b><span class="mono">subnet-04d1c2b3a4e5f607</span></div>
+              <div><b>Account / region</b><span class="mono">333333333333 / eu-central-1</span></div>
+              <div><b>Created by</b><span class="mono">assumed-role/ops-admin/s.okonkwo</span></div>
+              <div><b>Auto-import</b><span>skipped · no owner rule matched</span></div>
+            </div>
+            <div class="slack-actions"><span class="slack-btn primary">Import…</span><span class="slack-btn">Silence 24h</span><span class="slack-btn">Grafana</span></div>
+          </div>
+        </div>
+
+        <div class="teams" aria-label="Example Microsoft Teams alert">
+          <div class="teams-bar"></div>
+          <div class="teams-body">
+            <div class="teams-title">UnmanagedNetworkResource <span class="teams-state">Firing</span></div>
+            <div class="teams-sub">Subnet operator · scope organization</div>
+            <div class="teams-facts">
+              <div><span>Resource</span><b class="mono">subnet-0b2c3d4e5f6a7b89</b></div>
+              <div><span>Account</span><b class="mono">222222222222 · eu-west-1</b></div>
+              <div><span>CIDR</span><b class="mono">10.20.40.0/22</b></div>
+              <div><span>First seen</span><b>17:04, 4 minutes ago</b></div>
+            </div>
+            <div class="teams-actions"><span class="teams-btn">Import in dashboard</span><span class="teams-btn">Open runbook</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="alert-rules reveal">
+      <div class="code">
+        <div class="code-head"><b>prometheusrule.yaml</b><span>ships with the chart</span></div>
+<pre>- <span class="k">alert</span>: <span class="s">UnmanagedNetworkResource</span>
+  <span class="k">expr</span>: <span class="s">increase(hs_aws_unmanaged_resources_total[10m]) > 0</span>
+  <span class="k">labels</span>: { <span class="k">severity</span>: <span class="s">warning</span>, <span class="k">team</span>: <span class="s">network</span> }
+  <span class="k">annotations</span>:
+    <span class="k">summary</span>: <span class="s">"{{ $value }} new unmanaged resources in {{ $labels.account }}/{{ $labels.region }}"</span>
+    <span class="k">import_url</span>: <span class="s">"https://hypersurgery.dev/dashboard/?import={{ $labels.resource_id }}"</span>
+
+- <span class="k">alert</span>: <span class="s">AutoImportedResources</span>          <span class="c"># info: a daily digest, not a page</span>
+  <span class="k">expr</span>: <span class="s">increase(hs_aws_auto_imports_total[24h]) > 0</span>
+  <span class="k">labels</span>: { <span class="k">severity</span>: <span class="s">info</span> }</pre>
+      </div>
+      <div class="code">
+        <div class="code-head"><b>alertmanager.yaml</b><span>route to Slack and Teams</span></div>
+<pre><span class="k">receivers</span>:
+  - <span class="k">name</span>: <span class="s">network-slack</span>
+    <span class="k">slack_configs</span>:
+      - <span class="k">channel</span>: <span class="s">"#network-inventory"</span>
+        <span class="k">title</span>: <span class="s">"{{ .CommonLabels.alertname }}"</span>
+        <span class="k">actions</span>:
+          - <span class="k">type</span>: <span class="s">button</span>
+            <span class="k">text</span>: <span class="s">"Import…"</span>
+            <span class="k">url</span>: <span class="s">"{{ .CommonAnnotations.import_url }}"</span>
+  - <span class="k">name</span>: <span class="s">network-teams</span>
+    <span class="k">msteamsv2_configs</span>:
+      - <span class="k">webhook_url</span>: <span class="s">"https://….webhook.office.com/…"</span>
+<span class="k">route</span>:
+  <span class="k">routes</span>:
+    - <span class="k">matchers</span>: [<span class="s">alertname = UnmanagedNetworkResource</span>]
+      <span class="k">receiver</span>: <span class="s">network-slack</span>
+      <span class="k">continue</span>: <span class="n">true</span>
+    - <span class="k">matchers</span>: [<span class="s">team = network</span>]
+      <span class="k">receiver</span>: <span class="s">network-teams</span></pre>
+      </div>
+    </div>
+    <p class="section-note reveal">The chart's <code>PrometheusRule</code> ships all of it: the unmanaged-resource rule
+      above, a daily digest of what the policy imported by itself, plus a subnet at 85%, a subnet with no free addresses,
+      an unreachable account, overlapping VPC CIDRs and a stale inventory. They all travel this route into Slack or Teams.</p>
+  </div>
+</section>
+
+<section id="features">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <div class="kicker">Features</div>
+      <h2>Built like a cloud-native component, not a script.</h2>
+    </div>
+    <div class="features">
+      <div class="feature reveal"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.6 13.4l-7.2 7.2a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="8" cy="8" r="1.5"/></svg></div><h4>Tag-driven discovery</h4><p>Select VPCs by tags; every subnet inside is included, so untagged ones cannot hide.</p></div>
+      <div class="feature reveal"><div class="icon b"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="2.5"/><circle cx="5" cy="19" r="2.5"/><circle cx="19" cy="19" r="2.5"/><path d="M12 7.5v4M12 11.5L6.5 17M12 11.5l5.5 5.5"/></svg></div><h4>Hub and spoke</h4><p>One operator, many accounts. Role ARNs are checked against the declared account ID.</p></div>
+      <div class="feature reveal"><div class="icon v"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L4 14h7l-1 8 9-12h-7z"/></svg></div><h4>Event-driven</h4><p>EventBridge → SQS, debounced, leader-only. Only the changed account/region is resynced.</p></div>
+      <div class="feature reveal"><div class="icon a"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17.5v.5"/></svg></div><h4>Compliance findings</h4><p>Missing required tags per subnet, surfaced in status and as metrics.</p></div>
+      <div class="feature reveal"><div class="icon r"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="11" height="11" rx="2"/><rect x="10" y="3" width="11" height="11" rx="2"/></svg></div><h4>Overlap detection</h4><p>CIDR overlaps across VPCs and accounts, before peering or TGW routing fails.</p></div>
+      <div class="feature reveal"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 20h18"/><path d="M6 16V9M11 16V5M16 16v-5M21 16V8"/></svg></div><h4>Prometheus metrics</h4><p>Free and total IPs, missing tags, overlaps, target health. Alert on 80% before it is 100%.</p></div>
+      <div class="feature reveal"><div class="icon b"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h7v7H4zM13 13h7v7h-7z"/><path d="M13 4h7v7h-7z" opacity=".45"/><path d="M4 13h7v7H4z" opacity=".45"/></svg></div><h4>Terraform-friendly</h4><p>Terraform-owned resources are observed, never mutated. Allocate-only mode keeps Terraform in charge.</p></div>
+      <div class="feature reveal"><div class="icon r"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22c5.5-2 8-6 8-11V5l-8-3-8 3v6c0 5 2.5 9 8 11z"/><path d="M9 12l2 2 4-4"/></svg></div><h4>Refused at apply time</h4><p>An admission webhook rejects a claim that cannot be satisfied — a prefix that does not fit the VPC, an AZ from another region — with a readable message, instead of failing quietly in a reconcile loop.</p></div>
+      <div class="feature reveal"><div class="icon v"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v16H4z"/><path d="M8 9h8M8 13h8M8 17h5"/></svg></div><h4>Audit trail</h4><p>Every import, allocation and policy decision leaves a Kubernetes Event on the object and one JSON line on a separate stream: who asked, what changed, and the tags before and after.</p></div>
+      <div class="feature reveal"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/><path d="M4 21h16" opacity=".5"/></svg></div><h4>One-step onboarding</h4><p>Untagged VPCs and subnets are listed, not hidden. Importing one applies the tags in AWS — with a warning when Terraform owns it.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="api">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <div class="kicker">API</div>
+      <h2>Declare the scope. Read the result.</h2>
+      <p>Group <code>aws.hypersurgery/v1alpha1</code>. <code>VPC</code> and <code>Subnet</code> objects are written by the operator and owned by their scope.</p>
+    </div>
+    <div class="code-grid">
+      <div class="code reveal">
+        <div class="code-head"><b>networkscope.yaml</b><span>you write</span></div>
+<pre><span class="k">apiVersion</span>: <span class="s">aws.hypersurgery/v1alpha1</span>
+<span class="k">kind</span>: <span class="s">NetworkScope</span>
+<span class="k">metadata</span>:
+  <span class="k">name</span>: <span class="s">organization</span>
+<span class="k">spec</span>:
+  <span class="k">accounts</span>:
+    - <span class="k">id</span>: <span class="n">"111111111111"</span>          <span class="c"># hub, own credentials</span>
+    - <span class="k">id</span>: <span class="n">"222222222222"</span>
+      <span class="k">roleARN</span>: <span class="s">arn:aws:iam::222222222222:role/aws-subnet-operator-readonly</span>
+  <span class="k">regions</span>: [<span class="s">eu-central-1</span>, <span class="s">eu-west-1</span>]
+  <span class="k">vpcTagSelector</span>:
+    <span class="k">hs/managed</span>: <span class="n">"true"</span>
+  <span class="k">requiredSubnetTags</span>: [<span class="s">hs/owner</span>, <span class="s">hs/env</span>, <span class="s">hs/tier</span>]
+  <span class="k">resyncInterval</span>: <span class="s">10m</span></pre>
+      </div>
+      <div class="code reveal">
+        <div class="code-head"><b>subnet/subnet-0e4f5a6b</b><span>the operator writes</span></div>
+<pre><span class="k">spec</span>:
+  <span class="k">subnetID</span>: <span class="s">subnet-0e4f5a6b</span>
+  <span class="k">vpcID</span>: <span class="s">vpc-0aa11bb2</span>
+  <span class="k">account</span>: <span class="n">"111111111111"</span>
+  <span class="k">region</span>: <span class="s">eu-central-1</span>
+<span class="k">status</span>:
+  <span class="k">cidrBlock</span>: <span class="s">10.20.2.0/24</span>
+  <span class="k">availabilityZone</span>: <span class="s">eu-central-1b</span>
+  <span class="k">public</span>: <span class="n">false</span>
+  <span class="k">totalIPs</span>: <span class="n">251</span>
+  <span class="k">availableIPs</span>: <span class="w">31</span>
+  <span class="k">utilizationPercent</span>: <span class="w">87</span>
+  <span class="k">owner</span>: <span class="s">team-payments</span>
+  <span class="k">tier</span>: <span class="s">private</span>
+  <span class="k">missingTags</span>: [<span class="e">hs/env</span>]</pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="principles" class="alt">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <div class="kicker">Safety</div>
+      <h2>Designed so you can install it on day one.</h2>
+    </div>
+    <div class="principles">
+      <div class="principle reveal"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></div><div><h4>Read-only by default</h4><p>The core uses three EC2 Describe calls. Write permissions live in a separate role you add later, if ever.</p></div></div>
+      <div class="principle reveal"><div class="icon r"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/><path d="M4 4l16 16"/></svg></div><div><h4>Never deletes cloud resources</h4><p>Removing an object from the cluster never removes a subnet. Deletion stays a human decision.</p></div></div>
+      <div class="principle reveal"><div class="icon b"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></div><div><h4>Right account or nothing</h4><p>Credentials are verified against the declared account ID, so a typo cannot report another account's networks.</p></div></div>
+      <div class="principle reveal"><div class="icon v"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22c5.5-2 8-6 8-11V5l-8-3-8 3v6c0 5 2.5 9 8 11z"/><path d="M12 8v5M12 16v.5"/></svg></div><div><h4>Degrades gracefully</h4><p>An unreachable account is reported, not erased. Its last known state stays until it syncs again.</p></div></div>
+      <div class="principle reveal"><div class="icon b"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="7" height="16" rx="2"/><rect x="14" y="4" width="7" height="16" rx="2"/></svg></div><div><h4>Survives a node drain</h4><p>Two replicas by default with a disruption budget and leader election, so draining the node holding the lease does not pause discovery.</p></div></div>
+      <div class="principle reveal"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z"/><path d="M9 12h6"/></svg></div><div><h4>Reads one namespace of Secrets</h4><p>The credential Secret is read through a namespaced Role, not a cluster-wide permission. A compromised operator does not open every Secret you have.</p></div></div>
+    </div>
+  </div>
+</section>
+
+<section id="evidence">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <div class="kicker">Evidence</div>
+      <h2>Every claim on this page is checkable.</h2>
+      <p>These badges are live. They come from the runs themselves, not from a screenshot
+        someone took on a good day.</p>
+    </div>
+    <div class="badges reveal">
+      <a href="https://github.com/aivandrago/subnet-operator/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/aivandrago/subnet-operator/actions/workflows/ci.yml/badge.svg"></a>
+      <a href="https://github.com/aivandrago/subnet-operator/actions/workflows/security.yml"><img alt="Security scans" src="https://github.com/aivandrago/subnet-operator/actions/workflows/security.yml/badge.svg"></a>
+      <a href="https://github.com/aivandrago/subnet-operator/actions/workflows/codeql.yml"><img alt="CodeQL" src="https://github.com/aivandrago/subnet-operator/actions/workflows/codeql.yml/badge.svg"></a>
+      <a href="https://github.com/aivandrago/subnet-operator/actions/workflows/ci.yml"><img alt="Coverage" src="https://img.shields.io/endpoint?url=https%3A%2F%2Faivandrago.github.io%2Fsubnet-operator%2Fbadges%2Fcoverage.json"></a>
+      <a href="https://scorecard.dev/viewer/?uri=github.com/aivandrago/subnet-operator"><img alt="OpenSSF Scorecard" src="https://api.scorecard.dev/projects/github.com/aivandrago/subnet-operator/badge"></a>
+      <a href="https://github.com/aivandrago/subnet-operator/blob/main/LICENSE"><img alt="Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue"></a>
+    </div>
+    <div class="fit" style="margin-top:24px">
+      <div class="reveal"><b>On every change</b><span>Unit tests and envtest against a real API server, the Helm chart rendered and linted, and a check that the generated CRDs match the types.</span></div>
+      <div class="reveal"><b>End to end</b><span>The operator runs in a Kind cluster against a mock AWS, across two accounts, and is asked to discover, allocate and import for real.</span></div>
+      <div class="reveal"><b>Security scanners</b><span>govulncheck, gosec, Trivy and Semgrep on every pull request and again weekly, because vulnerability databases move when the code does not. CodeQL with the extended security queries.</span></div>
+      <div class="reveal"><b>Supply chain</b><span>Third-party actions are pinned to commit SHAs, not tags. OpenSSF Scorecard runs in the open and publishes its result.</span></div>
+      <div class="reveal"><b>Not yet proven</b><span>Everything above runs against a mock. A conformance run against a real AWS organization is the open item in the current milestone, and until it passes this page will keep saying so.</span></div>
+    </div>
+  </div>
+</section>
+
+<section id="read">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <div class="kicker">Read</div>
+      <h2>The longer version, with fewer bullet points.</h2>
+    </div>
+    <a class="readnext reveal" href="/article/">
+      <img src="/article/img/cover.png?v=2" alt="Cover of the article I Must Break Your Spreadsheet" loading="lazy" width="1200" height="630">
+      <div class="rn-body">
+        <div class="rn-meta">Article · 12 min</div>
+        <h3>I Must Break Your Spreadsheet</h3>
+        <p>Why the tags are the inventory and the table never was, what happens in the five
+          minutes after somebody creates a subnet by hand, and what the alerts, the Grafana
+          dashboard and the manifests actually look like.</p>
+        <span class="btn btn-ghost">Read the article</span>
+      </div>
+    </a>
+  </div>
+</section>
+
+<section id="roadmap">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <div class="kicker">Roadmap</div>
+      <h2>Where the project is today.</h2>
+    </div>
+    <div class="timeline">
+      <div class="phase done reveal"><div class="bullet">1</div><div class="phase-body"><header><h4>Read-only inventory</h4><span class="status done">DONE</span></header>
+        <p>Multi-account, multi-region discovery; VPC and Subnet CRDs; compliance findings; CIDR overlaps; metrics.</p></div></div>
+      <div class="phase done reveal"><div class="bullet">2</div><div class="phase-body"><header><h4>Scale out</h4><span class="status done">DONE</span></header>
+        <p>Near-real-time updates and the views people actually look at.</p>
+        <div class="chips"><span class="chip ok">Kind + Moto e2e</span><span class="chip ok">EventBridge → SQS events</span><span class="chip ok">Google Sheet export</span><span class="chip ok">Grafana dashboard</span><span class="chip ok">Helm chart</span></div></div></div>
+      <div class="phase done reveal"><div class="bullet">3</div><div class="phase-body"><header><h4>Automatic management (opt-in)</h4><span class="status done">DONE</span></header>
+        <p><code>SubnetClaim</code>, CIDR allocation from IPAM or tagged pools, route tables and load-balancer tags, allocate-only mode for Terraform; <code>ResourceImport</code> to take untagged networks under management with a single object.</p>
+        <div class="chips"><span class="chip ok">SubnetClaim + CIDR allocation</span><span class="chip ok">Allocate-only mode</span><span class="chip ok">Opt-in creation behind a write role</span><span class="chip ok">ResourceImport</span><span class="chip ok">Auto-import policy</span></div></div></div>
+      <div class="phase now reveal"><div class="bullet">4</div><div class="phase-body"><header><h4>Production hardening</h4><span class="status now">IN PROGRESS</span></header>
+        <p>Admission webhooks refuse an impossible claim at <code>kubectl apply</code> instead of a reconcile later;
+          every import, allocation and policy decision leaves a Kubernetes Event and a line in a JSON audit stream;
+          the chart runs two replicas with a disruption budget and reads credentials from one namespace, not the cluster.
+          The image is public, multi-arch and signed with cosign keyless, so installing needs no
+          credentials and you can check what you are about to run. The operator alerts on its own
+          absence and on claims and imports that stay stuck, and a stopped leader hands its lease
+          over in about a second and a half. A target that AWS throttles backs off on its own and
+          alerts as throttled, not as down; the chart itself is signed on ghcr.io; and the dashboard
+          can run in the cluster, reading it as whoever is looking. Every change is now tested as an
+          upgrade from the last release, capacity is measured rather than estimated (400
+          account/region pairs), and a threat model came with fixes: the write role can touch only
+          networks, auto-import never overwrites a tag somebody set, a scope can be limited to the
+          namespaces allowed to write through it, and the audit trail records who really created a
+          claim or an import. Still open: a conformance run
+          against a real AWS organization.</p>
+        <div class="chips"><span class="chip ok">Admission webhooks</span><span class="chip ok">Audit trail</span><span class="chip ok">HA defaults</span><span class="chip ok">Namespaced Secret access</span><span class="chip ok">Signed images · SBOM · provenance</span><span class="chip ok">Alerts that notice silence</span><span class="chip ok">Fast leader hand-over</span><span class="chip ok">Throttling backoff</span><span class="chip ok">Signed chart on ghcr.io</span><span class="chip ok">Live dashboard</span><span class="chip ok">Upgrade tests</span><span class="chip ok">Threat model</span><span class="chip ok">Namespace-scoped writes</span><span class="chip">Real-AWS conformance · needs an account</span></div></div></div>
+      <div class="phase reveal"><div class="bullet">5</div><div class="phase-body"><header><h4>A cloud-neutral API</h4><span class="status next">NEXT · 0.8</span></header>
+        <p>The API moves to <code>network.hypersurgery.dev</code>, with the cloud as a field of the scope rather
+          than part of every name, and the project becomes <code>subnet-operator</code>. The operator migrates
+          existing objects itself, status included, so an upgrade does not lose a reservation. Decided in
+          <a href="https://github.com/aivandrago/subnet-operator/blob/main/docs/adr/0002-multi-cloud-model.md">ADR 0002</a>.</p></div></div>
+      <div class="phase reveal"><div class="bullet">6</div><div class="phase-body"><header><h4>1.0</h4><span class="status next">PLANNED</span></header>
+        <p>A <code>v1</code> API with a compatibility promise, in which a scope that names no namespaces can be
+          written through by none, and the support policy that is already written down applied in full.</p></div></div>
+      <div class="phase reveal"><div class="bullet">7</div><div class="phase-body"><header><h4>Google Cloud and Azure</h4><span class="status next">PLANNED · 1.x</span></header>
+        <p>The same inventory, claims and imports for GCP projects and Azure subscriptions, added to the 1.0 API
+          without breaking it. Where the cloud cannot tag a subnet, ownership is kept on its network.</p></div></div>
+    </div>
+  </div>
+</section>
+
+<section id="clouds" class="alt">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <div class="kicker">Clouds</div>
+      <h2>AWS first. Vendor-neutral by design.</h2>
+      <p>Discovery sits behind a cloud-neutral inventory model. Each provider keeps its own API group,
+        so the model follows real platforms instead of a lowest common denominator.</p>
+    </div>
+    <div class="clouds">
+      <div class="cloud active reveal"><h4>Amazon Web Services</h4><code>aws.hypersurgery</code><p>VPCs, subnets, route tables, CloudTrail events, AssumeRole. Available now.</p></div>
+      <div class="cloud reveal"><h4>Google Cloud</h4><code>gcp.hypersurgery</code><p>Regional subnetworks, shared VPC host projects, Cloud Asset feeds. Planned.</p></div>
+      <div class="cloud reveal"><h4>Microsoft Azure</h4><code>azure.hypersurgery</code><p>VNets and subnets across subscriptions, Event Grid notifications. Planned.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="cncf">
+  <div class="wrap cncf">
+    <div>
+      <div class="section-head reveal" style="margin-bottom:28px">
+        <div class="kicker">CNCF</div>
+        <h2>Why it belongs in the cloud-native landscape.</h2>
+      </div>
+      <div class="fit">
+        <div class="reveal"><b>Kubernetes-native</b><span>CRDs, controllers, status conditions and owner references. Built with kubebuilder and controller-runtime.</span></div>
+        <div class="reveal"><b>Observable</b><span>Prometheus metrics that feed straight into alerting and Grafana.</span></div>
+        <div class="reveal"><b>Vendor-neutral</b><span>One inventory model across AWS, Google Cloud and Azure.</span></div>
+        <div class="reveal"><b>Composable</b><span>Works next to Terraform, Karpenter, the AWS Load Balancer Controller and Crossplane instead of replacing them.</span></div>
+        <div class="reveal"><b>Open</b><span>Apache-2.0 licensed, open development and a public roadmap.</span></div>
+      </div>
+    </div>
+    <div class="callout reveal">
+      <h3>Looking for early adopters and maintainers</h3>
+      <p style="font:13px var(--mono);color:#cdd3e3;background:rgba(0,0,0,.25);padding:10px 12px;border-radius:10px;overflow-x:auto">helm repo add hypersurgery https://charts.hypersurgery.dev</p>
+      <p>We are preparing the project for the CNCF Sandbox. The most useful help right now:</p>
+      <ul>
+        <li>Platform teams who track networks in spreadsheets today and want to try the read-only core</li>
+        <li>Feedback on the tag schema and the <code>SubnetClaim</code> / <code>ResourceImport</code> APIs before they are frozen</li>
+        <li>Contributors for the Google Cloud and Azure providers</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<div class="demo-backdrop" id="demo" role="dialog" aria-modal="true" aria-label="Subnet inventory demo dashboard">
+  <div id="demo-panel"></div>
+</div>
+
+<footer>
+  <div class="wrap">
+    <span>Subnet Operator · alpha · 2026 · <a href="/docs/" style="color:var(--muted)">Install</a> · <a href="/dashboard/" style="color:var(--muted)">Dashboard app</a> · <a href="https://charts.hypersurgery.dev" style="color:var(--muted)">Charts</a> · <a href="https://github.com/aivandrago/subnet-operator" style="color:var(--muted)">GitHub</a> · <a href="/article/" style="color:var(--muted)">Article</a></span>
+    <span>Kubernetes operator for cloud network inventory and optional automatic subnet management</span>
+  </div>
+</footer>
+
+<script>
+  // Reveal sections as they scroll into view; everything stays visible without JS.
+  (function () {
+    var els = document.querySelectorAll('.reveal');
+    if (!('IntersectionObserver' in window)) { els.forEach(function (e) { e.classList.add('in'); }); return; }
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (en) { if (en.isIntersecting) { en.target.classList.add('in'); io.unobserve(en.target); } });
+    }, { rootMargin: '0px 0px -8% 0px', threshold: 0.08 });
+    els.forEach(function (e) { io.observe(e); });
+  })();
+</script>
+
+<script src="/assets/dashboard.js?v=11" defer></script>
+<script>
+// Opens the shared dashboard in a modal; #dashboard links straight to it.
+window.addEventListener('DOMContentLoaded', function () {
+  var open = document.getElementById('demo-open');
+  var modal = document.getElementById('demo');
+  var panel = document.getElementById('demo-panel');
+  if (!open || !modal || !panel) return;
+  var dash = null;
+
+  function show() {
+    if (location.hash !== '#dashboard') history.replaceState(null, '', '#dashboard');
+    modal.setAttribute('open', '');
+    document.body.style.overflow = 'hidden';
+    if (!dash) dash = window.SubnetDashboard.mount(panel, { modal: true, onClose: hide, defaultTheme: 'midnight' });
+    dash.start();
+  }
+  function hide() {
+    if (location.hash === '#dashboard') history.replaceState(null, '', location.pathname);
+    modal.removeAttribute('open');
+    document.body.style.overflow = '';
+    if (dash) dash.stop();
+    open.focus();
+  }
+
+  open.addEventListener('click', show);
+  modal.addEventListener('click', function (e) { if (e.target === modal) hide(); });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && modal.hasAttribute('open')) hide();
+  });
+  if (location.hash === '#dashboard') show();
+  window.addEventListener('hashchange', function () {
+    if (location.hash === '#dashboard' && !modal.hasAttribute('open')) show();
+  });
+});
+</script>
+
+<noscript><style>.reveal { opacity: 1; transform: none; }</style></noscript>
+</body>
+</html>

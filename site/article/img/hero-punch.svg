@@ -1,0 +1,142 @@
+<svg xmlns="http://www.w3.org/2000/svg" font-family="PT Serif, Georgia, serif" viewBox="0 0 1200 620" role="img" aria-label="A heavy blocky boxer lands a punch on a spreadsheet, which shatters into flying cells full of broken formulas and half-remembered CIDR blocks">
+  <defs>
+    <linearGradient id="hbg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f2ece0"/><stop offset="1" stop-color="#f2ece0"/>
+    </linearGradient>
+    <radialGradient id="flash" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#8f0d17" stop-opacity=".55"/>
+      <stop offset="0.55" stop-color="#c1121f" stop-opacity=".18"/>
+      <stop offset="1" stop-color="#c1121f" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1200" height="620" fill="url(#hbg)"/>
+
+  <!-- ring ropes behind everything -->
+  <g stroke="#c9bfae" stroke-width="5">
+    <line x1="0" y1="96" x2="1200" y2="96"/>
+    <line x1="0" y1="152" x2="1200" y2="152"/>
+  </g>
+  <rect x="0" y="560" width="1200" height="60" fill="#f2ece0"/>
+  <line x1="0" y1="560" x2="1200" y2="560" stroke="#c9bfae" stroke-width="3"/>
+
+  <!-- impact flash -->
+  <circle cx="712" cy="318" r="230" fill="url(#flash)"/>
+
+  <!-- ─── the boxer ─────────────────────────────────────────────────── -->
+  <g>
+    <!-- back leg -->
+    <rect x="196" y="452" width="46" height="104" rx="8" fill="#e7dfd0" stroke="#c1121f" stroke-width="3"/>
+    <!-- front leg -->
+    <rect x="300" y="452" width="46" height="104" rx="8" fill="#e7dfd0" stroke="#c1121f" stroke-width="3"/>
+    <!-- torso -->
+    <rect x="188" y="258" width="180" height="198" rx="14" fill="#e7dfd0" stroke="#c1121f" stroke-width="4"/>
+    <!-- belt -->
+    <rect x="188" y="404" width="180" height="30" fill="#c1121f"/>
+    <text x="278" y="425" text-anchor="middle" font-family="PT Mono, JetBrains Mono, monospace" font-size="15" font-weight="600" fill="#f2ece0">hs/managed</text>
+    <!-- chest seam -->
+    <line x1="278" y1="272" x2="278" y2="396" stroke="#c9bfae" stroke-width="3"/>
+
+    <!-- head: flat top, square jaw -->
+    <rect x="214" y="150" width="128" height="22" rx="4" fill="#c1121f"/>
+    <rect x="214" y="170" width="128" height="86" rx="10" fill="#e7dfd0" stroke="#c1121f" stroke-width="4"/>
+    <rect x="218" y="174" width="120" height="11" rx="2" fill="#c1121f"/>
+    <rect x="238" y="200" width="28" height="10" rx="4" fill="#c1121f"/>
+    <rect x="292" y="200" width="28" height="10" rx="4" fill="#c1121f"/>
+    <rect x="256" y="232" width="46" height="6" rx="3" fill="#7b7266"/>
+
+    <!-- guard arm, tucked -->
+    <rect x="150" y="300" width="52" height="96" rx="14" fill="#e7dfd0" stroke="#c1121f" stroke-width="3"/>
+    <rect x="132" y="268" width="66" height="54" rx="20" fill="#c1121f"/>
+
+    <!-- punching arm, extended to the right -->
+    <rect x="364" y="292" width="210" height="44" rx="18" fill="#e7dfd0" stroke="#c1121f" stroke-width="4"/>
+    <!-- the glove -->
+    <g>
+      <rect x="556" y="266" width="112" height="96" rx="38" fill="#c1121f"/>
+      <rect x="548" y="294" width="26" height="44" rx="10" fill="#8f0d17"/>
+      <rect x="586" y="292" width="58" height="10" rx="5" fill="#f2ece0" opacity=".25"/>
+    </g>
+    <!-- motion lines behind the punch -->
+    <g stroke="#c1121f" stroke-width="5" stroke-linecap="round" opacity=".45">
+      <line x1="392" y1="262" x2="470" y2="262"/>
+      <line x1="416" y1="360" x2="500" y2="360"/>
+      <line x1="372" y1="382" x2="436" y2="382"/>
+    </g>
+  </g>
+
+  <!-- ─── the spreadsheet, coming apart ─────────────────────────────── -->
+  <g>
+    <!-- main body, cracked and tilted away from the punch -->
+    <g transform="translate(742 188) rotate(9)">
+      <rect x="0" y="0" width="330" height="204" rx="10" fill="#f2ece0" stroke="#4a443c" stroke-width="3"/>
+      <rect x="0" y="0" width="330" height="34" rx="10" fill="#c9bfae"/>
+      <rect x="0" y="24" width="330" height="10" fill="#c9bfae"/>
+      <circle cx="20" cy="17" r="5" fill="#4a443c"/>
+      <text x="38" y="22" font-family="PT Mono, JetBrains Mono, monospace" font-size="12" fill="#4a443c">Sheet1 — subnets_FINAL_v7.xlsx</text>
+
+      <g stroke="#c9bfae" stroke-width="1.6">
+        <line x1="0" y1="76" x2="330" y2="76"/><line x1="0" y1="118" x2="330" y2="118"/>
+        <line x1="0" y1="160" x2="330" y2="160"/>
+        <line x1="112" y1="34" x2="112" y2="204"/><line x1="216" y1="34" x2="216" y2="204"/>
+      </g>
+      <g font-family="PT Mono, JetBrains Mono, monospace" font-size="12.5" fill="#7b7266">
+        <text x="14" y="62">10.0.1.0/24</text><text x="126" y="62">prod?</text><text x="230" y="62" fill="#c1121f">ask Dmitri</text>
+        <text x="14" y="104">10.0.?.0/24</text><text x="126" y="104">staging</text><text x="230" y="104" fill="#8f0d17">temporary</text>
+        <text x="14" y="146">10.0.9.0/24</text><text x="126" y="146">deleted?</text><text x="230" y="146">2021</text>
+        <text x="14" y="188">=VLOOKUP(…)</text><text x="126" y="188" fill="#c1121f">#REF!</text><text x="230" y="188" fill="#c1121f">#N/A</text>
+      </g>
+
+      <!-- cracks radiating from the impact corner -->
+      <g stroke="#c1121f" stroke-width="3" fill="none" opacity=".9">
+        <path d="M0 96 L54 110 L28 140 L92 150"/>
+        <path d="M0 96 L46 66 L20 40"/>
+        <path d="M0 96 L58 104 L104 78"/>
+      </g>
+    </g>
+
+    <!-- shards flying off -->
+    <g font-family="PT Mono, JetBrains Mono, monospace" font-size="12">
+      <g transform="translate(846 92) rotate(-22)">
+        <rect width="118" height="40" rx="5" fill="#e7dfd0" stroke="#c1121f" stroke-width="2"/>
+        <text x="12" y="25" fill="#c1121f">#REF!</text>
+      </g>
+      <g transform="translate(1012 158) rotate(16)">
+        <rect width="150" height="40" rx="5" fill="#e7dfd0" stroke="#4a443c" stroke-width="2"/>
+        <text x="10" y="25" fill="#4a443c">owner: ???</text>
+      </g>
+      <g transform="translate(1004 80) rotate(12)">
+        <rect width="142" height="40" rx="5" fill="#e7dfd0" stroke="#8f0d17" stroke-width="2"/>
+        <text x="10" y="25" fill="#8f0d17">last edit 2021</text>
+      </g>
+      <g transform="translate(872 446) rotate(13)">
+        <rect width="168" height="40" rx="5" fill="#e7dfd0" stroke="#4a443c" stroke-width="2"/>
+        <text x="10" y="25" fill="#4a443c">10.0.?.0/24</text>
+      </g>
+      <g transform="translate(688 480) rotate(-16)">
+        <rect width="132" height="40" rx="5" fill="#e7dfd0" stroke="#c1121f" stroke-width="2"/>
+        <text x="10" y="25" fill="#c1121f">merged cell</text>
+      </g>
+      <g transform="translate(1108 430) rotate(28)">
+        <rect width="96" height="36" rx="5" fill="#e7dfd0" stroke="#4a443c" stroke-width="2"/>
+        <text x="12" y="23" fill="#4a443c">Sheet2</text>
+      </g>
+    </g>
+
+    <!-- impact starburst -->
+    <g stroke="#8f0d17" stroke-width="6" stroke-linecap="round">
+      <line x1="668" y1="312" x2="626" y2="284"/>
+      <line x1="672" y1="336" x2="628" y2="352"/>
+      <line x1="678" y1="290" x2="654" y2="244"/>
+      <line x1="684" y1="360" x2="660" y2="404"/>
+    </g>
+  </g>
+
+  <!-- the line -->
+  <g>
+    <rect x="60" y="60" width="470" height="56" rx="12" fill="#f2ece0" stroke="#c9bfae" stroke-width="2"/>
+    <path d="M110 116 l0 26 l26 -26 z" fill="#f2ece0" stroke="#c9bfae" stroke-width="2"/>
+    <text x="84" y="96" font-size="24" font-weight="700" fill="#1a1714">“I must break your spreadsheet.”</text>
+  </g>
+
+  <text x="60" y="592" font-family="PT Mono, JetBrains Mono, monospace" font-size="13" fill="#7b7266">No spreadsheets were harmed. They were simply made unnecessary.</text>
+</svg>

@@ -1,0 +1,14 @@
+# Artifact Hub metadata for the OCI chart repository
+# oci://ghcr.io/aivandrago/charts/aws-subnet-operator.
+#
+# An OCI repository has no index.yaml to sit next to, so the release workflow pushes this file
+# to the registry itself, under the tag "artifacthub.io", where Artifact Hub looks for it
+# (https://artifacthub.io/docs/topics/repositories/helm-charts/#oci-support).
+#
+# repositoryID is the ID Artifact Hub gives the repository when it is added in its control
+# panel. With it, the repository gets the Verified publisher badge; it is not a secret, and
+# the release after it is set here publishes it.
+# repositoryID: <the repository ID from Artifact Hub's control panel>
+owners:
+  - name: Ivan Drago
+    email: maintainers@hypersurgery.dev

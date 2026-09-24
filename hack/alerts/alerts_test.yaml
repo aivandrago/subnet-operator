@@ -1,0 +1,273 @@
+# Behaviour of the chart's alerts, checked by hack/alerts/test.sh with promtool.
+#
+# Written against release "r" in namespace "ops", so the operator's scrape job is
+# r-aws-subnet-operator-metrics.
+
+rule_files:
+  - rules.yaml
+
+evaluation_interval: 1m
+
+tests:
+  # The gap SubnetOperatorDown closes. When the operator dies, the series the other alerts are
+  # computed from simply stop, so a stale-inventory rule has nothing to evaluate and says
+  # nothing. This case pins that down: if it ever starts failing, the reasoning behind
+  # SubnetOperatorDown has changed and deserves a second look.
+  - name: a vanished inventory is silent to the stale-sync rule
+    interval: 1m
+    input_series:
+      - series: 'hs_aws_scope_last_sync_timestamp_seconds{scope="org"}'
+        values: '0 _x120'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: SubnetInventoryStale
+        exp_alerts: []
+
+  - name: an operator that is not running at all is an outage
+    interval: 1m
+    input_series: []
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: SubnetOperatorDown
+        exp_alerts: []          # not yet: the rule waits 10m before it fires
+      - eval_time: 11m
+        alertname: SubnetOperatorDown
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: The subnet operator is not running
+              description: >-
+                No replica of the operator in ops has been scraped successfully for 10m.
+                The inventory is no longer being maintained, and none of the other alerts
+                can fire while it is down.
+              runbook_url: https://github.com/aivandrago/subnet-operator/blob/main/docs/operations/runbook.md#subnetoperatordown
+
+  - name: both replicas up is quiet
+    interval: 1m
+    input_series:
+      - series: 'up{job="r-aws-subnet-operator-metrics", namespace="ops", pod="a"}'
+        values: '1x30'
+      - series: 'up{job="r-aws-subnet-operator-metrics", namespace="ops", pod="b"}'
+        values: '1x30'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: SubnetOperatorDown
+        exp_alerts: []
+
+  # Two replicas exist so that one of them dying is not an outage: the other takes the lease.
+  - name: losing one replica of two is not an outage
+    interval: 1m
+    input_series:
+      - series: 'up{job="r-aws-subnet-operator-metrics", namespace="ops", pod="a"}'
+        values: '1x30'
+      - series: 'up{job="r-aws-subnet-operator-metrics", namespace="ops", pod="b"}'
+        values: '1x5 0x25'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: SubnetOperatorDown
+        exp_alerts: []
+
+  - name: both replicas failing their scrape is an outage
+    interval: 1m
+    input_series:
+      - series: 'up{job="r-aws-subnet-operator-metrics", namespace="ops", pod="a"}'
+        values: '1x5 0x25'
+      - series: 'up{job="r-aws-subnet-operator-metrics", namespace="ops", pod="b"}'
+        values: '1x5 0x25'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: SubnetOperatorDown
+        exp_alerts: []          # down since minute 6, so not yet for the full 10m
+      - eval_time: 17m
+        alertname: SubnetOperatorDown
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: The subnet operator is not running
+              description: >-
+                No replica of the operator in ops has been scraped successfully for 10m.
+                The inventory is no longer being maintained, and none of the other alerts
+                can fire while it is down.
+              runbook_url: https://github.com/aivandrago/subnet-operator/blob/main/docs/operations/runbook.md#subnetoperatordown
+
+  # An operator in another namespace, or scraped under another job, says nothing about this one.
+  - name: another release being up does not hide this one being down
+    interval: 1m
+    input_series:
+      - series: 'up{job="other-aws-subnet-operator-metrics", namespace="ops", pod="x"}'
+        values: '1x30'
+      - series: 'up{job="r-aws-subnet-operator-metrics", namespace="staging", pod="y"}'
+        values: '1x30'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: SubnetOperatorDown
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: The subnet operator is not running
+              description: >-
+                No replica of the operator in ops has been scraped successfully for 10m.
+                The inventory is no longer being maintained, and none of the other alerts
+                can fire while it is down.
+              runbook_url: https://github.com/aivandrago/subnet-operator/blob/main/docs/operations/runbook.md#subnetoperatordown
+
+  # The fix for IPv6-only subnets (they no longer export IPv4 capacity) must not quiet the real
+  # thing: an IPv4 subnet with nothing free still pages.
+  - name: a genuinely full IPv4 subnet still pages
+    interval: 1m
+    input_series:
+      - series: 'hs_aws_subnet_available_ips{subnet_id="subnet-full", cidr="10.0.9.0/24", account="111111111111", region="eu-central-1"}'
+        values: '0x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: SubnetFull
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              subnet_id: subnet-full
+              cidr: 10.0.9.0/24
+              account: "111111111111"
+              region: eu-central-1
+            exp_annotations:
+              summary: Subnet subnet-full has no free addresses
+              description: 10.0.9.0/24 in 111111111111/eu-central-1 cannot take another ENI.
+
+  # Claims and imports are requests someone is waiting on; before these gauges existed, a stuck
+  # one was visible only in its status.
+  - name: a claim stuck on NoSpace pages after the threshold
+    interval: 1m
+    input_series:
+      - series: 'hs_aws_subnet_claim_ready{namespace="payments", name="checkout", reason="NoSpace"}'
+        values: '0x60'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: SubnetClaimNotReady
+        exp_alerts: []          # a retry or two is normal
+      - eval_time: 35m
+        alertname: SubnetClaimNotReady
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              namespace: payments
+              name: checkout
+              reason: NoSpace
+            exp_annotations:
+              summary: "SubnetClaim payments/checkout is not fulfilled: NoSpace"
+              description: >-
+                The claim has not been fulfilled for 30m.
+                kubectl describe subnetclaim -n payments checkout
+                says why, in the Ready condition's message.
+              runbook_url: https://github.com/aivandrago/subnet-operator/blob/main/docs/operations/runbook.md#subnetclaimnotready
+
+  - name: a claim that is slow but gets there never pages
+    interval: 1m
+    input_series:
+      - series: 'hs_aws_subnet_claim_ready{namespace="web", name="edge", reason="Created"}'
+        values: '0x20 1x40'
+    alert_rule_test:
+      - eval_time: 55m
+        alertname: SubnetClaimNotReady
+        exp_alerts: []
+
+  - name: an import AWS keeps refusing pages, a dry run does not
+    interval: 1m
+    input_series:
+      - series: 'hs_aws_resource_import_ready{namespace="default", name="subnet-0a-import", state="Failed", reason="TagsNotApplied"}'
+        values: '0x60'
+      - series: 'hs_aws_resource_import_ready{namespace="default", name="subnet-0b-import", state="Skipped", reason="DryRun"}'
+        values: '1x60'
+    alert_rule_test:
+      - eval_time: 35m
+        alertname: ResourceImportNotSettled
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              namespace: default
+              name: subnet-0a-import
+              state: Failed
+              reason: TagsNotApplied
+            exp_annotations:
+              summary: "ResourceImport default/subnet-0a-import is Failed: TagsNotApplied"
+              description: >-
+                The import has not been applied for 30m.
+                kubectl describe resourceimport -n default subnet-0a-import
+                says why.
+              runbook_url: https://github.com/aivandrago/subnet-operator/blob/main/docs/operations/runbook.md#resourceimportnotsettled
+
+  # Throttled and unreachable are different problems with different fixes, so they are different
+  # alerts that never fire for the same target: a throttled target reports hs_aws_target_up 1
+  # (it answered, only not fast enough) and hs_aws_target_throttled 1.
+  - name: a throttled target alerts as throttled, not as down
+    interval: 1m
+    input_series:
+      - series: 'hs_aws_target_up{scope="org", account="111111111111", region="eu-central-1"}'
+        values: '1x60'
+      - series: 'hs_aws_target_throttled{scope="org", account="111111111111", region="eu-central-1"}'
+        values: '1x60'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: SubnetInventoryTargetThrottled
+        exp_alerts: []          # the operator is still backing off and retrying on its own
+      - eval_time: 35m
+        alertname: SubnetInventoryTargetThrottled
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              scope: org
+              account: "111111111111"
+              region: eu-central-1
+            exp_annotations:
+              summary: Discovery of 111111111111/eu-central-1 is throttled by AWS
+              description: >-
+                EC2 has been rate-limiting this account and region for 30m,
+                so its inventory is stale. The operator keeps retrying with backoff. Something else
+                in the account is using up its EC2 API budget, or this instance serves too many targets.
+              runbook_url: https://github.com/aivandrago/subnet-operator/blob/main/docs/operations/runbook.md#subnetinventorytargetthrottled
+      - eval_time: 35m
+        alertname: SubnetInventoryTargetDown
+        exp_alerts: []
+
+  - name: an unreachable target alerts as down, not as throttled
+    interval: 1m
+    input_series:
+      - series: 'hs_aws_target_up{scope="org", account="222222222222", region="eu-central-1"}'
+        values: '0x60'
+      - series: 'hs_aws_target_throttled{scope="org", account="222222222222", region="eu-central-1"}'
+        values: '0x60'
+    alert_rule_test:
+      - eval_time: 35m
+        alertname: SubnetInventoryTargetDown
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              scope: org
+              account: "222222222222"
+              region: eu-central-1
+            exp_annotations:
+              summary: Discovery of 222222222222/eu-central-1 is failing
+              description: >-
+                The inventory of this account and region is stale. Check the NetworkScope status
+                for the error, usually an IAM or trust policy problem.
+      - eval_time: 35m
+        alertname: SubnetInventoryTargetThrottled
+        exp_alerts: []
+
+  # The backoff is meant to ride out a busy spell on its own; one that ends within the
+  # threshold is not worth anyone's attention.
+  - name: a target throttled for a while that then gets through never alerts
+    interval: 1m
+    input_series:
+      - series: 'hs_aws_target_up{scope="org", account="333333333333", region="eu-central-1"}'
+        values: '1x60'
+      - series: 'hs_aws_target_throttled{scope="org", account="333333333333", region="eu-central-1"}'
+        values: '1x20 0x40'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: SubnetInventoryTargetThrottled
+        exp_alerts: []
+      - eval_time: 45m
+        alertname: SubnetInventoryTargetDown
+        exp_alerts: []
