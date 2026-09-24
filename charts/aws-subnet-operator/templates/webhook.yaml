@@ -1,0 +1,157 @@
+{{- if .Values.webhook.enabled }}
+{{- $fullname := include "aws-subnet-operator.fullname" . }}
+{{- $service := printf "%s-webhook" $fullname }}
+{{- $secret := printf "%s-webhook-cert" $fullname }}
+{{- $certManager := eq (include "aws-subnet-operator.webhook.certManager" .) "true" }}
+{{- $caBundle := "" }}
+{{- $certs := dict }}
+{{- if not $certManager }}
+{{- $certs = include "aws-subnet-operator.webhook.selfSignedCert" (dict "root" . "service" $service "secret" $secret) | fromYaml }}
+{{- $caBundle = $certs.ca }}
+{{- end }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $service }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "aws-subnet-operator.labels" . | nindent 4 }}
+  {{- with .Values.webhook.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: webhook
+      port: 443
+      targetPort: webhook
+      protocol: TCP
+  selector:
+    {{- include "aws-subnet-operator.selectorLabels" . | nindent 4 }}
+{{- if $certManager }}
+{{- if not .Values.webhook.certificate.issuerRef }}
+---
+# A self-signed issuer of our own, so the chart does not depend on how the cluster's issuers
+# are named. Point certificate.issuerRef at a real one to have the CA come from elsewhere.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ $fullname }}-webhook
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "aws-subnet-operator.labels" . | nindent 4 }}
+spec:
+  selfSigned: {}
+{{- end }}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ $fullname }}-webhook
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "aws-subnet-operator.labels" . | nindent 4 }}
+spec:
+  secretName: {{ $secret }}
+  duration: {{ .Values.webhook.certificate.duration }}
+  renewBefore: {{ .Values.webhook.certificate.renewBefore }}
+  dnsNames:
+    - {{ printf "%s.%s.svc" $service .Release.Namespace }}
+    - {{ printf "%s.%s.svc.cluster.local" $service .Release.Namespace }}
+  issuerRef:
+    {{- if .Values.webhook.certificate.issuerRef }}
+    {{- toYaml .Values.webhook.certificate.issuerRef | nindent 4 }}
+    {{- else }}
+    name: {{ $fullname }}-webhook
+    kind: Issuer
+    group: cert-manager.io
+    {{- end }}
+{{- else }}
+---
+# No cert-manager: the chart signs a certificate itself. The existing one is read back on an
+# upgrade (see the helper), so the CA in the webhook configurations below and the key the
+# operator serves do not drift apart.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $secret }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "aws-subnet-operator.labels" . | nindent 4 }}
+type: kubernetes.io/tls
+data:
+  ca.crt: {{ $caBundle }}
+  tls.crt: {{ $certs.cert }}
+  tls.key: {{ $certs.key }}
+{{- end }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: {{ $fullname }}
+  labels:
+    {{- include "aws-subnet-operator.labels" . | nindent 4 }}
+  {{- if $certManager }}
+  annotations:
+    cert-manager.io/inject-ca-from: {{ printf "%s/%s-webhook" .Release.Namespace $fullname }}
+  {{- end }}
+webhooks:
+{{- range $kind, $resource := dict "networkscope" "networkscopes" "resourceimport" "resourceimports" "subnetclaim" "subnetclaims" }}
+  - name: v{{ $kind }}-v1alpha1.kb.io
+    admissionReviewVersions: [v1]
+    sideEffects: None
+    failurePolicy: {{ $.Values.webhook.failurePolicy }}
+    timeoutSeconds: {{ $.Values.webhook.timeoutSeconds }}
+    clientConfig:
+      service:
+        name: {{ $service }}
+        namespace: {{ $.Release.Namespace }}
+        path: /validate-aws-hypersurgery-v1alpha1-{{ $kind }}
+        port: 443
+      {{- if $caBundle }}
+      caBundle: {{ $caBundle }}
+      {{- end }}
+    rules:
+      - apiGroups: [aws.hypersurgery]
+        apiVersions: [v1alpha1]
+        operations: [CREATE, UPDATE]
+        resources: [{{ $resource }}]
+{{- end }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: {{ $fullname }}
+  labels:
+    {{- include "aws-subnet-operator.labels" . | nindent 4 }}
+  {{- if $certManager }}
+  annotations:
+    cert-manager.io/inject-ca-from: {{ printf "%s/%s-webhook" .Release.Namespace $fullname }}
+  {{- end }}
+webhooks:
+{{- range $kind, $resource := dict "networkscope" "networkscopes" "resourceimport" "resourceimports" "subnetclaim" "subnetclaims" }}
+  # Defaulting is a convenience: Ignore, so a webhook that is down cannot stop an object from
+  # being written. What it fills in, the controllers fall back to on their own.
+  - name: m{{ $kind }}-v1alpha1.kb.io
+    admissionReviewVersions: [v1]
+    sideEffects: None
+    failurePolicy: Ignore
+    timeoutSeconds: {{ $.Values.webhook.timeoutSeconds }}
+    reinvocationPolicy: Never
+    clientConfig:
+      service:
+        name: {{ $service }}
+        namespace: {{ $.Release.Namespace }}
+        path: /mutate-aws-hypersurgery-v1alpha1-{{ $kind }}
+        port: 443
+      {{- if $caBundle }}
+      caBundle: {{ $caBundle }}
+      {{- end }}
+    rules:
+      - apiGroups: [aws.hypersurgery]
+        apiVersions: [v1alpha1]
+        operations: [CREATE, UPDATE]
+        resources: [{{ $resource }}]
+{{- end }}
+{{- end }}

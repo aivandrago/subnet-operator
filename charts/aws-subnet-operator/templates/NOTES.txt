@@ -1,0 +1,84 @@
+{{ .Chart.Name }} {{ .Chart.Version }} is installed in namespace {{ .Release.Namespace }}.
+
+1. Give the operator AWS credentials:
+   - EKS Pod Identity: associate a role with service account
+     {{ .Release.Namespace }}/{{ include "aws-subnet-operator.serviceAccountName" . }}
+   - or IRSA: set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"
+   The role needs ec2:DescribeVpcs, ec2:DescribeSubnets, ec2:DescribeRouteTables and
+   sts:AssumeRole on the read-only roles in the other accounts.
+
+{{- if not .Values.networkScope.create }}
+
+2. Tell it what to discover:
+
+   kubectl apply -f - <<'EOF'
+   apiVersion: aws.hypersurgery/v1alpha1
+   kind: NetworkScope
+   metadata:
+     name: organization
+   spec:
+     accounts:
+       - id: "111111111111"
+     regions: [eu-central-1]
+     vpcTagSelector:
+       hs/managed: "true"
+     requiredSubnetTags: [hs/owner, hs/env, hs/tier]
+   EOF
+{{- end }}
+
+3. Read the inventory:
+
+   kubectl get networkscopes
+   kubectl get subnets -o wide
+
+{{- if .Values.leaderElection.enabled }}
+
+Replicas: {{ .Values.replicaCount }}. One of them holds the leader election lease and does
+all the work; the rest sit on the lease and take over when the leader's pod goes away. A leader
+that is stopped — a drain, a rollout — finishes its in-flight work and hands the lease over on
+the way out, so a standby takes over within a few seconds. A leader that crashes cannot hand
+anything over, and its lease runs out after {{ .Values.leaderElection.leaseDuration }}. A sync interrupted
+halfway is redone by the next leader: a scope's lastSyncTime only advances once the sync has
+finished, so the status is never left half-written.
+{{- if lt (int .Values.replicaCount) 2 }}
+
+  With replicaCount: 1 there is nothing to take over. Set replicaCount: 2 for that.
+{{- end }}
+{{- if and .Values.podDisruptionBudget.enabled (lt (int .Values.replicaCount) 2) }}
+
+  No PodDisruptionBudget was created: over a single replica it would block node drains
+  instead of surviving them.
+{{- end }}
+{{- else }}
+
+Leader election is off, so run a single replica: two would reconcile the same scopes at
+the same time.
+{{- end }}
+{{- if not .Values.networkPolicy.enabled }}
+
+A NetworkPolicy restricting the operator to the API server, the AWS endpoints and the
+metrics scrape is available with networkPolicy.enabled=true.
+{{- end }}
+{{- if not .Values.events.queueUrl }}
+
+Changes are picked up on the resync interval (10m by default). For updates within seconds,
+deploy deploy/events/*.cfn.yaml and set events.queueUrl.
+{{- end }}
+{{- if .Values.webhook.enabled }}
+
+The admission webhooks are on: an invalid SubnetClaim, NetworkScope or ResourceImport is
+refused by kubectl instead of failing later in a status.
+{{- if eq (include "aws-subnet-operator.webhook.certManager" .) "true" }}
+cert-manager issues the serving certificate.
+{{- else }}
+The serving certificate is signed by the chart. Installing cert-manager and upgrading hands
+the certificate over to it.
+{{- end }}
+{{- end }}
+{{- if not .Values.metrics.serviceMonitor.enabled }}
+
+Metrics are served on port {{ .Values.metrics.port }}. Set metrics.serviceMonitor.enabled=true
+to scrape them with the Prometheus operator, and grafanaDashboard.enabled=true for the dashboard.
+{{- end }}
+
+Docs: https://hypersurgery.dev/docs/ · demo dashboard: https://hypersurgery.dev/dashboard/

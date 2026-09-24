@@ -1,0 +1,61 @@
+# Write role the operator assumes for SubnetClaims in Create mode. Separate from the
+# read-only role on purpose: discovery never carries these permissions. Deploy it only to
+# accounts where subnets may be created, with the same StackSet mechanism as the read-only
+# role, and reference it as spec.accounts[].writeRoleARN in the NetworkScope.
+AWSTemplateFormatVersion: "2010-09-09"
+Description: aws-subnet-operator subnet creation role
+
+Parameters:
+  OperatorRoleArn:
+    Type: String
+    Description: ARN of the operator's IAM role in the hub account (EKS Pod Identity or IRSA role).
+    AllowedPattern: "^arn:aws[a-z-]*:iam::[0-9]{12}:role/.+$"
+  ExternalId:
+    Type: String
+    Default: ""
+    Description: Optional sts:ExternalId; must match spec.accounts[].externalID in the NetworkScope.
+
+Conditions:
+  HasExternalId: !Not [!Equals [!Ref ExternalId, ""]]
+
+Resources:
+  WriteRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: aws-subnet-operator-write
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Ref OperatorRoleArn
+            Action: sts:AssumeRole
+            Condition: !If
+              - HasExternalId
+              - StringEquals:
+                  sts:ExternalId: !Ref ExternalId
+              - !Ref AWS::NoValue
+      Policies:
+        - PolicyName: create-subnets
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # No DeleteSubnet: the operator never deletes, and the role cannot either.
+              - Effect: Allow
+                Action:
+                  - ec2:CreateSubnet
+                  - ec2:CreateTags
+                  - ec2:ModifySubnetAttribute
+                  - ec2:AssociateRouteTable
+                  - ec2:DescribeSubnets
+                  - ec2:DescribeVpcs
+                  - ec2:DescribeRouteTables
+                Resource: "*"
+      Tags:
+        - Key: hs/managed-by
+          Value: aws-subnet-operator
+
+Outputs:
+  RoleArn:
+    Value: !GetAtt WriteRole.Arn
