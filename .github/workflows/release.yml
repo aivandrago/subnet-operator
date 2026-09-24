@@ -1,0 +1,248 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build and sign, e.g. v0.4.0"
+        required: true
+      dry_run:
+        description: "Build both images and package the chart, but push and sign nothing"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  image:
+    name: Build, sign and attest the image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write     # attach the SBOM to the release
+      packages: write     # push to ghcr.io
+      id-token: write     # cosign keyless: the workflow's own OIDC identity signs
+      attestations: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - id: meta
+        run: |
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          {
+            echo "tag=$tag"
+            # Helm's appVersion carries no leading v, and the chart builds the image reference
+            # from it, so the image answers to both spellings rather than to whichever one the
+            # reader happened to use.
+            echo "bare=${tag#v}"
+            echo "image=ghcr.io/${{ github.repository_owner }}/subnet-operator"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Go cross-compiles natively, so both binaries are built here at full speed and the
+      # image build below only packages them. Running the compiler for arm64 under QEMU
+      # took twenty-five minutes; this takes one.
+      - name: Cross-compile the manager and the dashboard
+        run: |
+          for arch in amd64 arm64; do
+            CGO_ENABLED=0 GOOS=linux GOARCH=$arch \
+              go build -trimpath -o dist/manager-linux-$arch ./cmd
+            CGO_ENABLED=0 GOOS=linux GOARCH=$arch \
+              go build -trimpath -o dist/dashboard-linux-$arch ./cmd/dashboard
+          done
+          ls -l dist/
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        if: github.event.inputs.dry_run != 'true'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # buildx produces the SBOM and the provenance attestation itself, so they describe what
+      # was actually built rather than what a second tool later thought it saw.
+      - id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: Dockerfile.release
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event.inputs.dry_run != 'true' }}
+          sbom: true
+          provenance: mode=max
+          tags: |
+            ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}
+            ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.bare }}
+            ${{ steps.meta.outputs.image }}:latest
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.version=${{ steps.meta.outputs.tag }}
+            org.opencontainers.image.licenses=Apache-2.0
+
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
+        if: github.event.inputs.dry_run != 'true'
+      - name: Sign the image
+        if: github.event.inputs.dry_run != 'true'
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE: ${{ steps.meta.outputs.image }}
+        run: cosign sign --yes "${IMAGE}@${DIGEST}"
+
+      # A signature nobody can check is decoration, so the command to check it is part of the
+      # job and fails the release if it does not verify.
+      - name: Verify the signature the way a user would
+        if: github.event.inputs.dry_run != 'true'
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE: ${{ steps.meta.outputs.image }}
+        run: |
+          cosign verify "${IMAGE}@${DIGEST}" \
+            --certificate-identity-regexp "^https://github.com/${{ github.repository }}/" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            -o text | tail -5
+
+      - name: Attach the SBOM to the release
+        if: startsWith(github.ref, 'refs/tags/') && github.event.inputs.dry_run != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE: ${{ steps.meta.outputs.image }}
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          cosign download sbom "${IMAGE}@${DIGEST}" > sbom.spdx.json 2>/dev/null \
+            || docker buildx imagetools inspect "${IMAGE}:${TAG}" \
+                 --format '{{ json .SBOM }}' > sbom.spdx.json
+          gh release upload "$TAG" sbom.spdx.json --clobber --repo "${{ github.repository }}"
+
+  chart:
+    name: Package, push and sign the chart
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write     # attach the chart package to the release
+      packages: write     # push to ghcr.io
+      id-token: write     # cosign keyless: the workflow's own OIDC identity signs
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - id: meta
+        run: |
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          {
+            echo "tag=$tag"
+            echo "bare=${tag#v}"
+            # Charts live under their own path so they can never collide with the image
+            # repository, ghcr.io/<owner>/subnet-operator; helm push appends the chart name.
+            echo "repo=ghcr.io/${{ github.repository_owner }}/charts"
+            echo "chart=ghcr.io/${{ github.repository_owner }}/charts/aws-subnet-operator"
+          } >> "$GITHUB_OUTPUT"
+
+      # The Makefile's helm target pins the version and checks the download against its
+      # published checksum, so the release packages with the same Helm the chart is linted with.
+      # It asks go env for the platform, hence Go.
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - run: make helm
+
+      # An OCI tag is the chart version, and a user who asks for --version 0.5.0 must get the
+      # chart built from v0.5.0. A tag cut before Chart.yaml was bumped would publish the old
+      # version under the new release, so the mismatch stops the release instead.
+      - name: Check the chart version matches the tag
+        env:
+          BARE: ${{ steps.meta.outputs.bare }}
+        run: |
+          chart=charts/aws-subnet-operator/Chart.yaml
+          version="$(sed -n 's/^version: *"\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "$chart")"
+          app="$(sed -n 's/^appVersion: *"\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "$chart")"
+          echo "tag $BARE, chart version $version, appVersion $app"
+          [ "$version" = "$BARE" ] || { echo "::error::Chart version $version does not match tag $BARE"; exit 1; }
+          [ "$app" = "$BARE" ] || { echo "::error::Chart appVersion $app does not match tag $BARE"; exit 1; }
+
+      - id: package
+        name: Lint and package the chart
+        env:
+          BARE: ${{ steps.meta.outputs.bare }}
+        run: |
+          bin/helm lint charts/aws-subnet-operator
+          bin/helm package charts/aws-subnet-operator -d dist
+          pkg="dist/aws-subnet-operator-${BARE}.tgz"
+          [ -f "$pkg" ] || { echo "::error::expected $pkg"; ls -l dist; exit 1; }
+          echo "pkg=$pkg" >> "$GITHUB_OUTPUT"
+
+      # Helm and cosign keep separate credential stores: helm registry login for the push,
+      # the Docker config that login-action writes for cosign.
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        if: github.event.inputs.dry_run != 'true'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The tag is only a name; the signature goes on the digest, so it is read from what
+      # helm push reports rather than resolved from the tag afterwards, when it could already
+      # point elsewhere.
+      - id: push
+        name: Push the chart to ghcr.io
+        if: github.event.inputs.dry_run != 'true'
+        env:
+          PKG: ${{ steps.package.outputs.pkg }}
+          REPO: ${{ steps.meta.outputs.repo }}
+          ACTOR: ${{ github.actor }}
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -o pipefail
+          printf '%s' "$TOKEN" | bin/helm registry login ghcr.io -u "$ACTOR" --password-stdin
+          bin/helm push "$PKG" "oci://${REPO}" 2>&1 | tee push.log
+          digest="$(sed -n 's/^Digest: *\(sha256:[0-9a-f]\{64\}\)$/\1/p' push.log)"
+          [ -n "$digest" ] || { echo "::error::no digest in helm push output"; exit 1; }
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
+        if: github.event.inputs.dry_run != 'true'
+      - name: Sign the chart
+        if: github.event.inputs.dry_run != 'true'
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+          CHART: ${{ steps.meta.outputs.chart }}
+        run: cosign sign --yes "${CHART}@${DIGEST}"
+
+      # Same as for the image: the release fails unless the chart verifies the way the
+      # install guide tells users to check it.
+      - name: Verify the signature the way a user would
+        if: github.event.inputs.dry_run != 'true'
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+          CHART: ${{ steps.meta.outputs.chart }}
+        run: |
+          cosign verify "${CHART}@${DIGEST}" \
+            --certificate-identity-regexp "^https://github.com/${{ github.repository }}/" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            -o text | tail -5
+
+      # The release is created by the publishing script just after it pushes the tag, and this
+      # job gets here in a minute or two, so it waits for the release rather than failing on it.
+      - name: Attach the chart package to the release
+        if: startsWith(github.ref, 'refs/tags/') && github.event.inputs.dry_run != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PKG: ${{ steps.package.outputs.pkg }}
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          for _ in $(seq 30); do
+            gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1 && break
+            sleep 20
+          done
+          gh release upload "$TAG" "$PKG" --clobber --repo "${{ github.repository }}"

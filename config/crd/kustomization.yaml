@@ -1,0 +1,21 @@
+# This kustomization.yaml is not intended to be run by itself,
+# since it depends on service name and namespace that are out of this kustomize package.
+# It should be run by config/default
+resources:
+- bases/aws.hypersurgery_networkscopes.yaml
+- bases/aws.hypersurgery_vpcs.yaml
+- bases/aws.hypersurgery_subnets.yaml
+- bases/aws.hypersurgery_sheetexports.yaml
+- bases/aws.hypersurgery_subnetclaims.yaml
+- bases/aws.hypersurgery_resourceimports.yaml
+# +kubebuilder:scaffold:crdkustomizeresource
+
+patches:
+# [WEBHOOK] To enable webhook, uncomment all the sections with [WEBHOOK] prefix.
+# patches here are for enabling the conversion webhook for each CRD
+# +kubebuilder:scaffold:crdkustomizewebhookpatch
+
+# [WEBHOOK] To enable webhook, uncomment the following section
+# the following config is for teaching kustomize how to do kustomization for CRDs.
+#configurations:
+#- kustomizeconfig.yaml

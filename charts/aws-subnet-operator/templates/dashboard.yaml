@@ -1,0 +1,220 @@
+{{- if .Values.dashboard.enabled }}
+{{- $d := .Values.dashboard }}
+{{- $name := include "aws-subnet-operator.dashboard.fullname" . }}
+# The dashboard's own identity is deliberately empty: no RBAC is bound to this account and no
+# token is mounted, so the only way the dashboard reaches the API server is with the token of
+# the person using it.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "aws-subnet-operator.dashboard.labels" . | nindent 4 }}
+automountServiceAccountToken: false
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "aws-subnet-operator.dashboard.labels" . | nindent 4 }}
+spec:
+  replicas: {{ $d.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "aws-subnet-operator.dashboard.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "aws-subnet-operator.dashboard.labels" . | nindent 8 }}
+        {{- with $d.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with $d.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ $name }}
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml $d.podSecurityContext | nindent 8 }}
+      containers:
+        - name: dashboard
+          # The operator's image: the dashboard is its second entrypoint, covered by the same
+          # signature and SBOM.
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/dashboard"]
+          args:
+            - --listen=:{{ $d.port }}
+            - --health-listen=:{{ $d.healthPort }}
+            - --ca-file=/var/run/kube-root-ca/ca.crt
+            - --max-body-bytes={{ int64 $d.maxBodyBytes }}
+            {{- if $d.tls.secretName }}
+            - --tls-cert-file=/var/run/dashboard-tls/tls.crt
+            - --tls-key-file=/var/run/dashboard-tls/tls.key
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ $d.port }}
+              protocol: TCP
+            - name: health
+              containerPort: {{ $d.healthPort }}
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            periodSeconds: 10
+          resources:
+            {{- toYaml $d.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml $d.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: kube-root-ca
+              mountPath: /var/run/kube-root-ca
+              readOnly: true
+            {{- if $d.tls.secretName }}
+            - name: tls
+              mountPath: /var/run/dashboard-tls
+              readOnly: true
+            {{- end }}
+      volumes:
+        # Every namespace has this ConfigMap. It is the API server's CA, which the dashboard
+        # checks the API server against; without a token mounted, it is not there otherwise.
+        - name: kube-root-ca
+          configMap:
+            name: kube-root-ca.crt
+            items:
+              - key: ca.crt
+                path: ca.crt
+        {{- if $d.tls.secretName }}
+        - name: tls
+          secret:
+            secretName: {{ $d.tls.secretName }}
+            defaultMode: 0444
+        {{- end }}
+      {{- with $d.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $d.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $d.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "aws-subnet-operator.dashboard.labels" . | nindent 4 }}
+  {{- with $d.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ $d.service.type }}
+  ports:
+    - name: {{ if $d.tls.secretName }}https{{ else }}http{{ end }}
+      port: {{ $d.service.port }}
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "aws-subnet-operator.dashboard.selectorLabels" . | nindent 4 }}
+{{- if $d.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "aws-subnet-operator.dashboard.labels" . | nindent 4 }}
+  {{- with $d.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with $d.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- with $d.ingress.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    {{- range $d.ingress.hosts }}
+    - host: {{ .host | quote }}
+      http:
+        paths:
+          {{- range (.paths | default (list "/")) }}
+          - path: {{ . }}
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $name }}
+                port:
+                  number: {{ $d.service.port }}
+          {{- end }}
+    {{- end }}
+{{- end }}
+{{- if .Values.networkPolicy.enabled }}
+{{- $egress := .Values.networkPolicy.egress }}
+---
+# The dashboard talks to the API server and to nothing else; it needs no DNS, because the
+# API server's address comes from the environment as an IP.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "aws-subnet-operator.dashboard.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "aws-subnet-operator.dashboard.selectorLabels" . | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - ports:
+        - port: {{ $d.port }}
+          protocol: TCP
+      {{- with $d.networkPolicy.from }}
+      from:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    # The kubelet probes come from the node's address, so the health port stays open.
+    - ports:
+        - port: {{ $d.healthPort }}
+          protocol: TCP
+  egress:
+    - ports:
+        {{- range $egress.ports }}
+        - port: {{ . }}
+          protocol: TCP
+        {{- end }}
+      to:
+        {{- range $egress.cidrs }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+{{- end }}
+{{- end }}
