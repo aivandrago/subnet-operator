@@ -1,0 +1,140 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  # Weekly, so the Kubernetes matrix and the upgrade from the published release are exercised
+  # against the world as it is (a new published chart, a pulled image) even in a quiet week.
+  schedule:
+    - cron: "17 3 * * 1"
+
+# A new push supersedes the previous run of the same branch. The event is part of the group so
+# the weekly run on master and a push to master do not cancel each other.
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# The Kubernetes versions e2e runs against: the newest and the oldest supported minor, as Kind
+# node images pinned by digest (Kind publishes these per release; see its release notes). Keep
+# them in step with KIND_VERSION in the Makefile and the table in docs/policy.md.
+env:
+  KIND_NODE_NEWEST: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
+  KIND_NODE_OLDEST: kindest/node:v1.34.11@sha256:44e222ee2132dab25ff87301682f89eb82c7880ea3a1bf543bfe9708fd08d67d
+
+jobs:
+  # Every job runs on this project's own runner (label `operator`, a VM that serves this
+  # repository only), so its CI neither waits for nor delays the owner's other projects.
+  lint:
+    runs-on: operator
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          # The runner executes on the host, where the module and build caches persist
+          # between jobs. Restoring a 2 GB archive over them took minutes and failed on every
+          # file that was already there.
+          cache: false
+      - name: Lint
+        run: make lint
+
+  test:
+    runs-on: operator
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          # The runner executes on the host, where the module and build caches persist
+          # between jobs. Restoring a 2 GB archive over them took minutes and failed on every
+          # file that was already there.
+          cache: false
+      - name: Generated code and manifests are up to date
+        run: |
+          make manifests generate
+          git diff --exit-code
+      - name: Helm chart lints and renders
+        run: |
+          make helm-lint
+          git diff --exit-code charts/
+      - name: Alerts fire when they should, and only then
+        run: make test-alerts
+
+      - name: Unit and envtest tests
+        run: make test
+      - name: Dashboard app
+        run: make test-dashboard
+      - name: Build
+        run: make build
+
+  e2e:
+    # The suite also passes on the MacBook (#28); that runner is kept for the owner's other
+    # projects and is a one-line fallback here.
+    runs-on: operator
+    env:
+      # A cluster and kubeconfig per run, so parallel runs on the same runner do not collide.
+      KIND_CLUSTER: aso-e2e-${{ github.run_id }}
+      KUBECONFIG: ${{ github.workspace }}/.e2e-kubeconfig
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          # No module cache here. Go marks everything in the module cache read-only, and the
+          # cache archive is unpacked with the system tar, which on macOS cannot overwrite a
+          # read-only file — the restore dies with "Can't unlink already-existing object".
+          # This job compiles only the test binary; the operator itself is built in the image.
+          cache: false
+      - name: E2E tests (Kind + Moto), newest supported Kubernetes
+        run: make test-e2e KIND_CLUSTER="$KIND_CLUSTER" KIND_NODE_IMAGE="$KIND_NODE_NEWEST"
+      - name: Clean up
+        if: always()
+        run: make cleanup-test-e2e KIND_CLUSTER="$KIND_CLUSTER" || true
+
+  # The same e2e on the oldest supported Kubernetes minor. Not on pull requests: the runner runs
+  # two jobs at a time and has room for two Kind clusters, which a pull request already fills
+  # with e2e and the upgrade test; a pull request rarely changes which API versions the operator
+  # uses, and a break shows up in the run on master after the merge, or weekly. The newest minor
+  # runs on every pull request above, because that is where deprecations land.
+  e2e-oldest-kubernetes:
+    if: github.event_name != 'pull_request'
+    runs-on: operator
+    env:
+      KIND_CLUSTER: aso-e2e-old-${{ github.run_id }}
+      KUBECONFIG: ${{ github.workspace }}/.e2e-old-kubeconfig
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          # No module cache, for the reason given in the e2e job.
+          cache: false
+      - name: E2E tests (Kind + Moto), oldest supported Kubernetes
+        run: make test-e2e KIND_CLUSTER="$KIND_CLUSTER" KIND_NODE_IMAGE="$KIND_NODE_OLDEST"
+      - name: Clean up
+        if: always()
+        run: make cleanup-test-e2e KIND_CLUSTER="$KIND_CLUSTER" || true
+
+  # Installs the latest published chart, fills it with every kind of object, upgrades to this
+  # commit the way the release notes say (CRDs first, then helm upgrade) and checks that nothing
+  # was lost or reported as new again. A job of its own so a failure here reads as "upgrades
+  # break", not as "e2e is flaky". It runs on pull requests too: an upgrade regression is cheap
+  # to fix before the merge and expensive after a release.
+  upgrade:
+    runs-on: operator
+    env:
+      KIND_CLUSTER: aso-upgrade-${{ github.run_id }}
+      KUBECONFIG: ${{ github.workspace }}/.upgrade-kubeconfig
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          # No module cache, for the reason given in the e2e job.
+          cache: false
+      - name: Upgrade from the latest release (Kind + Moto)
+        run: make test-upgrade KIND_CLUSTER="$KIND_CLUSTER" KIND_NODE_IMAGE="$KIND_NODE_NEWEST"
+      - name: Clean up
+        if: always()
+        run: make cleanup-test-e2e KIND_CLUSTER="$KIND_CLUSTER" || true

@@ -1,0 +1,37 @@
+# Several accounts, reached with sts:AssumeRole. Deploy deploy/iam/spoke-readonly-role.cfn.yaml
+# to each account first; the role name there matches the roleARN below.
+apiVersion: network.hypersurgery.dev/v1beta1
+kind: NetworkScope
+metadata:
+  name: organization
+spec:
+  provider: AWS
+  accounts:
+    # The hub account: the operator's own credentials.
+    - id: "111111111111"
+    - id: "222222222222"
+      aws:
+        roleARN: arn:aws:iam::222222222222:role/aws-subnet-operator-readonly
+    - id: "333333333333"
+      aws:
+        roleARN: arn:aws:iam::333333333333:role/aws-subnet-operator-readonly
+        externalID: a-shared-secret-from-the-stackset
+      # This account only matters in one region.
+      regions: [us-east-1]
+  regions: [eu-central-1, eu-west-1]
+  networkSelector:
+    matchTags:
+      hs/managed: "true"
+  requiredSubnetTags: [hs/owner, hs/env, hs/tier]
+  # Tag keys can be renamed to whatever your organization already uses.
+  tagKeys:
+    owner: hs/owner
+    env: hs/env
+    tier: hs/tier
+  # The namespaces whose SubnetClaims and ResourceImports may use this scope's roles.
+  namespaceSelector:
+    matchExpressions:
+      - key: kubernetes.io/metadata.name
+        operator: In
+        values: [default]
+  resyncInterval: 10m

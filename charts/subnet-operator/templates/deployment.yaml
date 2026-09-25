@@ -1,0 +1,150 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "subnet-operator.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "subnet-operator.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "subnet-operator.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "subnet-operator.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "subnet-operator.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: manager
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - --health-probe-bind-address=:{{ .Values.health.port }}
+            {{- if .Values.metrics.secure }}
+            - --metrics-bind-address=:{{ .Values.metrics.port }}
+            - --metrics-secure=true
+            {{- else }}
+            - --metrics-bind-address=:{{ .Values.metrics.port }}
+            - --metrics-secure=false
+            {{- end }}
+            {{- if .Values.leaderElection.enabled }}
+            - --leader-elect
+            - --leader-elect-lease-duration={{ .Values.leaderElection.leaseDuration }}
+            - --leader-elect-renew-deadline={{ .Values.leaderElection.renewDeadline }}
+            - --leader-elect-retry-period={{ .Values.leaderElection.retryPeriod }}
+            {{- end }}
+            - --discovery-concurrency={{ .Values.discovery.concurrency }}
+            {{- if .Values.writes.enabled }}
+            - --enable-writes
+            {{- end }}
+            {{- if .Values.events.queueUrl }}
+            - --events-queue-url={{ .Values.events.queueUrl }}
+            - --events-debounce={{ .Values.events.debounce }}
+            {{- end }}
+            - --audit-sink={{ .Values.audit.sink }}
+            {{- if .Values.webhook.enabled }}
+            - --webhook-port={{ .Values.webhook.port }}
+            - --webhook-cert-path=/tmp/k8s-webhook-server/serving-certs
+            {{- else }}
+            - --enable-webhooks=false
+            {{- end }}
+            {{- with .Values.extraArgs }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          env:
+            {{- with .Values.aws.region }}
+            - name: AWS_REGION
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.aws.endpointURL }}
+            - name: AWS_ENDPOINT_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.metrics.port }}
+              protocol: TCP
+            - name: health
+              containerPort: {{ .Values.health.port }}
+              protocol: TCP
+            {{- if .Values.webhook.enabled }}
+            - name: webhook
+              containerPort: {{ .Values.webhook.port }}
+              protocol: TCP
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          {{- if .Values.webhook.enabled }}
+          volumeMounts:
+            - name: webhook-cert
+              mountPath: /tmp/k8s-webhook-server/serving-certs
+              readOnly: true
+          {{- end }}
+      {{- if .Values.webhook.enabled }}
+      volumes:
+        - name: webhook-cert
+          secret:
+            secretName: {{ include "subnet-operator.fullname" . }}-webhook-cert
+            defaultMode: 0444
+      {{- end }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- range . }}
+        - {{ toYaml (omit . "labelSelector") | nindent 10 | trim }}
+          labelSelector:
+            {{- with .labelSelector }}
+            {{- toYaml . | nindent 12 }}
+            {{- else }}
+            matchLabels:
+              {{- include "subnet-operator.selectorLabels" $ | nindent 14 }}
+            {{- end }}
+        {{- end }}
+      {{- end }}

@@ -1,0 +1,104 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: manager-role
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - namespaces
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - aws.hypersurgery
+  resources:
+  - networkscopes
+  - resourceimports
+  - sheetexports
+  - subnetclaims
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - aws.hypersurgery
+  resources:
+  - subnets
+  - vpcs
+  verbs:
+  - delete
+  - deletecollection
+  - get
+  - list
+  - watch
+- apiGroups:
+  - events.k8s.io
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+- apiGroups:
+  - network.hypersurgery.dev
+  resources:
+  - networks
+  - subnets
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - network.hypersurgery.dev
+  resources:
+  - networks/status
+  - networkscopes/status
+  - resourceimports/status
+  - sheetexports/status
+  - subnetclaims/status
+  - subnets/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - network.hypersurgery.dev
+  resources:
+  - networkscopes
+  - resourceimports
+  - sheetexports
+  - subnetclaims
+  verbs:
+  - create
+  - get
+  - list
+  - watch
+- apiGroups:
+  - network.hypersurgery.dev
+  resources:
+  - networkscopes/finalizers
+  verbs:
+  - update
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: manager-role
+  namespace: subnet-operator-system
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - get
+  - list
+  - watch

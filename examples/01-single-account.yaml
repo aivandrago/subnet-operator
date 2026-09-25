@@ -1,0 +1,19 @@
+# The smallest useful scope: the account the operator runs in, one region.
+# The operator needs no roleARN for its own account.
+apiVersion: network.hypersurgery.dev/v1beta1
+kind: NetworkScope
+metadata:
+  name: single-account
+spec:
+  provider: AWS
+  accounts:
+    - id: "111111111111"
+  regions: [eu-central-1]
+  # Drop networkSelector to discover every VPC in the region.
+  networkSelector:
+    matchTags:
+      hs/managed: "true"
+  requiredSubnetTags: [hs/owner, hs/env, hs/tier]
+  # Inventory only: without a namespaceSelector no SubnetClaim or ResourceImport may use the
+  # scope. See 07-auto-import-policy.yaml for one that selects namespaces.
+  resyncInterval: 10m

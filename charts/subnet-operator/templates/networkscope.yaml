@@ -1,0 +1,44 @@
+{{- if .Values.networkScope.create }}
+{{- /*
+Accounts may be written the way the 0.7 chart took them, with roleARN, externalID and
+writeRoleARN next to the id; they move into the aws member the new API keeps them in, so a
+values file from 0.7 renders the same scope.
+*/}}
+{{- $accounts := list }}
+{{- range .Values.networkScope.accounts }}
+{{- $account := omit . "roleARN" "externalID" "writeRoleARN" }}
+{{- $aws := merge (dict) (default dict .aws) (pick . "roleARN" "externalID" "writeRoleARN") }}
+{{- if $aws }}
+{{- $_ := set $account "aws" $aws }}
+{{- end }}
+{{- $accounts = append $accounts $account }}
+{{- end }}
+{{- $matchTags := .Values.networkScope.vpcTagSelector | default .Values.networkScope.networkSelector.matchTags }}
+apiVersion: network.hypersurgery.dev/v1beta1
+kind: NetworkScope
+metadata:
+  name: {{ .Values.networkScope.name }}
+  labels:
+    {{- include "subnet-operator.labels" . | nindent 4 }}
+spec:
+  provider: AWS
+  accounts:
+    {{- toYaml $accounts | nindent 4 }}
+  regions:
+    {{- toYaml .Values.networkScope.regions | nindent 4 }}
+  {{- with $matchTags }}
+  networkSelector:
+    matchTags:
+      {{- toYaml . | nindent 6 }}
+  {{- end }}
+  {{- with .Values.networkScope.requiredSubnetTags }}
+  requiredSubnetTags:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- /* A map, even an empty one, is set; null leaves the field unset, which allows no namespace. */}}
+  {{- if kindIs "map" .Values.networkScope.namespaceSelector }}
+  namespaceSelector:
+    {{- toYaml .Values.networkScope.namespaceSelector | nindent 4 }}
+  {{- end }}
+  resyncInterval: {{ .Values.networkScope.resyncInterval }}
+{{- end }}

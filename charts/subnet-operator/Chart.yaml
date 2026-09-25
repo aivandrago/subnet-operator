@@ -1,0 +1,160 @@
+apiVersion: v2
+name: subnet-operator
+description: Kubernetes operator that discovers cloud networks and subnets (AWS today) from resource tags and keeps a live inventory in the cluster
+type: application
+version: 0.8.0
+appVersion: "0.8.0"
+kubeVersion: ">=1.28.0-0"
+keywords:
+  - aws
+  - vpc
+  - subnet
+  - ipam
+  - networking
+  - inventory
+home: https://hypersurgery.dev
+icon: https://hypersurgery.dev/dashboard/icon-512.png
+sources:
+  - https://github.com/aivandrago/subnet-operator
+maintainers:
+  - name: Ivan Drago
+    email: maintainers@hypersurgery.dev
+    url: https://github.com/aivandrago
+# Read by Artifact Hub (https://artifacthub.io/docs/topics/annotations/helm/). The release
+# workflow checks images, changes and prerelease against the tag, so these three are updated
+# with the version at every release. A signing key is not listed: artifacthub.io/signKey
+# describes a PGP key for Helm provenance files, while this chart is signed keyless with
+# cosign, which Artifact Hub detects in the registry on its own.
+annotations:
+  artifacthub.io/license: Apache-2.0
+  artifacthub.io/operator: "true"
+  artifacthub.io/operatorCapabilities: Basic Install
+  artifacthub.io/category: networking
+  # A v1beta1 API until 1.0: every release before 1.0 is a pre-release.
+  artifacthub.io/prerelease: "true"
+  artifacthub.io/images: |
+    - name: subnet-operator
+      image: ghcr.io/aivandrago/subnet-operator:0.8.0
+      platforms:
+        - linux/amd64
+        - linux/arm64
+  artifacthub.io/links: |
+    - name: Documentation
+      url: https://hypersurgery.dev/docs/
+    - name: Source
+      url: https://github.com/aivandrago/subnet-operator
+    - name: support
+      url: https://github.com/aivandrago/subnet-operator/issues
+    - name: Verify the signatures
+      url: https://hypersurgery.dev/docs/#verify
+    - name: Dashboard demo
+      url: https://hypersurgery.dev/dashboard/
+  artifacthub.io/changes: |
+    - kind: changed
+      description: The chart is renamed from aws-subnet-operator to subnet-operator; upgrade an existing release to the new chart, see the upgrade guide
+    - kind: added
+      description: New API group network.hypersurgery.dev/v1beta1 with a provider field; VPC becomes Network
+    - kind: deprecated
+      description: aws.hypersurgery/v1alpha1 is deprecated and removed in 0.9; the operator migrates its objects, status included, to the new group
+    - kind: added
+      description: manager migrate-manifests rewrites aws.hypersurgery/v1alpha1 manifests for GitOps repositories
+    - kind: changed
+      description: A NetworkScope without namespaceSelector allows no namespace in the new group; migrated scopes get an explicit {} (every namespace)
+    - kind: added
+      description: hs_migration_pending_objects counts old-group objects that are not migrated yet
+    - kind: changed
+      description: The Grafana dashboard's UID is subnet-operator and its title Subnet inventory
+    - kind: changed
+      description: The service account's name follows the renamed chart; update a Pod Identity association or IRSA trust policy before upgrading, or pin serviceAccount.name
+  artifacthub.io/crds: |
+    - kind: NetworkScope
+      version: v1beta1
+      name: networkscopes.network.hypersurgery.dev
+      description: Accounts and regions of one provider to discover
+    - kind: Network
+      version: v1beta1
+      name: networks.network.hypersurgery.dev
+      description: A discovered network (AWS VPC)
+    - kind: Subnet
+      version: v1beta1
+      name: subnets.network.hypersurgery.dev
+      description: A discovered subnet
+    - kind: ResourceImport
+      version: v1beta1
+      name: resourceimports.network.hypersurgery.dev
+      description: Takes an existing network or subnet under management by tagging it
+    - kind: SheetExport
+      version: v1beta1
+      name: sheetexports.network.hypersurgery.dev
+      description: Read-only mirror of a scope in a Google Sheet
+    - kind: SubnetClaim
+      version: v1beta1
+      name: subnetclaims.network.hypersurgery.dev
+      description: Subnets on demand, allocated from a network and optionally created
+  artifacthub.io/crdsExamples: |
+    - apiVersion: network.hypersurgery.dev/v1beta1
+      kind: NetworkScope
+      metadata:
+        name: organization
+      spec:
+        provider: AWS
+        accounts:
+          - id: "111111111111"
+          - id: "222222222222"
+            aws:
+              roleARN: arn:aws:iam::222222222222:role/aws-subnet-operator-readonly
+        regions: [eu-central-1, eu-west-1]
+        networkSelector:
+          matchTags:
+            hs/managed: "true"
+        requiredSubnetTags: [hs/owner, hs/env, hs/tier]
+        namespaceSelector:
+          matchExpressions:
+            - key: kubernetes.io/metadata.name
+              operator: In
+              values: [team-payments]
+        resyncInterval: 10m
+    - apiVersion: network.hypersurgery.dev/v1beta1
+      kind: SubnetClaim
+      metadata:
+        name: payments
+        namespace: team-payments
+      spec:
+        scopeRef: organization
+        account: "222222222222"
+        region: eu-central-1
+        networkID: vpc-0aa11bb2cc33dd44e
+        prefixLength: 24
+        zones: [eu-central-1a, eu-central-1b, eu-central-1c]
+        mode: Create
+        owner: team-payments
+        env: prod
+        tier: private
+    - apiVersion: network.hypersurgery.dev/v1beta1
+      kind: ResourceImport
+      metadata:
+        name: subnet-04d1c2b3a4e5f607-import
+        namespace: team-payments
+      spec:
+        scopeRef: organization
+        account: "222222222222"
+        region: eu-central-1
+        resourceID: subnet-04d1c2b3a4e5f607
+        tags:
+          hs/managed: "true"
+          hs/owner: team-payments
+          hs/env: prod
+          hs/tier: private
+    - apiVersion: network.hypersurgery.dev/v1beta1
+      kind: SheetExport
+      metadata:
+        name: organization
+      spec:
+        scopeRef: organization
+        spreadsheetID: 1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789
+        sheetName: Subnets
+        credentialsSecretRef:
+          name: google-sheets
+          namespace: subnet-operator-system
+          key: credentials.json
+        refreshInterval: 5m

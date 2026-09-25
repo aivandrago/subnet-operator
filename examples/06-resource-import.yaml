@@ -1,0 +1,45 @@
+# Take an existing VPC or subnet under management.
+#
+# The operator applies exactly these tags with ec2:CreateTags and does nothing else: the
+# resource keeps its configuration, and tags the import does not name are left alone. The
+# inventory picks the resource up on the next CloudTrail event, usually within seconds.
+#
+# Needs --enable-writes (writes.enabled in the chart) and, for another account, a write role.
+# For imports a role holding only ec2:CreateTags is enough.
+apiVersion: network.hypersurgery.dev/v1beta1
+kind: ResourceImport
+metadata:
+  name: subnet-04d1c2b3a4e5f607-import
+  namespace: default
+spec:
+  scopeRef: organization
+  account: "333333333333"
+  region: eu-central-1
+  resourceID: subnet-04d1c2b3a4e5f607
+  tags:
+    hs/managed: "true"
+    hs/owner: team-data
+    hs/env: prod
+    hs/tier: private
+  # Free text, for the audit trail: who asked, and why.
+  requestedBy: anton (ticket NET-412)
+  # With dryRun the operator records what it would apply and touches nothing. Useful to see
+  # the object take shape before letting it change the account.
+  dryRun: false
+---
+# Terraform manages this subnet, so the tags belong in code. Adding them here would work, but
+# the next plan would want to remove them again; tell Terraform about them instead:
+#
+#   resource "aws_subnet" "data_lake" {
+#     # ...
+#     tags = merge(var.tags, {
+#       "hs/managed" = "true"
+#       "hs/owner"   = "team-data"
+#     })
+#   }
+#
+# or, if the tags are to stay outside the state:
+#
+#   lifecycle {
+#     ignore_changes = [tags["hs/managed"], tags["hs/owner"]]
+#   }

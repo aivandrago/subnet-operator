@@ -1,0 +1,33 @@
+apiVersion: network.hypersurgery.dev/v1beta1
+kind: ResourceImport
+metadata:
+  name: subnet-04d1c2b3a4e5f607-import
+  namespace: default
+spec:
+  account: "333333333333"
+  region: eu-central-1
+  requestedBy: anton (ticket NET-412)
+  resourceID: subnet-04d1c2b3a4e5f607
+  scopeRef: organization
+  tags:
+    hs/env: prod
+    hs/managed: "true"
+    hs/owner: team-data
+    hs/tier: private
+---
+# Terraform manages this subnet, so the tags belong in code. Adding them here would work, but
+# the next plan would want to remove them again; tell Terraform about them instead:
+#
+#   resource "aws_subnet" "data_lake" {
+#     # ...
+#     tags = merge(var.tags, {
+#       "hs/managed" = "true"
+#       "hs/owner"   = "team-data"
+#     })
+#   }
+#
+# or, if the tags are to stay outside the state:
+#
+#   lifecycle {
+#     ignore_changes = [tags["hs/managed"], tags["hs/owner"]]
+#   }

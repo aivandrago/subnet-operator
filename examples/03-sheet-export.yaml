@@ -1,0 +1,20 @@
+# Mirror the inventory into a Google Sheet for people who want a table.
+#
+#   kubectl create secret generic google-sheets -n subnet-operator-system \
+#     --from-file=credentials.json=./service-account.json
+#
+# Share the spreadsheet with the service account address as an editor first.
+apiVersion: network.hypersurgery.dev/v1beta1
+kind: SheetExport
+metadata:
+  name: organization
+spec:
+  scopeRef: organization
+  spreadsheetID: 1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789
+  sheetName: Subnets
+  credentialsSecretRef:
+    name: google-sheets
+    namespace: subnet-operator-system
+    key: credentials.json
+  extraTagColumns: [cost-center]
+  refreshInterval: 5m

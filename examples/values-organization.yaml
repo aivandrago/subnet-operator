@@ -1,0 +1,55 @@
+# The full setup: many accounts, change events, metrics, alerts and the dashboard.
+image:
+  repository: ghcr.io/aivandrago/subnet-operator
+
+serviceAccount:
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::111111111111:role/aws-subnet-operator
+
+aws:
+  region: eu-central-1
+
+discovery:
+  concurrency: 8
+
+events:
+  # QueueUrl output of deploy/events/hub-events.cfn.yaml.
+  queueUrl: https://sqs.eu-central-1.amazonaws.com/111111111111/aws-subnet-operator-events
+  debounce: 10s
+
+metrics:
+  serviceMonitor:
+    enabled: true
+    labels:
+      release: kube-prometheus-stack
+
+prometheusRule:
+  enabled: true
+  labels:
+    release: kube-prometheus-stack
+  thresholds:
+    subnetUsedRatio: 0.8
+
+grafanaDashboard:
+  enabled: true
+
+networkScope:
+  create: true
+  name: organization
+  accounts:
+    - id: "111111111111"
+    - id: "222222222222"
+      aws:
+        roleARN: arn:aws:iam::222222222222:role/aws-subnet-operator-readonly
+  regions: [eu-central-1, eu-west-1]
+  networkSelector:
+    matchTags:
+      hs/managed: "true"
+  requiredSubnetTags: [hs/owner, hs/env, hs/tier]
+  # The namespaces whose SubnetClaims and ResourceImports may use the scope; unset allows none.
+  namespaceSelector:
+    matchExpressions:
+      - key: kubernetes.io/metadata.name
+        operator: In
+        values: [team-payments, team-data]
+  resyncInterval: 10m

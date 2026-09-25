@@ -1,0 +1,79 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- $egress := .Values.networkPolicy.egress }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "subnet-operator.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "subnet-operator.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "subnet-operator.selectorLabels" . | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    # Metrics scrape.
+    - ports:
+        - port: {{ .Values.metrics.port }}
+          protocol: TCP
+      {{- with .Values.networkPolicy.metricsFrom }}
+      from:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    # Liveness and readiness probes come from the kubelet, whose address is the node's, so
+    # the health port stays open to every source.
+    - ports:
+        - port: {{ .Values.health.port }}
+          protocol: TCP
+    {{- if .Values.webhook.enabled }}
+    # Admission review calls come from the API server, which has no pod or namespace to
+    # select on and reaches the webhook from an address the chart cannot know. Validation
+    # runs with failurePolicy Fail, so a rule that misses the API server would refuse every
+    # SubnetClaim, NetworkScope and ResourceImport in the cluster.
+    - ports:
+        - port: {{ .Values.webhook.port }}
+          protocol: TCP
+    {{- end }}
+    {{- with .Values.networkPolicy.extraIngress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  egress:
+    # Kubernetes API server and AWS endpoints (ec2, sts, sqs).
+    - ports:
+        {{- range $egress.ports }}
+        - port: {{ . }}
+          protocol: TCP
+        {{- end }}
+      to:
+        {{- range $egress.cidrs }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+    {{- if $egress.dns.enabled }}
+    # DNS, to resolve those endpoints.
+    - ports:
+        {{- range $egress.dns.ports }}
+        - port: {{ . }}
+          protocol: UDP
+        - port: {{ . }}
+          protocol: TCP
+        {{- end }}
+      to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $egress.dns.namespace }}
+    {{- end }}
+    {{- if $egress.podIdentity.enabled }}
+    # EKS Pod Identity agent, which hands out the AWS credentials.
+    - ports:
+        - port: {{ $egress.podIdentity.port }}
+          protocol: TCP
+      to:
+        - ipBlock:
+            cidr: {{ $egress.podIdentity.cidr }}
+    {{- end }}
+    {{- with .Values.networkPolicy.extraEgress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}

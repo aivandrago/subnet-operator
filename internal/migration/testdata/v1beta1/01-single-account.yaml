@@ -1,0 +1,25 @@
+apiVersion: network.hypersurgery.dev/v1beta1
+kind: NetworkScope
+metadata:
+  name: single-account
+spec:
+  accounts:
+  - id: "111111111111"
+  namespaceSelector: {}
+  networkSelector:
+    matchTags:
+      hs/managed: "true"
+  provider: AWS
+  regions:
+  - eu-central-1
+  requiredSubnetTags:
+  - hs/owner
+  - hs/env
+  - hs/tier
+  resyncInterval: 10m0s
+  tagKeys:
+    env: hs/env
+    owner: hs/owner
+    tier: hs/tier
+# notes:
+# document 1: NetworkScope single-account: spec.namespaceSelector was unset, which allowed every namespace in aws.hypersurgery/v1alpha1 and allows none in network.hypersurgery.dev; it is now {} (every namespace) so nothing is locked out. Replace it with a selector of the namespaces that should use the scope

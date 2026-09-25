@@ -1,0 +1,18 @@
+apiVersion: network.hypersurgery.dev/v1beta1
+kind: ResourceImport
+metadata:
+  name: subnet-04d1c2b3a4e5f607-import
+  namespace: default
+spec:
+  scopeRef: organization
+  account: "333333333333"
+  region: eu-central-1
+  resourceID: subnet-04d1c2b3a4e5f607
+  # Applied with ec2:CreateTags; every other tag on the resource is left alone.
+  tags:
+    hs/managed: "true"
+    hs/owner: team-data
+    hs/env: prod
+    hs/tier: private
+  requestedBy: anton
+  dryRun: false

@@ -1,0 +1,29 @@
+# Subnets on demand. The operator reserves free /24s in the VPC (respecting existing subnets
+# and other claims) and, with writes enabled, creates them with the organization's tags.
+# Subnets are never deleted by the operator; delete the claim and they stay.
+#
+# Terraform-first teams: set mode: Allocate. The CIDRs land in status.allocations and
+# Terraform creates the subnets from them.
+apiVersion: aws.hypersurgery/v1alpha1
+kind: SubnetClaim
+metadata:
+  name: payments
+  namespace: default
+spec:
+  # Inventory and credentials come from this scope; the account and region must be in it.
+  scopeRef: organization
+  account: "222222222222"
+  region: eu-central-1
+  vpcID: vpc-0aa11bb2cc33dd44e
+  # One /24 in each of these AZs.
+  prefixLength: 24
+  availabilityZones: [eu-central-1a, eu-central-1b, eu-central-1c]
+  # Create (default) creates the subnets; Allocate only reserves CIDRs in the status.
+  mode: Create
+  owner: team-payments
+  env: prod
+  tier: private
+  tags:
+    cost-center: cc-42
+  # Optional: associate a route table instead of the VPC main table.
+  routeTableID: rtb-0a1b2c3d4e5f60718
