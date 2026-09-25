@@ -1,0 +1,28 @@
+# More info: https://docs.docker.com/engine/reference/builder/#dockerignore-file
+# Ignore everything by default and re-include only needed files
+**
+
+# Re-include Go source files (but not *_test.go)
+# The source directories are re-included by name as well: Podman and Docker's legacy builder
+# (plain `docker build` without buildx, as on a colima host) do not descend into an ignored
+# directory to find **/*.go, so without these the build context has no cmd/ at all.
+# See https://github.com/containers/buildah/issues/6417
+!api
+!cmd
+!internal
+!**/*.go
+**/*_test.go
+
+# The dashboard app, embedded into the dashboard binary by site/site.go.
+!site/dashboard
+!site/dashboard/*
+!site/assets/dashboard.js
+!site/assets/dashboard.css
+
+# Re-include Go module files
+!go.mod
+!go.sum
+
+# Binaries the release workflow cross-compiles for Dockerfile.release.
+!dist/manager-linux-*
+!dist/dashboard-linux-*

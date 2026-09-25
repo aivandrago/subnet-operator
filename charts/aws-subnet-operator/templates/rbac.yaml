@@ -1,0 +1,131 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "aws-subnet-operator.fullname" . }}
+  labels:
+    {{- include "aws-subnet-operator.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [aws.hypersurgery]
+    resources: [networkscopes, sheetexports, subnetclaims]
+    verbs: [get, list, watch]
+  # The auto-import policy writes ResourceImports; it never deletes one.
+  - apiGroups: [aws.hypersurgery]
+    resources: [resourceimports]
+    verbs: [get, list, watch, create]
+  - apiGroups: [aws.hypersurgery]
+    resources: [networkscopes/status, sheetexports/status, subnetclaims/status, resourceimports/status,
+                vpcs/status, subnets/status]
+    verbs: [get, update, patch]
+  - apiGroups: [aws.hypersurgery]
+    resources: [networkscopes/finalizers]
+    verbs: [update]
+  - apiGroups: [aws.hypersurgery]
+    resources: [vpcs, subnets]
+    verbs: [get, list, watch, create, update, patch, delete]
+  # A NetworkScope's namespaceSelector is matched against namespace labels, by the webhooks
+  # and the controllers alike. Labels only: nothing in a namespace is read.
+  - apiGroups: [""]
+    resources: [namespaces]
+    verbs: [get, list, watch]
+  # The audit trail records what changed on the object itself, and NetworkScope is
+  # cluster-scoped, so this one cannot be a namespaced Role.
+  - apiGroups: [events.k8s.io]
+    resources: [events]
+    verbs: [create, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "aws-subnet-operator.fullname" . }}
+  labels:
+    {{- include "aws-subnet-operator.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "aws-subnet-operator.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "aws-subnet-operator.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- $credentialNamespaces := .Values.rbac.credentialSecretNamespaces | default list }}
+{{- if .Values.sheetExport.create }}
+{{- $credentialNamespaces = append $credentialNamespaces (.Values.sheetExport.credentialsSecret.namespace | default .Release.Namespace) }}
+{{- end }}
+{{- range $namespace := prepend $credentialNamespaces $.Release.Namespace | uniq }}
+---
+# Credential Secrets are read where they live, one namespace at a time: a cluster-wide
+# Secret permission would let the operator read every Secret in the cluster.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "aws-subnet-operator.fullname" $ }}-credentials
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "aws-subnet-operator.labels" $ | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "aws-subnet-operator.fullname" $ }}-credentials
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "aws-subnet-operator.labels" $ | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "aws-subnet-operator.fullname" $ }}-credentials
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "aws-subnet-operator.serviceAccountName" $ }}
+    namespace: {{ $.Release.Namespace }}
+{{- end }}
+{{- if .Values.leaderElection.enabled }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "aws-subnet-operator.fullname" . }}-leader-election
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "aws-subnet-operator.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [create, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "aws-subnet-operator.fullname" . }}-leader-election
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "aws-subnet-operator.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "aws-subnet-operator.fullname" . }}-leader-election
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "aws-subnet-operator.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
+{{- if .Values.metrics.secure }}
+---
+# Lets Prometheus authenticate against the metrics endpoint.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "aws-subnet-operator.fullname" . }}-metrics-reader
+  labels:
+    {{- include "aws-subnet-operator.labels" . | nindent 4 }}
+rules:
+  - nonResourceURLs: ["/metrics"]
+    verbs: [get]
+{{- end }}

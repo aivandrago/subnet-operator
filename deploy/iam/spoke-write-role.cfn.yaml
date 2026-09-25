@@ -1,0 +1,86 @@
+# Write role the operator assumes for SubnetClaims in Create mode. Separate from the
+# read-only role on purpose: discovery never carries these permissions. Deploy it only to
+# accounts where subnets may be created, with the same StackSet mechanism as the read-only
+# role, and reference it as spec.accounts[].writeRoleARN in the NetworkScope.
+AWSTemplateFormatVersion: "2010-09-09"
+Description: aws-subnet-operator subnet creation role
+
+Parameters:
+  OperatorRoleArn:
+    Type: String
+    Description: ARN of the operator's IAM role in the hub account (EKS Pod Identity or IRSA role).
+    AllowedPattern: "^arn:aws[a-z-]*:iam::[0-9]{12}:role/.+$"
+  ExternalId:
+    Type: String
+    Default: ""
+    Description: Optional sts:ExternalId; must match spec.accounts[].externalID in the NetworkScope.
+
+Conditions:
+  HasExternalId: !Not [!Equals [!Ref ExternalId, ""]]
+
+Resources:
+  WriteRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: aws-subnet-operator-write
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Ref OperatorRoleArn
+            Action: sts:AssumeRole
+            Condition: !If
+              - HasExternalId
+              - StringEquals:
+                  sts:ExternalId: !Ref ExternalId
+              - !Ref AWS::NoValue
+      Policies:
+        - PolicyName: create-subnets
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # No DeleteSubnet: the operator never deletes, and the role cannot either.
+              # Every write is limited to the resource types the operator touches. On "*",
+              # ec2:CreateTags alone would let this role retag any instance, security group or
+              # volume in the account — including tags that IAM policies use for access control.
+              - Sid: CreateSubnets
+                Effect: Allow
+                Action: ec2:CreateSubnet
+                Resource:
+                  - !Sub arn:${AWS::Partition}:ec2:*:${AWS::AccountId}:vpc/*
+                  - !Sub arn:${AWS::Partition}:ec2:*:${AWS::AccountId}:subnet/*
+              # Tags on create (CreateSubnet's TagSpecifications) and ResourceImports, which
+              # only ever name a VPC or a subnet.
+              - Sid: TagNetworks
+                Effect: Allow
+                Action: ec2:CreateTags
+                Resource:
+                  - !Sub arn:${AWS::Partition}:ec2:*:${AWS::AccountId}:vpc/*
+                  - !Sub arn:${AWS::Partition}:ec2:*:${AWS::AccountId}:subnet/*
+              - Sid: ConfigureSubnets
+                Effect: Allow
+                Action: ec2:ModifySubnetAttribute
+                Resource: !Sub arn:${AWS::Partition}:ec2:*:${AWS::AccountId}:subnet/*
+              - Sid: RouteSubnets
+                Effect: Allow
+                Action: ec2:AssociateRouteTable
+                Resource:
+                  - !Sub arn:${AWS::Partition}:ec2:*:${AWS::AccountId}:subnet/*
+                  - !Sub arn:${AWS::Partition}:ec2:*:${AWS::AccountId}:route-table/*
+              # Describe calls support no resource-level permissions.
+              - Sid: Describe
+                Effect: Allow
+                Action:
+                  - ec2:DescribeSubnets
+                  - ec2:DescribeVpcs
+                  - ec2:DescribeRouteTables
+                Resource: "*"
+      Tags:
+        - Key: hs/managed-by
+          Value: aws-subnet-operator
+
+Outputs:
+  RoleArn:
+    Value: !GetAtt WriteRole.Arn

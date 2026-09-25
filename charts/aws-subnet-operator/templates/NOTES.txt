@@ -1,0 +1,107 @@
+DEPRECATED: the aws-subnet-operator chart is renamed to subnet-operator, and 0.7.1 is its
+last version. Upgrade this release in place to the new chart, CRDs first:
+
+  helm pull oci://ghcr.io/aivandrago/charts/subnet-operator --untar
+  kubectl apply -f subnet-operator/crds/
+  helm upgrade {{ .Release.Name }} oci://ghcr.io/aivandrago/charts/subnet-operator \
+    -n {{ .Release.Namespace }} --reuse-values
+
+The service account's name changes with the new chart: update a Pod Identity association
+or IRSA trust policy first, or pin serviceAccount.name. Step by step:
+https://github.com/aivandrago/subnet-operator/blob/main/docs/operations/upgrades.md#upgrading-from-07-to-08
+
+{{ .Chart.Name }} {{ .Chart.Version }} is installed in namespace {{ .Release.Namespace }}.
+
+1. Give the operator AWS credentials:
+   - EKS Pod Identity: associate a role with service account
+     {{ .Release.Namespace }}/{{ include "aws-subnet-operator.serviceAccountName" . }}
+   - or IRSA: set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"
+   The role needs ec2:DescribeVpcs, ec2:DescribeSubnets, ec2:DescribeRouteTables and
+   sts:AssumeRole on the read-only roles in the other accounts.
+
+{{- if not .Values.networkScope.create }}
+
+2. Tell it what to discover:
+
+   kubectl apply -f - <<'EOF'
+   apiVersion: aws.hypersurgery/v1alpha1
+   kind: NetworkScope
+   metadata:
+     name: organization
+   spec:
+     accounts:
+       - id: "111111111111"
+     regions: [eu-central-1]
+     vpcTagSelector:
+       hs/managed: "true"
+     requiredSubnetTags: [hs/owner, hs/env, hs/tier]
+   EOF
+{{- end }}
+
+3. Read the inventory:
+
+   kubectl get networkscopes
+   kubectl get subnets -o wide
+
+{{- if .Values.leaderElection.enabled }}
+
+Replicas: {{ .Values.replicaCount }}. One of them holds the leader election lease and does
+all the work; the rest sit on the lease and take over when the leader's pod goes away. A leader
+that is stopped — a drain, a rollout — finishes its in-flight work and hands the lease over on
+the way out, so a standby takes over within a few seconds. A leader that crashes cannot hand
+anything over, and its lease runs out after {{ .Values.leaderElection.leaseDuration }}. A sync interrupted
+halfway is redone by the next leader: a scope's lastSyncTime only advances once the sync has
+finished, so the status is never left half-written.
+{{- if lt (int .Values.replicaCount) 2 }}
+
+  With replicaCount: 1 there is nothing to take over. Set replicaCount: 2 for that.
+{{- end }}
+{{- if and .Values.podDisruptionBudget.enabled (lt (int .Values.replicaCount) 2) }}
+
+  No PodDisruptionBudget was created: over a single replica it would block node drains
+  instead of surviving them.
+{{- end }}
+{{- else }}
+
+Leader election is off, so run a single replica: two would reconcile the same scopes at
+the same time.
+{{- end }}
+{{- if not .Values.networkPolicy.enabled }}
+
+A NetworkPolicy restricting the operator to the API server, the AWS endpoints and the
+metrics scrape is available with networkPolicy.enabled=true.
+{{- end }}
+{{- if not .Values.events.queueUrl }}
+
+Changes are picked up on the resync interval (10m by default). For updates within seconds,
+deploy deploy/events/*.cfn.yaml and set events.queueUrl.
+{{- end }}
+{{- if .Values.webhook.enabled }}
+
+The admission webhooks are on: an invalid SubnetClaim, NetworkScope or ResourceImport is
+refused by kubectl instead of failing later in a status.
+{{- if eq (include "aws-subnet-operator.webhook.certManager" .) "true" }}
+cert-manager issues the serving certificate.
+{{- else }}
+The serving certificate is signed by the chart. Installing cert-manager and upgrading hands
+the certificate over to it.
+{{- end }}
+{{- end }}
+{{- if not .Values.metrics.serviceMonitor.enabled }}
+
+Metrics are served on port {{ .Values.metrics.port }}. Set metrics.serviceMonitor.enabled=true
+to scrape them with the Prometheus operator, and grafanaDashboard.enabled=true for the dashboard.
+{{- end }}
+
+{{- if .Values.dashboard.enabled }}
+
+The dashboard app runs as {{ include "aws-subnet-operator.dashboard.fullname" . }}. It has no access of its
+own and reads the cluster with each viewer's bearer token: put your SSO in front of it, or paste
+a token into the app. For a quick look:
+
+   kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "aws-subnet-operator.dashboard.fullname" . }} 8080:{{ .Values.dashboard.service.port }}
+   kubectl -n {{ .Release.Namespace }} create token <a-service-account-with-read-access>
+   # open http://127.0.0.1:8080/ and paste the token
+{{- end }}
+
+Docs: https://hypersurgery.dev/docs/ · demo dashboard: https://hypersurgery.dev/dashboard/

@@ -1,0 +1,7 @@
+## Append samples of your project ##
+resources:
+- aws_v1alpha1_networkscope.yaml
+- aws_v1alpha1_sheetexport.yaml
+- aws_v1alpha1_subnetclaim.yaml
+- aws_v1alpha1_resourceimport.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples

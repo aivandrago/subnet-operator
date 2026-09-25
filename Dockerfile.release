@@ -1,0 +1,16 @@
+# The release image. The release workflow cross-compiles the manager and the dashboard on its
+# own runner for each architecture — Go needs no emulation for that, CGO is off — and this file
+# only packages the result. Nothing here runs a program at build time, so buildx needs no QEMU for the arm64
+# image, which is what used to take twenty-five minutes.
+#
+# It relies on BuildKit's TARGETARCH, so it is for buildx only. For a local build use the
+# main Dockerfile, which compiles inside the image as before.
+FROM gcr.io/distroless/static:nonroot
+ARG TARGETARCH
+WORKDIR /
+COPY dist/manager-linux-${TARGETARCH} /manager
+# The dashboard is a second entrypoint of the same image; the Helm chart runs /dashboard.
+COPY dist/dashboard-linux-${TARGETARCH} /dashboard
+USER 65532:65532
+
+ENTRYPOINT ["/manager"]

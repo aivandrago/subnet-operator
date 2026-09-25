@@ -1,0 +1,21 @@
+{{- if .Values.sheetExport.create }}
+apiVersion: aws.hypersurgery/v1alpha1
+kind: SheetExport
+metadata:
+  name: {{ .Values.sheetExport.name }}
+  labels:
+    {{- include "aws-subnet-operator.labels" . | nindent 4 }}
+spec:
+  scopeRef: {{ .Values.networkScope.name }}
+  spreadsheetID: {{ required "sheetExport.spreadsheetID is required when sheetExport.create is true" .Values.sheetExport.spreadsheetID | quote }}
+  sheetName: {{ .Values.sheetExport.sheetName }}
+  credentialsSecretRef:
+    name: {{ .Values.sheetExport.credentialsSecret.name }}
+    namespace: {{ .Values.sheetExport.credentialsSecret.namespace | default .Release.Namespace }}
+    key: {{ .Values.sheetExport.credentialsSecret.key }}
+  {{- with .Values.sheetExport.extraTagColumns }}
+  extraTagColumns:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  refreshInterval: {{ .Values.sheetExport.refreshInterval }}
+{{- end }}

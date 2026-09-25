@@ -1,0 +1,15 @@
+# The smallest useful scope: the account the operator runs in, one region.
+# The operator needs no roleARN for its own account.
+apiVersion: aws.hypersurgery/v1alpha1
+kind: NetworkScope
+metadata:
+  name: single-account
+spec:
+  accounts:
+    - id: "111111111111"
+  regions: [eu-central-1]
+  # Drop vpcTagSelector to discover every VPC in the region.
+  vpcTagSelector:
+    hs/managed: "true"
+  requiredSubnetTags: [hs/owner, hs/env, hs/tier]
+  resyncInterval: 10m

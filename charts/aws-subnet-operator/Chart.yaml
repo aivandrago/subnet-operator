@@ -1,0 +1,139 @@
+apiVersion: v2
+name: aws-subnet-operator
+description: "Deprecated: renamed to subnet-operator (oci://ghcr.io/aivandrago/charts/subnet-operator). Kubernetes operator that discovers AWS VPCs and subnets from resource tags and keeps a live inventory in the cluster"
+type: application
+version: 0.7.1
+appVersion: "0.7.1"
+deprecated: true
+kubeVersion: ">=1.28.0-0"
+keywords:
+  - aws
+  - vpc
+  - subnet
+  - ipam
+  - networking
+  - inventory
+home: https://hypersurgery.dev
+icon: https://hypersurgery.dev/dashboard/icon-512.png
+sources:
+  - https://github.com/aivandrago/subnet-operator
+maintainers:
+  - name: Ivan Drago
+    email: maintainers@hypersurgery.dev
+    url: https://github.com/aivandrago
+# Read by Artifact Hub (https://artifacthub.io/docs/topics/annotations/helm/). The release
+# workflow checks images, changes and prerelease against the tag, so these three are updated
+# with the version at every release. A signing key is not listed: artifacthub.io/signKey
+# describes a PGP key for Helm provenance files, while this chart is signed keyless with
+# cosign, which Artifact Hub detects in the registry on its own.
+annotations:
+  artifacthub.io/license: Apache-2.0
+  artifacthub.io/operator: "true"
+  artifacthub.io/operatorCapabilities: Basic Install
+  artifacthub.io/category: networking
+  # Still v1alpha1 APIs: every release before 1.0 is a pre-release.
+  artifacthub.io/prerelease: "true"
+  artifacthub.io/images: |
+    - name: subnet-operator
+      image: ghcr.io/aivandrago/subnet-operator:0.7.1
+      platforms:
+        - linux/amd64
+        - linux/arm64
+  artifacthub.io/links: |
+    - name: Documentation
+      url: https://hypersurgery.dev/docs/
+    - name: Source
+      url: https://github.com/aivandrago/subnet-operator
+    - name: support
+      url: https://github.com/aivandrago/subnet-operator/issues
+    - name: Verify the signatures
+      url: https://hypersurgery.dev/docs/#verify
+    - name: Dashboard demo
+      url: https://hypersurgery.dev/dashboard/
+  artifacthub.io/changes: |
+    - kind: deprecated
+      description: This chart is renamed to subnet-operator (oci://ghcr.io/aivandrago/charts/subnet-operator); 0.7.1 is its last version and runs the same code as 0.7.0
+  artifacthub.io/crds: |
+    - kind: NetworkScope
+      version: v1alpha1
+      name: networkscopes.aws.hypersurgery
+      description: Accounts and regions to discover
+    - kind: VPC
+      version: v1alpha1
+      name: vpcs.aws.hypersurgery
+      description: A discovered VPC
+    - kind: Subnet
+      version: v1alpha1
+      name: subnets.aws.hypersurgery
+      description: A discovered subnet
+    - kind: ResourceImport
+      version: v1alpha1
+      name: resourceimports.aws.hypersurgery
+      description: Takes an existing VPC or subnet under management by tagging it
+    - kind: SheetExport
+      version: v1alpha1
+      name: sheetexports.aws.hypersurgery
+      description: Read-only mirror of a scope in a Google Sheet
+    - kind: SubnetClaim
+      version: v1alpha1
+      name: subnetclaims.aws.hypersurgery
+      description: Subnets on demand, allocated from a VPC and optionally created
+  artifacthub.io/crdsExamples: |
+    - apiVersion: aws.hypersurgery/v1alpha1
+      kind: NetworkScope
+      metadata:
+        name: organization
+      spec:
+        accounts:
+          - id: "111111111111"
+          - id: "222222222222"
+            roleARN: arn:aws:iam::222222222222:role/aws-subnet-operator-readonly
+        regions: [eu-central-1, eu-west-1]
+        vpcTagSelector:
+          hs/managed: "true"
+        requiredSubnetTags: [hs/owner, hs/env, hs/tier]
+        resyncInterval: 10m
+    - apiVersion: aws.hypersurgery/v1alpha1
+      kind: SubnetClaim
+      metadata:
+        name: payments
+        namespace: default
+      spec:
+        scopeRef: organization
+        account: "222222222222"
+        region: eu-central-1
+        vpcID: vpc-0aa11bb2cc33dd44e
+        prefixLength: 24
+        availabilityZones: [eu-central-1a, eu-central-1b, eu-central-1c]
+        mode: Create
+        owner: team-payments
+        env: prod
+        tier: private
+    - apiVersion: aws.hypersurgery/v1alpha1
+      kind: ResourceImport
+      metadata:
+        name: subnet-04d1c2b3a4e5f607-import
+        namespace: default
+      spec:
+        scopeRef: organization
+        account: "333333333333"
+        region: eu-central-1
+        resourceID: subnet-04d1c2b3a4e5f607
+        tags:
+          hs/managed: "true"
+          hs/owner: team-data
+          hs/env: prod
+          hs/tier: private
+    - apiVersion: aws.hypersurgery/v1alpha1
+      kind: SheetExport
+      metadata:
+        name: organization
+      spec:
+        scopeRef: organization
+        spreadsheetID: 1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789
+        sheetName: Subnets
+        credentialsSecretRef:
+          name: google-sheets
+          namespace: aws-subnet-operator-system
+          key: credentials.json
+        refreshInterval: 5m
