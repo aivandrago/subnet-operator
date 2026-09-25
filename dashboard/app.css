@@ -1,0 +1,20 @@
+/* Page chrome of the installable app. Kept out of index.html so the page runs under a
+   Content-Security-Policy without 'unsafe-inline', as it does when the Helm chart serves it. */
+:root { color-scheme: dark light; }
+body {
+  margin: 0; min-height: 100dvh; background: #070b16;
+  padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right))
+           max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+  font-family: "Inter", system-ui, sans-serif;
+}
+body.theme-daylight { background: #e6ebf5; }
+#app { max-width: 1200px; margin: 0 auto; }
+.offline {
+  display: none; margin: 0 auto 10px; max-width: 1200px; padding: 8px 12px; border-radius: 10px;
+  font: 500 13px "Inter", system-ui, sans-serif; color: #fbbf24;
+  border: 1px solid rgba(251, 191, 36, .4); background: rgba(251, 191, 36, .08);
+}
+body.is-offline .offline { display: block; }
+.back { display: block; max-width: 1200px; margin: 12px auto 0; font: 13px "Inter", system-ui, sans-serif; color: #8e97ad; text-decoration: none; }
+.back:hover { color: #e7eaf3; }
+.back[hidden] { display: none; }
