@@ -61,6 +61,23 @@ func TestThrottleBackoffSpreadsTargetsThrottledTogether(t *testing.T) {
 	}
 }
 
+// The default jitter stays in [0, 1) and covers the interval, so the random half of a delay
+// can take any value in it.
+func TestRandomJitterIsInUnitInterval(t *testing.T) {
+	low, high := false, false
+	for range 1000 {
+		j := randomJitter()
+		if j < 0 || j >= 1 {
+			t.Fatalf("randomJitter() = %v, want in [0, 1)", j)
+		}
+		low = low || j < 0.25
+		high = high || j >= 0.75
+	}
+	if !low || !high {
+		t.Errorf("1000 draws never fell below 0.25 (%v) or above 0.75 (%v)", low, high)
+	}
+}
+
 // A success, or a failure that is not throttling, starts the target over: the next throttle
 // waits the base delay again, not the doubled one.
 func TestThrottleBackoffResetsAfterSuccess(t *testing.T) {

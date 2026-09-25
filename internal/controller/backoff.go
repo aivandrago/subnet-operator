@@ -17,7 +17,8 @@ limitations under the License.
 package controller
 
 import (
-	"math/rand/v2"
+	"crypto/rand"
+	"encoding/binary"
 	"sync"
 	"time"
 
@@ -43,7 +44,7 @@ const (
 type throttleBackoff struct {
 	mu sync.Mutex
 	m  map[string]map[inventory.TargetKey]*backoffState
-	// jitter returns a number in [0, 1); nil uses math/rand.
+	// jitter returns a number in [0, 1); nil uses randomJitter.
 	jitter func() float64
 }
 
@@ -67,6 +68,15 @@ func backoffDelay(failures int, jitter float64) time.Duration {
 	return d/2 + time.Duration(jitter*float64(d/2))
 }
 
+// randomJitter returns a uniformly distributed number in [0, 1) from crypto/rand. The jitter
+// is not a secret, but crypto/rand costs nothing at one call per throttled discovery and keeps
+// the code free of math/rand, which security scanners flag wherever it appears.
+func randomJitter() float64 {
+	var b [8]byte
+	_, _ = rand.Read(b[:]) // crypto/rand.Read never returns an error since Go 1.24
+	return float64(binary.BigEndian.Uint64(b[:])>>11) / (1 << 53)
+}
+
 // throttled records a throttled discovery and returns when the target may be tried again.
 func (b *throttleBackoff) throttled(scope string, key inventory.TargetKey, now time.Time) time.Time {
 	b.mu.Lock()
@@ -83,7 +93,7 @@ func (b *throttleBackoff) throttled(scope string, key inventory.TargetKey, now t
 		b.m[scope][key] = s
 	}
 	s.failures++
-	jitter := rand.Float64
+	jitter := randomJitter
 	if b.jitter != nil {
 		jitter = b.jitter
 	}

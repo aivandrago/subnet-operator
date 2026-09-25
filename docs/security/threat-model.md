@@ -129,7 +129,7 @@ auto-import policy may turn into tags.
 
 | | Threat | Mitigation today | Residual |
 |---|---|---|---|
-| E | A crafted credentials file makes the Google client run a local command (`external_account` with `credential_source.executable`). | Only `type: service_account` keys are accepted (`internal/sheets/service.go`). | — |
+| E | A crafted credentials file makes the Google client run a local command (`external_account` with `credential_source.executable`). | Only service-account key files are accepted; any other credential type is refused (`internal/sheets/service.go`). | — |
 | E | A `SheetExport` author reads another Secret. | The operator can read Secrets only in its own namespace and in `rbac.credentialSecretNamespaces` (`templates/rbac.yaml`). | A `SheetExport` author can make the operator use any Secret in those namespaces as a Google key — and export the inventory to any sheet shared with that account. `SheetExport` is an admin object. |
 | T | Formula injection through tag values written to cells. | Values are written with `ValueInputOption("RAW")`, never interpreted as formulas. | — |
 | I | The inventory goes to a spreadsheet with wider access than the cluster. | — | Whoever the sheet is shared with sees it; that is the feature. |
