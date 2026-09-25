@@ -25,7 +25,7 @@ import (
 	"github.com/go-logr/logr"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 
-	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
+	networkv1 "hypersurgery.dev/subnet-operator/api/v1"
 	"hypersurgery.dev/subnet-operator/internal/cloud/aws/events"
 	"hypersurgery.dev/subnet-operator/internal/inventory"
 	"hypersurgery.dev/subnet-operator/internal/provider"
@@ -132,29 +132,29 @@ func NewFromEnvironment(ctx context.Context, opts Options) (*Provider, error) {
 }
 
 // Name implements provider.Provider.
-func (p *Provider) Name() networkv1beta1.Provider { return networkv1beta1.ProviderAWS }
+func (p *Provider) Name() networkv1.Provider { return networkv1.ProviderAWS }
 
 // Capabilities implements provider.Provider. EC2 reports free addresses for every subnet, and
 // creates subnets; change events need the queue.
-func (p *Provider) Capabilities() []networkv1beta1.Capability {
-	caps := []networkv1beta1.Capability{networkv1beta1.CapabilityCreateSubnet, networkv1beta1.CapabilityIPUsage}
+func (p *Provider) Capabilities() []networkv1.Capability {
+	caps := []networkv1.Capability{networkv1.CapabilityCreateSubnet, networkv1.CapabilityIPUsage}
 	if p.events != nil {
-		caps = append(caps, networkv1beta1.CapabilityChangeEvents)
+		caps = append(caps, networkv1.CapabilityChangeEvents)
 	}
 	return caps
 }
 
 // Ownership implements provider.Provider: VPCs and subnets both carry their own tags.
-func (p *Provider) Ownership() networkv1beta1.Ownership {
-	return networkv1beta1.Ownership{
-		Networks: networkv1beta1.OwnershipResourceTags,
-		Subnets:  networkv1beta1.OwnershipResourceTags,
+func (p *Provider) Ownership() networkv1.Ownership {
+	return networkv1.Ownership{
+		Networks: networkv1.OwnershipResourceTags,
+		Subnets:  networkv1.OwnershipResourceTags,
 	}
 }
 
 // Identity implements provider.Provider. Writes use writeRoleARN, never roleARN, so the read
 // role can stay read-only. The external ID goes with either role.
-func (p *Provider) Identity(account networkv1beta1.Account, access provider.Access) inventory.Identity {
+func (p *Provider) Identity(account networkv1.Account, access provider.Access) inventory.Identity {
 	a := account.AWSAccount()
 	if access == provider.Write {
 		return Identity{RoleARN: a.WriteRoleARN, ExternalID: a.ExternalID}

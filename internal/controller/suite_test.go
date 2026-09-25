@@ -32,7 +32,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
+	networkv1 "hypersurgery.dev/subnet-operator/api/v1"
 	awscloud "hypersurgery.dev/subnet-operator/internal/cloud/aws"
 	"hypersurgery.dev/subnet-operator/internal/inventory"
 	"hypersurgery.dev/subnet-operator/internal/provider"
@@ -69,7 +69,7 @@ var _ = BeforeSuite(func() {
 	ctx, cancel = context.WithCancel(context.TODO())
 
 	var err error
-	err = networkv1beta1.AddToScheme(scheme.Scheme)
+	err = networkv1.AddToScheme(scheme.Scheme)
 	Expect(err).NotTo(HaveOccurred())
 
 	// +kubebuilder:scaffold:scheme

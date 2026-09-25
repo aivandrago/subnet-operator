@@ -37,7 +37,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
 
-	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
+	networkv1 "hypersurgery.dev/subnet-operator/api/v1"
 )
 
 // oldObject is an aws.hypersurgery/v1alpha1 object as 0.8 left it: migrated (marked
@@ -49,7 +49,7 @@ func oldObject(kind, namespace, name string, migrated bool, spec map[string]any)
 	obj.SetNamespace(namespace)
 	obj.SetName(name)
 	if migrated {
-		obj.SetAnnotations(map[string]string{networkv1beta1.AnnotationMigratedTo: name})
+		obj.SetAnnotations(map[string]string{networkv1.AnnotationMigratedTo: name})
 	}
 	return obj
 }
@@ -133,7 +133,7 @@ var _ = Describe("The guard against unmigrated aws.hypersurgery/v1alpha1 objects
 		Expect(err.Error()).To(ContainSubstring("2 aws.hypersurgery/v1alpha1 object(s) were never migrated"))
 		Expect(err.Error()).To(ContainSubstring("NetworkScope forgotten, SubnetClaim default/payments"))
 		Expect(err.Error()).To(ContainSubstring("Roll back to 0.8.x"))
-		Expect(err.Error()).To(ContainSubstring(networkv1beta1.AnnotationMigratedTo))
+		Expect(err.Error()).To(ContainSubstring(networkv1.AnnotationMigratedTo))
 
 		By("recording a Warning on each of them, once")
 		Expect(recorder.Events).To(HaveLen(2))
@@ -171,7 +171,7 @@ var _ = Describe("The guard against unmigrated aws.hypersurgery/v1alpha1 objects
 		Consistently(done, 500*time.Millisecond).ShouldNot(Receive(), "the object is still there")
 
 		By("marking it the way 0.8 does once its copy exists")
-		claim.SetAnnotations(map[string]string{networkv1beta1.AnnotationMigratedTo: "late"})
+		claim.SetAnnotations(map[string]string{networkv1.AnnotationMigratedTo: "late"})
 		Expect(k8sClient.Update(ctx, claim)).To(Succeed())
 		Eventually(done, 5*time.Second).Should(Receive(MatchError(ErrCleared)))
 		Expect(guard.Ready(nil)).To(Succeed())

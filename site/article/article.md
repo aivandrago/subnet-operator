@@ -40,7 +40,7 @@ So the operator keeps no list. It goes and looks. Every ten minutes, and within 
 There is no wizard. There is no onboarding call. There is one object that says which accounts and regions belong to you, and what a subnet must carry to be considered documented.
 
 ```yaml
-apiVersion: network.hypersurgery.dev/v1beta1
+apiVersion: network.hypersurgery.dev/v1
 kind: NetworkScope
 metadata:
   name: organization
@@ -107,7 +107,7 @@ A metric rises. An alert fires with the resource ID, the account, the region and
 The dashboard lists every unmanaged network next to a button. You choose owner, environment, tier. The operator writes those tags onto the real resource in AWS with `ec2:CreateTags` and nothing else — the resource keeps its configuration, and tags the import does not name are left alone.
 
 ```yaml
-apiVersion: network.hypersurgery.dev/v1beta1
+apiVersion: network.hypersurgery.dev/v1
 kind: ResourceImport
 metadata:
   name: subnet-04d1c2b3a4e5f607-import
@@ -127,7 +127,7 @@ spec:
 
 ### Three: you press nothing.
 
-Switch the policy on and the operator decides for itself, in a fixed order. If Terraform made the resource, it is left alone — Terraform owns it, and a tag fight between two systems benefits nobody. If the creator maps to a team, that team owns it. Otherwise it inherits from the parent VPC. And if even that fails, it is marked `no_owner` and a human is asked, because **a wrong owner is worse than an admitted unknown**.
+Switch the policy on and the operator decides for itself, in a fixed order. If Terraform made the resource, it is left alone — Terraform owns it, and a tag fight between two systems benefits nobody. If the creator maps to a team, that team owns it. Otherwise it inherits from the parent VPC, or takes the account's defaults. Tags the resource already carries always win. And if even that fails, it is marked `no_owner` and a human is asked, because **a wrong owner is worse than an admitted unknown**.
 
 ![Decision tree: Terraform means skip, a known creator maps to a team, otherwise inherit from the VPC, otherwise mark no owner and alert](https://hypersurgery.dev/article/img/fig4-policy.png?v=2)
 
@@ -147,7 +147,7 @@ Switch the policy on and the operator decides for itself, in a fixed order. If T
       - principalPrefix: "arn:aws:sts::111111111111:assumed-role/data-platform-"
         tags: { hs/owner: team-data }
 
-    inheritFromVPC: [hs/owner, hs/env]  # a subnet usually belongs to whoever owns the network
+    inheritFromNetwork: [hs/owner, hs/env]  # a subnet usually belongs to whoever owns the VPC
 
     accountDefaults:
       - account: "111111111111"
@@ -176,7 +176,7 @@ And this is the panel the whole article is about. Who created the thing, what th
 
 ## Grafana. Numbers do not lie.
 
-The chart installs a Grafana dashboard and a `PrometheusRule`. You do not build panels by hand. Every metric carries the account, the region, the VPC, the owner and the environment as labels, so the same query answers "which team is running out of addresses" and "which account is not answering".
+The chart installs a Grafana dashboard and a `PrometheusRule`. You do not build panels by hand. The subnet metrics carry the account, the region, the VPC, the owner and the environment as labels, so the same query answers "which team is running out of addresses" and "which account is not answering".
 
 ![A Grafana dashboard with an unmanaged resources tile, utilisation against an 80 percent threshold, a firing UnmanagedNetworkResource alert and the Slack message it sends](https://hypersurgery.dev/article/img/fig6-grafana.png?v=3)
 
@@ -192,7 +192,7 @@ SubnetInventoryTargetDown      an account or region stopped answering; last stat
 SubnetInventoryTargetThrottled the cloud has throttled an account or region for 30 minutes
 SubnetInventoryStale           a scope has not completed a full sync in an hour
 NetworkCIDROverlap             two networks (VPCs) in the scope claim the same range
-UnmanagedNetworkResource       a network appeared that carries no hs/managed tag
+UnmanagedNetworkResource       a network or subnet appeared that carries no hs/managed tag
 SubnetClaimNotReady            a subnet somebody asked for has not arrived in 30 minutes
 ResourceImportNotSettled       tags somebody asked for have not reached AWS in 30 minutes
 AutoImportedResources          informational: what the auto-import policy tagged on its own
@@ -205,7 +205,7 @@ AutoImportedResources          informational: what the auto-import policy tagged
 Reading is most of the value. But once the operator knows every CIDR in the VPC, the next question answers itself: where is the free space? So a team can ask for a subnet instead of opening a ticket and waiting two days for a person with a calculator.
 
 ```yaml
-apiVersion: network.hypersurgery.dev/v1beta1
+apiVersion: network.hypersurgery.dev/v1
 kind: SubnetClaim
 metadata:
   name: payments
@@ -244,7 +244,7 @@ Now the part where I disappoint you. On purpose.
 
 **And it refuses impossible work at the door.** An admission webhook rejects a claim that cannot be satisfied — a prefix that does not fit the VPC, an availability zone from another region, a scope that does not cover the account — at `kubectl apply`, with a readable message, instead of accepting it and failing quietly in a reconcile loop forty seconds later.
 
-> **What it does not know yet.** Everything above is exercised in CI: unit tests, a real Kubernetes API server, and an end-to-end suite in a Kind cluster against a mock AWS across two accounts. A conformance run against a genuine AWS organisation is still an open item, and until it passes, the project page says so and so do I. You will not be sold production readiness by someone who has not been to production.
+> **What it does not know yet.** Everything above is exercised in CI: unit tests, a real Kubernetes API server, an end-to-end suite in a Kind cluster against a mock AWS across two accounts, and an upgrade from the last release. The API is `v1` and comes with a written compatibility promise; that is what "stable" means here. A conformance run against a genuine AWS organisation is still an open item, and until someone has run it, the project page says so and so do I. You will not be sold production readiness by someone who has not been to production. If you have an organisation and an afternoon, you can be that someone.
 
 ## Whatever it takes
 

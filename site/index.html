@@ -12,6 +12,7 @@
 <meta property="og:description" content="A Kubernetes operator that discovers VPCs and subnets from cloud resource tags, keeps a live inventory in the cluster and can optionally allocate subnets automatically.">
 <meta property="og:image" content="https://hypersurgery.dev/dashboard/icon-512.png">
 <meta name="twitter:card" content="summary">
+<link rel="icon" href="favicon.ico" sizes="16x16 32x32 48x48">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230b1020'/%3E%3Cg fill='none' stroke='%232dd4bf' stroke-width='2.4'%3E%3Crect x='7' y='7' width='8' height='8' rx='2'/%3E%3Crect x='17' y='17' width='8' height='8' rx='2'/%3E%3C/g%3E%3Crect x='17' y='7' width='8' height='8' rx='2' fill='%238b5cf6'/%3E%3Crect x='7' y='17' width='8' height='8' rx='2' fill='%2360a5fa'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -442,7 +443,8 @@ footer .wrap { display: flex; justify-content: space-between; gap: 20px; flex-wr
     <button class="btn-demo" id="demo-open" type="button" aria-haspopup="dialog">
       <span class="live"></span>Live dashboard
     </button>
-    <span class="pill hide-sm"><span class="dot"></span>Alpha · v0.9.0</span>
+    <!-- RELEASE: the version pill; from 1.0 "Stable · vX.Y.Z" -->
+    <span class="pill hide-sm"><span class="dot"></span>Stable · v1.0.0</span>
   </div>
 </nav>
 
@@ -478,20 +480,20 @@ footer .wrap { display: flex; justify-content: space-between; gap: 20px; flex-wr
     <div class="terminal reveal" role="img" aria-label="Example output of kubectl get subnets">
       <div class="term-bar"><i></i><i></i><i></i><span>kubectl — prod-hub</span></div>
 <div class="term-body"><span class="t-prompt">$</span> <span class="t-cmd">kubectl get networkscopes</span>
-<span class="t-head">NAME           VPCS   SUBNETS   READY   LAST SYNC</span>
-organization   42     318       <span class="t-ok">True</span>    12s
+<span class="t-head">NAME           PROVIDER  NETWORKS  SUBNETS  UNMANAGED  READY  LAST SYNC</span>
+organization   aws       42        318      <span class="t-warn">7</span>          <span class="t-ok">True</span>   12s
 
-<span class="t-prompt">$</span> <span class="t-cmd">kubectl get subnets</span>
-<span class="t-head">NAME             CIDR           AZ             FREE  USED%  OWNER</span>
-subnet-0a1b2c3d  10.20.1.0/24   eu-central-1a  203   <span class="t-ok">19</span>     team-web
-subnet-0e4f5a6b  10.20.2.0/24   eu-central-1b  <span class="t-warn">31</span>    <span class="t-warn">87</span>     team-payments
-subnet-07c8d9e0  10.20.3.0/24   eu-central-1c  249   <span class="t-ok">0</span>      <span class="t-bad">&lt;none&gt;</span>
-subnet-0f1a2b3c  100.64.0.0/20  eu-west-1a     3812  <span class="t-ok">6</span>      team-data
+<span class="t-prompt">$</span> <span class="t-cmd">kubectl get hssubnet</span>
+<span class="t-head">NAME             NETWORK   CIDR           ZONE           FREE IPS  USED %  OWNER</span>
+subnet-0a1b2c3d  vpc-0aaa  10.20.1.0/24   eu-central-1a  203       <span class="t-ok">19</span>      team-web
+subnet-0e4f5a6b  vpc-0aaa  10.20.2.0/24   eu-central-1b  <span class="t-warn">31</span>        <span class="t-warn">87</span>      team-payments
+subnet-07c8d9e0  vpc-0aaa  10.20.3.0/24   eu-central-1c  249       <span class="t-ok">0</span>       <span class="t-bad">&lt;none&gt;</span>
+subnet-0f1a2b3c  vpc-0bbb  100.64.0.0/20  eu-west-1a     3812      <span class="t-ok">6</span>       team-data
 
-<span class="t-prompt">$</span> <span class="t-cmd">kubectl get subnet subnet-07c8d9e0 -o jsonpath='{.status.missingTags}'</span>
+<span class="t-prompt">$</span> <span class="t-cmd">kubectl get hssubnet subnet-07c8d9e0 -o jsonpath='{.status.missingTags}'</span>
 <span class="t-bad">["hs/owner"]</span>
 
-<span class="t-prompt">$</span> <span class="t-cmd">kubectl get vpc vpc-0aa11bb2 -o jsonpath='{.status.overlapsWith}'</span>
+<span class="t-prompt">$</span> <span class="t-cmd">kubectl get hsnet vpc-0aa11bb2 -o jsonpath='{.status.overlapsWith}'</span>
 <span class="t-bad">["222222222222/eu-central-1/vpc-0cc3d4e5"]</span>
 </div>
     </div>
@@ -561,19 +563,19 @@ subnet-0f1a2b3c  100.64.0.0/20  eu-west-1a     3812  <span class="t-ok">6</span>
         <div class="note">Only <code>ec2:Describe*</code> calls. Nothing in your cloud is ever modified. The Google Sheet mirror is written, never read back, so the old spreadsheet stops being something anyone maintains.</div>
       </div>
       <div class="layer opt reveal">
-        <span class="tag">OPTIONAL · AUTOMATIC MANAGEMENT · v0.3.0</span>
+        <span class="tag">OPTIONAL · AUTOMATIC MANAGEMENT</span>
         <h3>Subnets on demand</h3>
         <p>Teams ask for capacity; the operator picks a free CIDR and creates correctly tagged subnets.</p>
         <ul class="checks">
-          <li><svg viewBox="0 0 24 24"><use href="#i-check"/></svg><span><code>SubnetClaim</code>: size, tier, AZ spread and target VPC selector</span></li>
-          <li><svg viewBox="0 0 24 24"><use href="#i-check"/></svg>CIDR allocation from Amazon VPC IPAM pools or a built-in allocator over tagged pools</li>
-          <li><svg viewBox="0 0 24 24"><use href="#i-check"/></svg>Route-table association and the tags ELB and Karpenter already select on</li>
+          <li><svg viewBox="0 0 24 24"><use href="#i-check"/></svg><span><code>SubnetClaim</code>: prefix length, zones, owner, environment, tier and the target network (VPC)</span></li>
+          <li><svg viewBox="0 0 24 24"><use href="#i-check"/></svg>CIDR allocation by a built-in first-fit allocator over the VPC's free space, skipping existing subnets and other claims' reservations</li>
+          <li><svg viewBox="0 0 24 24"><use href="#i-check"/></svg>Route-table association, the organization's tags, and a <code>hs/claim</code> tag that lets the operator adopt a subnet it created</li>
           <li><svg viewBox="0 0 24 24"><use href="#i-check"/></svg>"Allocate only" mode for Terraform-first teams: the CIDR is reserved, Terraform creates the subnet</li>
           <li><svg viewBox="0 0 24 24"><use href="#i-check"/></svg>Never deletes subnets and never touches Terraform-owned resources</li>
         </ul>
-        <div class="note">Shipped behind <code>--enable-writes</code> and a write role of its own:
-          subnets on demand in v0.2.0, <code>ResourceImport</code> and the auto-import policy in v0.3.0.
-          Tagging a resource needs nothing but <code>ec2:CreateTags</code>.</div>
+        <div class="note">Off until you pass <code>--enable-writes</code> (<code>writes.enabled</code> in the chart) and
+          deploy a write role of its own, and only for the namespaces a scope allows. Tagging a resource needs
+          nothing but <code>ec2:CreateTags</code>.</div>
       </div>
     </div>
   </div>
@@ -589,7 +591,7 @@ subnet-0f1a2b3c  100.64.0.0/20  eu-west-1a     3812  <span class="t-ok">6</span>
     </div>
 
     <div class="diagram reveal">
-      <svg viewBox="0 0 1100 400" role="img" aria-label="Architecture: spoke accounts send CloudTrail events through EventBridge to an SQS queue in the hub account; the operator in EKS reads the queue, calls EC2 Describe APIs through AssumeRole and writes VPC and Subnet objects, exposed through kubectl and Prometheus.">
+      <svg viewBox="0 0 1100 400" role="img" aria-label="Architecture: spoke accounts send CloudTrail events through EventBridge to an SQS queue in the hub account; the operator in EKS reads the queue, calls EC2 Describe APIs through AssumeRole and writes Network and Subnet objects, exposed through kubectl and Prometheus.">
         <defs>
           <linearGradient id="gOp" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2dd4bf" stop-opacity=".22"/><stop offset="1" stop-color="#8b5cf6" stop-opacity=".22"/></linearGradient>
           <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#8e97ad"/></marker>
@@ -660,7 +662,7 @@ subnet-0f1a2b3c  100.64.0.0/20  eu-west-1a     3812  <span class="t-ok">6</span>
         <text class="grpl" x="880" y="46">OUTPUTS</text>
         <rect class="box" x="880" y="66" width="190" height="84" rx="12"/>
         <text class="lbl" x="898" y="96">CRDs</text>
-        <text class="mono" x="898" y="118">NetworkScope · VPC</text>
+        <text class="mono" x="898" y="118">NetworkScope · Network</text>
         <text class="mono" x="898" y="136">Subnet</text>
         <rect class="box" x="880" y="170" width="190" height="60" rx="12"/>
         <text class="lbl" x="898" y="197">Prometheus</text>
@@ -674,7 +676,7 @@ subnet-0f1a2b3c  100.64.0.0/20  eu-west-1a     3812  <span class="t-ok">6</span>
         <path class="flow" d="M800 223 C 840 223, 840 200, 880 200" marker-end="url(#arr)"/>
         <path class="flow" d="M800 223 C 840 223, 840 280, 880 280" marker-end="url(#arr)"/>
         <path class="flowV" d="M880 347 H 250" marker-end="url(#arrV)"/>
-        <text class="mono" x="400" y="370" style="fill:#a78bfa">allocate CIDR · create tagged subnet (phase 3)</text>
+        <text class="mono" x="400" y="370" style="fill:#a78bfa">allocate CIDR · create tagged subnet (--enable-writes)</text>
       </svg>
     </div>
 
@@ -694,7 +696,7 @@ subnet-0f1a2b3c  100.64.0.0/20  eu-west-1a     3812  <span class="t-ok">6</span>
       <h2>From untagged to managed in one step.</h2>
       <p>Discovery does not stop at the tag selector: it lists what it can see but nobody has claimed.
         Importing a resource applies the organization's tags in AWS — nothing else changes — and the
-        inventory picks it up on the next CloudTrail event. <b>Shipped in v0.3.0</b>, by hand or by policy.</p>
+        inventory picks it up on the next CloudTrail event, by hand or by policy.</p>
     </div>
 
     <div class="onboard reveal">
@@ -723,9 +725,10 @@ subnet-0f1a2b3c  100.64.0.0/20  eu-west-1a     3812  <span class="t-ok">6</span>
               </div>
               <div>
                 <h5>What gets applied</h5>
-<pre class="dash-yaml"><span class="k">apiVersion</span>: <span class="v">network.hypersurgery.dev/v1beta1</span>
+<pre class="dash-yaml"><span class="k">apiVersion</span>: <span class="v">network.hypersurgery.dev/v1</span>
 <span class="k">kind</span>: <span class="v">ResourceImport</span>
 <span class="k">spec</span>:
+  <span class="k">scopeRef</span>: <span class="v">organization</span>
   <span class="k">account</span>: <span class="v">"333333333333"</span>
   <span class="k">region</span>: <span class="v">eu-central-1</span>
   <span class="k">resourceID</span>: <span class="v">subnet-04d1c2b3a4e5f607</span>
@@ -743,8 +746,8 @@ subnet-0f1a2b3c  100.64.0.0/20  eu-west-1a     3812  <span class="t-ok">6</span>
       <div class="onboard-points">
         <div class="principle"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg></div><div><h4>Nothing stays hidden</h4><p>Every VPC and subnet in the accounts is discovered; the tag selector decides what is managed, not what is visible.</p></div></div>
         <div class="principle"><div class="icon v"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.6 13.4l-7.2 7.2a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="8" cy="8" r="1.5"/></svg></div><div><h4>An import is a tag change</h4><p>A <code>ResourceImport</code> object, applied by hand or through GitOps, becomes one <code>ec2:CreateTags</code> call. Tags stay the source of truth; the CRD is not a second spreadsheet.</p></div></div>
-        <div class="principle"><div class="icon a"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17.5v.5"/></svg></div><div><h4>Terraform-aware</h4><p>Resources that carry <code>managed-by=terraform</code> get a warning and the <code>ignore_changes</code> snippet, so the next plan does not undo the import.</p></div></div>
-        <div class="principle"><div class="icon b"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></div><div><h4>Narrow permissions, full audit</h4><p>The write role for imports holds <code>ec2:CreateTags</code> and nothing else; who imported what, and when, is in the object and in CloudTrail.</p></div></div>
+        <div class="principle"><div class="icon a"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17.5v.5"/></svg></div><div><h4>Terraform-aware</h4><p>For resources that carry <code>managed-by=terraform</code> the app warns and shows the <code>ignore_changes</code> snippet, so the next plan does not undo the import.</p></div></div>
+        <div class="principle"><div class="icon b"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></div><div><h4>Narrow permissions, full audit</h4><p>Importing needs nothing but <code>ec2:CreateTags</code>; who imported what, and when, is in the object, in a Kubernetes Event, in the operator's audit stream and in CloudTrail.</p></div></div>
         <a class="btn btn-primary" href="/dashboard/?import=subnet-04d1c2b3a4e5f607">Try the import in the demo
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
         </a>
@@ -753,7 +756,7 @@ subnet-0f1a2b3c  100.64.0.0/20  eu-west-1a     3812  <span class="t-ok">6</span>
 
     <div class="auto reveal">
       <div class="auto-text">
-        <div class="kicker">Automatic mode · v0.3.0</div>
+        <div class="kicker">Automatic mode</div>
         <h3>Or let policy do the importing.</h3>
         <p>Someone creates a subnet from the console at 5 pm on a Friday. The CloudTrail event that
           tells the operator about it also says <em>who</em> did it. With an auto-import policy on the
@@ -761,7 +764,7 @@ subnet-0f1a2b3c  100.64.0.0/20  eu-west-1a     3812  <span class="t-ok">6</span>
           the account's defaults — and applies them within seconds. What it cannot resolve becomes an
           alert for a human instead of a silent gap.</p>
         <ul class="checks">
-          <li><svg viewBox="0 0 24 24"><use href="#i-check"/></svg><span><b>Three sources for the owner</b>, tried in order: the creating principal, the VPC the subnet lives in, the account's default</span></li>
+          <li><svg viewBox="0 0 24 24"><use href="#i-check"/></svg><span><b>Three sources for the tags</b>, tried in order: the creating principal, the network (VPC) the subnet lives in, the account's defaults. Tags the resource already has always win</span></li>
           <li><svg viewBox="0 0 24 24"><use href="#i-check"/></svg><span><b>Skip rules</b> for Terraform: by tag or by the principal that created it, so pipelines keep their own state clean</span></li>
           <li><svg viewBox="0 0 24 24"><use href="#i-check"/></svg><span><b>Dry run first.</b> The operator still creates the <code>ResourceImport</code> objects — you review a day of them before switching to Apply</span></li>
           <li><svg viewBox="0 0 24 24"><use href="#i-check"/></svg><span><b>Nothing owner-less is tagged.</b> If no rule yields an owner, the resource stays unmanaged and the alert fires</span></li>
@@ -771,20 +774,22 @@ subnet-0f1a2b3c  100.64.0.0/20  eu-west-1a     3812  <span class="t-ok">6</span>
         <div class="code-head"><b>networkscope.yaml</b><span>auto-import policy</span></div>
 <pre><span class="k">spec</span>:
   <span class="k">autoImport</span>:
-    <span class="k">mode</span>: <span class="s">DryRun</span>                  <span class="c"># DryRun | Apply</span>
+    <span class="k">mode</span>: <span class="s">DryRun</span>                  <span class="c"># Off | DryRun | Apply</span>
+    <span class="k">namespace</span>: <span class="s">platform</span>              <span class="c"># where its ResourceImports go</span>
     <span class="k">fromCreator</span>:
-      - <span class="k">principal</span>: <span class="s">"arn:aws:sts::*:assumed-role/payments-*"</span>
+      - <span class="k">principalPrefix</span>: <span class="s">"arn:aws:sts::222222222222:assumed-role/payments-"</span>
         <span class="k">tags</span>: { <span class="k">hs/owner</span>: <span class="s">team-payments</span> }
-      - <span class="k">principal</span>: <span class="s">"arn:aws:sts::*:assumed-role/data-platform-*"</span>
+      - <span class="k">principalPrefix</span>: <span class="s">"arn:aws:sts::333333333333:assumed-role/data-platform-"</span>
         <span class="k">tags</span>: { <span class="k">hs/owner</span>: <span class="s">team-data</span> }
-    <span class="k">inheritFromVPC</span>: [<span class="s">hs/owner</span>, <span class="s">hs/env</span>]
+    <span class="k">inheritFromNetwork</span>: [<span class="s">hs/owner</span>, <span class="s">hs/env</span>]
     <span class="k">accountDefaults</span>:
       - <span class="k">account</span>: <span class="n">"333333333333"</span>
         <span class="k">tags</span>: { <span class="k">hs/env</span>: <span class="s">prod</span> }
     <span class="k">skip</span>:
-      - <span class="k">tag</span>: <span class="s">managed-by=terraform</span>
-      - <span class="k">principal</span>: <span class="s">"arn:aws:sts::*:assumed-role/terraform-*"</span>
-    <span class="k">requireTags</span>: [<span class="s">hs/owner</span>]      <span class="c"># otherwise: leave unmanaged, alert</span></pre>
+      - <span class="k">tagKey</span>: <span class="s">managed-by</span>
+        <span class="k">tagValue</span>: <span class="s">terraform</span>
+      - <span class="k">principalPrefix</span>: <span class="s">"arn:aws:sts::222222222222:assumed-role/terraform-"</span>
+    <span class="k">requiredTags</span>: [<span class="s">hs/owner</span>]     <span class="c"># otherwise: leave unmanaged, alert</span></pre>
       </div>
     </div>
     </div>
@@ -900,8 +905,11 @@ subnet-0f1a2b3c  100.64.0.0/20  eu-west-1a     3812  <span class="t-ok">6</span>
       </div>
     </div>
     <p class="section-note reveal">The chart's <code>PrometheusRule</code> ships all of it: the unmanaged-resource rule
-      above, a daily digest of what the policy imported by itself, plus a subnet at 85%, a subnet with no free addresses,
-      an unreachable account, overlapping VPC CIDRs and a stale inventory. They all travel this route into Slack or Teams.</p>
+      above, a daily digest of what the policy imported by itself, plus a subnet at 85% (configurable), a subnet with no
+      free addresses, an unreachable or throttled account, overlapping network CIDRs, a stale inventory, a claim or import
+      stuck for too long and an operator that is not running. Each has a
+      <a href="https://github.com/aivandrago/subnet-operator/blob/main/docs/operations/runbook.md">runbook entry</a>,
+      and they all travel this route into Slack or Teams.</p>
   </div>
 </section>
 
@@ -931,12 +939,14 @@ subnet-0f1a2b3c  100.64.0.0/20  eu-west-1a     3812  <span class="t-ok">6</span>
     <div class="section-head reveal">
       <div class="kicker">API</div>
       <h2>Declare the scope. Read the result.</h2>
-      <p>Group <code>network.hypersurgery.dev/v1beta1</code>, one for every cloud. <code>Network</code> and <code>Subnet</code> objects are written by the operator and owned by their scope.</p>
+      <p>Group <code>network.hypersurgery.dev</code>, version <code>v1</code>: one API for every cloud, with a written
+        <a href="https://github.com/aivandrago/subnet-operator/blob/main/docs/api-compatibility.md">compatibility promise</a>
+        (<code>v1beta1</code>, the API of 0.8 and 0.9, is still served, deprecated). <code>Network</code> and <code>Subnet</code> objects are written by the operator and owned by their scope.</p>
     </div>
     <div class="code-grid">
       <div class="code reveal">
         <div class="code-head"><b>networkscope.yaml</b><span>you write</span></div>
-<pre><span class="k">apiVersion</span>: <span class="s">network.hypersurgery.dev/v1beta1</span>
+<pre><span class="k">apiVersion</span>: <span class="s">network.hypersurgery.dev/v1</span>
 <span class="k">kind</span>: <span class="s">NetworkScope</span>
 <span class="k">metadata</span>:
   <span class="k">name</span>: <span class="s">organization</span>
@@ -1007,7 +1017,7 @@ subnet-0f1a2b3c  100.64.0.0/20  eu-west-1a     3812  <span class="t-ok">6</span>
       <a href="https://github.com/aivandrago/subnet-operator/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/aivandrago/subnet-operator/actions/workflows/ci.yml/badge.svg"></a>
       <a href="https://github.com/aivandrago/subnet-operator/actions/workflows/security.yml"><img alt="Security scans" src="https://github.com/aivandrago/subnet-operator/actions/workflows/security.yml/badge.svg"></a>
       <a href="https://github.com/aivandrago/subnet-operator/actions/workflows/codeql.yml"><img alt="CodeQL" src="https://github.com/aivandrago/subnet-operator/actions/workflows/codeql.yml/badge.svg"></a>
-      <a href="https://github.com/aivandrago/subnet-operator/actions/workflows/ci.yml"><img alt="Coverage" src="https://img.shields.io/endpoint?url=https%3A%2F%2Faivandrago.github.io%2Fsubnet-operator%2Fbadges%2Fcoverage.json"></a>
+      <a href="https://github.com/aivandrago/subnet-operator/actions/workflows/ci.yml"><img alt="Coverage" src="https://img.shields.io/endpoint?url=https%3A%2F%2Fhypersurgery.dev%2Fbadges%2Fcoverage.json"></a>
       <a href="https://scorecard.dev/viewer/?uri=github.com/aivandrago/subnet-operator"><img alt="OpenSSF Scorecard" src="https://api.scorecard.dev/projects/github.com/aivandrago/subnet-operator/badge"></a>
       <a href="https://github.com/aivandrago/subnet-operator/blob/main/LICENSE"><img alt="Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue"></a>
     </div>
@@ -1016,7 +1026,8 @@ subnet-0f1a2b3c  100.64.0.0/20  eu-west-1a     3812  <span class="t-ok">6</span>
       <div class="reveal"><b>End to end</b><span>The operator runs in a Kind cluster against a mock AWS, across two accounts, and is asked to discover, allocate and import for real.</span></div>
       <div class="reveal"><b>Security scanners</b><span>govulncheck, gosec, Trivy and Semgrep on every pull request and again weekly, because vulnerability databases move when the code does not. CodeQL with the extended security queries.</span></div>
       <div class="reveal"><b>Supply chain</b><span>Third-party actions are pinned to commit SHAs, not tags. OpenSSF Scorecard runs in the open and publishes its result.</span></div>
-      <div class="reveal"><b>Not yet proven</b><span>Everything above runs against a mock. A conformance run against a real AWS organization is the open item in the current milestone, and until it passes this page will keep saying so.</span></div>
+      <div class="reveal"><b>Upgrades</b><span>Every change is installed on top of the latest release in Kind and checked for anything lost on the way, the move of stored objects to the <code>v1</code> API included.</span></div>
+      <div class="reveal"><b>Not yet proven</b><span>Everything above runs against a mock (<a href="https://github.com/getmoto/moto">Moto</a>). 1.0 is stable in what it promises — the <code>v1</code> API and its compatibility rules — but it has not yet been run against a real AWS organization. If you can run the read-only core in one, we would like to hear how it went; until someone has, this page will keep saying so.</span></div>
     </div>
   </div>
 </section>
@@ -1049,14 +1060,14 @@ subnet-0f1a2b3c  100.64.0.0/20  eu-west-1a     3812  <span class="t-ok">6</span>
     </div>
     <div class="timeline">
       <div class="phase done reveal"><div class="bullet">1</div><div class="phase-body"><header><h4>Read-only inventory</h4><span class="status done">DONE</span></header>
-        <p>Multi-account, multi-region discovery; VPC and Subnet CRDs; compliance findings; CIDR overlaps; metrics.</p></div></div>
+        <p>Multi-account, multi-region discovery; Network (VPC) and Subnet CRDs; compliance findings; CIDR overlaps; metrics.</p></div></div>
       <div class="phase done reveal"><div class="bullet">2</div><div class="phase-body"><header><h4>Scale out</h4><span class="status done">DONE</span></header>
         <p>Near-real-time updates and the views people actually look at.</p>
         <div class="chips"><span class="chip ok">Kind + Moto e2e</span><span class="chip ok">EventBridge → SQS events</span><span class="chip ok">Google Sheet export</span><span class="chip ok">Grafana dashboard</span><span class="chip ok">Helm chart</span></div></div></div>
       <div class="phase done reveal"><div class="bullet">3</div><div class="phase-body"><header><h4>Automatic management (opt-in)</h4><span class="status done">DONE</span></header>
-        <p><code>SubnetClaim</code>, CIDR allocation from IPAM or tagged pools, route tables and load-balancer tags, allocate-only mode for Terraform; <code>ResourceImport</code> to take untagged networks under management with a single object.</p>
+        <p><code>SubnetClaim</code> with a built-in first-fit CIDR allocator, route-table association, allocate-only mode for Terraform; <code>ResourceImport</code> to take untagged networks under management with a single object, and a policy that does it by itself.</p>
         <div class="chips"><span class="chip ok">SubnetClaim + CIDR allocation</span><span class="chip ok">Allocate-only mode</span><span class="chip ok">Opt-in creation behind a write role</span><span class="chip ok">ResourceImport</span><span class="chip ok">Auto-import policy</span></div></div></div>
-      <div class="phase now reveal"><div class="bullet">4</div><div class="phase-body"><header><h4>Production hardening</h4><span class="status now">IN PROGRESS</span></header>
+      <div class="phase now reveal"><div class="bullet">4</div><div class="phase-body"><header><h4>Production hardening</h4><span class="status now">ONE ITEM OPEN</span></header>
         <p>Admission webhooks refuse an impossible claim at <code>kubectl apply</code> instead of a reconcile later;
           every import, allocation and policy decision leaves a Kubernetes Event and a line in a JSON audit stream;
           the chart runs two replicas with a disruption budget and reads credentials from one namespace, not the cluster.
@@ -1073,15 +1084,20 @@ subnet-0f1a2b3c  100.64.0.0/20  eu-west-1a     3812  <span class="t-ok">6</span>
           claim or an import. Still open: a conformance run
           against a real AWS organization.</p>
         <div class="chips"><span class="chip ok">Admission webhooks</span><span class="chip ok">Audit trail</span><span class="chip ok">HA defaults</span><span class="chip ok">Namespaced Secret access</span><span class="chip ok">Signed images · SBOM · provenance</span><span class="chip ok">Alerts that notice silence</span><span class="chip ok">Fast leader hand-over</span><span class="chip ok">Throttling backoff</span><span class="chip ok">Signed chart on ghcr.io</span><span class="chip ok">Live dashboard</span><span class="chip ok">Upgrade tests</span><span class="chip ok">Threat model</span><span class="chip ok">Namespace-scoped writes</span><span class="chip">Real-AWS conformance · needs an account</span></div></div></div>
-      <div class="phase reveal"><div class="bullet">5</div><div class="phase-body"><header><h4>A cloud-neutral API</h4><span class="status now">0.8 · 0.9</span></header>
-        <p>The API moves to <code>network.hypersurgery.dev</code>, with the cloud as a field of the scope rather
-          than part of every name, and the project becomes <code>subnet-operator</code>. 0.8 migrates
-          existing objects itself, status included, so an upgrade does not lose a reservation; 0.9 drops the
+      <div class="phase done reveal"><div class="bullet">5</div><div class="phase-body"><header><h4>A cloud-neutral API</h4><span class="status done">DONE · 0.8 · 0.9</span></header>
+        <p>The API moved to <code>network.hypersurgery.dev</code>, with the cloud as a field of the scope rather
+          than part of every name, and the project became <code>subnet-operator</code>. 0.8 migrated
+          existing objects itself, status included, so an upgrade did not lose a reservation; 0.9 dropped the
           old group, and will not run next to an object that was never migrated. Decided in
           <a href="https://github.com/aivandrago/subnet-operator/blob/main/docs/adr/0002-multi-cloud-model.md">ADR 0002</a>.</p></div></div>
-      <div class="phase reveal"><div class="bullet">6</div><div class="phase-body"><header><h4>1.0</h4><span class="status next">PLANNED</span></header>
-        <p>A <code>v1</code> API with a compatibility promise, in which a scope that names no namespaces can be
-          written through by none, and the support policy that is already written down applied in full.</p></div></div>
+      <div class="phase done reveal"><div class="bullet">6</div><div class="phase-body"><header><h4>1.0 · stable API</h4><span class="status done">DONE · 1.0</span></header>
+        <p>The <code>v1</code> API with a written
+          <a href="https://github.com/aivandrago/subnet-operator/blob/main/docs/api-compatibility.md">compatibility promise</a>,
+          in which a scope that names no namespaces can be written through by none. <code>v1beta1</code> stays served,
+          deprecated, through a conversion webhook, and the operator moves what 0.9 stored to <code>v1</code> on its own.
+          The <a href="https://github.com/aivandrago/subnet-operator/blob/main/docs/policy.md">support policy</a> applies in
+          full, and every release also ships a signed OLM bundle. Stable means that promise: the conformance run
+          against a real AWS organization is still open.</p></div></div>
       <div class="phase reveal"><div class="bullet">7</div><div class="phase-body"><header><h4>Google Cloud and Azure</h4><span class="status next">PLANNED · 1.x</span></header>
         <p>The same inventory, claims and imports for GCP projects and Azure subscriptions, added to the 1.0 API
           without breaking it. Where the cloud cannot tag a subnet, ownership is kept on its network.</p></div></div>
@@ -1116,7 +1132,7 @@ subnet-0f1a2b3c  100.64.0.0/20  eu-west-1a     3812  <span class="t-ok">6</span>
       <div class="fit">
         <div class="reveal"><b>Kubernetes-native</b><span>CRDs, controllers, status conditions and owner references. Built with kubebuilder and controller-runtime.</span></div>
         <div class="reveal"><b>Observable</b><span>Prometheus metrics that feed straight into alerting and Grafana.</span></div>
-        <div class="reveal"><b>Vendor-neutral</b><span>One inventory model across AWS, Google Cloud and Azure.</span></div>
+        <div class="reveal"><b>Vendor-neutral</b><span>One inventory model for AWS, Google Cloud and Azure, behind a provider interface every cloud plugs into. AWS is implemented today.</span></div>
         <div class="reveal"><b>Composable</b><span>Works next to Terraform, Karpenter, the AWS Load Balancer Controller and Crossplane instead of replacing them.</span></div>
         <div class="reveal"><b>Open</b><span>Apache-2.0 licensed, open development and a public roadmap.</span></div>
       </div>
@@ -1127,7 +1143,8 @@ subnet-0f1a2b3c  100.64.0.0/20  eu-west-1a     3812  <span class="t-ok">6</span>
       <p>We are preparing the project for the CNCF Sandbox. The most useful help right now:</p>
       <ul>
         <li>Platform teams who track networks in spreadsheets today and want to try the read-only core</li>
-        <li>Feedback on the tag schema and the <code>SubnetClaim</code> / <code>ResourceImport</code> APIs before they are frozen</li>
+        <li>A run of the read-only core against a real AWS organization, and a report of what it found</li>
+        <li>Feedback on the tag schema and the <code>v1</code> API: it only grows now, so additions are still possible</li>
         <li>Contributors for the Google Cloud and Azure providers</li>
       </ul>
     </div>
@@ -1140,7 +1157,7 @@ subnet-0f1a2b3c  100.64.0.0/20  eu-west-1a     3812  <span class="t-ok">6</span>
 
 <footer>
   <div class="wrap">
-    <span>Subnet Operator · alpha · 2026 · <a href="/docs/" style="color:var(--muted)">Install</a> · <a href="/dashboard/" style="color:var(--muted)">Dashboard app</a> · <a href="https://charts.hypersurgery.dev" style="color:var(--muted)">Charts</a> · <a href="https://github.com/aivandrago/subnet-operator" style="color:var(--muted)">GitHub</a> · <a href="/article/" style="color:var(--muted)">Article</a></span>
+    <span>Subnet Operator · stable · 2026 · <a href="/docs/" style="color:var(--muted)">Install</a> · <a href="/dashboard/" style="color:var(--muted)">Dashboard app</a> · <a href="https://charts.hypersurgery.dev" style="color:var(--muted)">Charts</a> · <a href="https://github.com/aivandrago/subnet-operator" style="color:var(--muted)">GitHub</a> · <a href="/article/" style="color:var(--muted)">Article</a></span>
     <span>Kubernetes operator for cloud network inventory and optional automatic subnet management</span>
   </div>
 </footer>

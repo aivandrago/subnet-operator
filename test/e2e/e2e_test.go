@@ -33,7 +33,7 @@ import (
 	. "github.com/onsi/gomega"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
+	networkv1 "hypersurgery.dev/subnet-operator/api/v1"
 	"hypersurgery.dev/subnet-operator/test/utils"
 )
 
@@ -49,19 +49,16 @@ const metricsServiceName = "subnet-operator-controller-manager-metrics-service"
 // deploymentName is the controller-manager Deployment
 const deploymentName = "subnet-operator-controller-manager"
 
-// The resources of the new group, named in full: while aws.hypersurgery is still installed (a
-// cluster upgraded from 0.8 keeps its CRDs until somebody deletes them), `kubectl get
-// networkscopes` means its NetworkScopes, because kubectl picks the group that sorts first.
+// The resources of the group, named in full: `kubectl get networks` or `subnets` alone may
+// mean another group's kind on a cluster that has one (OpenShift's config and operator groups,
+// Kube-OVN).
 const (
-	resScopes    = "networkscopes.network.hypersurgery.dev"
-	resNetworks  = "networks.network.hypersurgery.dev"
-	resSubnets   = "subnets.network.hypersurgery.dev"
-	resClaims    = "subnetclaims.network.hypersurgery.dev"
-	resImports   = "resourceimports.network.hypersurgery.dev"
-	resExports   = "sheetexports.network.hypersurgery.dev"
-	resOldScopes = "networkscopes.aws.hypersurgery"
-	resOldClaims = "subnetclaims.aws.hypersurgery"
-	resOldImport = "resourceimports.aws.hypersurgery"
+	resScopes   = "networkscopes.network.hypersurgery.dev"
+	resNetworks = "networks.network.hypersurgery.dev"
+	resSubnets  = "subnets.network.hypersurgery.dev"
+	resClaims   = "subnetclaims.network.hypersurgery.dev"
+	resImports  = "resourceimports.network.hypersurgery.dev"
+	resExports  = "sheetexports.network.hypersurgery.dev"
 )
 
 // scopeName is the NetworkScope created by the discovery specs
@@ -106,14 +103,15 @@ var _ = Describe("Manager", Ordered, func() {
 
 		By("pointing the controller-manager at Moto")
 		cmd = exec.Command("kubectl", "set", "env", "deployment/"+deploymentName, "-n", namespace,
-			"AWS_ENDPOINT_URL="+motoClusterEndpoint, "AWS_REGION="+awsRegion, "EVENTS_QUEUE_URL="+queueURL,
+			"AWS_ENDPOINT_URL="+motoClusterEndpoint, "AWS_REGION="+awsRegion,
 			"AWS_ACCESS_KEY_ID=test", "AWS_SECRET_ACCESS_KEY=test", "AWS_EC2_METADATA_DISABLED=true")
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to configure the controller-manager")
 
-		By("enabling writes, so SubnetClaims can create subnets")
+		By("enabling writes, so SubnetClaims can create subnets, and the events queue")
 		cmd = exec.Command("kubectl", "patch", "deployment/"+deploymentName, "-n", namespace, "--type=json", "-p",
-			`[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--enable-writes"}]`)
+			`[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--enable-writes"},`+
+				`{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--aws-events-queue-url=`+queueURL+`"}]`)
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to enable writes")
 		cmd = exec.Command("kubectl", "rollout", "status", "deployment/"+deploymentName, "-n", namespace, "--timeout=3m")
@@ -233,7 +231,7 @@ var _ = Describe("Manager", Ordered, func() {
 			By("creating the NetworkScope")
 			cmd := exec.Command("kubectl", "apply", "-f", "-")
 			cmd.Stdin = strings.NewReader(fmt.Sprintf(`
-apiVersion: network.hypersurgery.dev/v1beta1
+apiVersion: network.hypersurgery.dev/v1
 kind: NetworkScope
 metadata:
   name: %s
@@ -261,7 +259,7 @@ spec:
 
 			By("waiting for the first sync")
 			Eventually(func(g Gomega) {
-				scope := &networkv1beta1.NetworkScope{}
+				scope := &networkv1.NetworkScope{}
 				g.Expect(getObject(resScopes, scopeName, scope)).To(Succeed())
 				g.Expect(readyCondition(scope)).NotTo(BeNil())
 				g.Expect(readyCondition(scope).Status).To(Equal(metav1.ConditionTrue), readyCondition(scope).Message)
@@ -270,12 +268,12 @@ spec:
 			}, 3*time.Minute, 2*time.Second).Should(Succeed())
 
 			By("checking the public subnet")
-			sn := &networkv1beta1.Subnet{}
+			sn := &networkv1.Subnet{}
 			Expect(getObject(resSubnets, fix.publicSubnet, sn)).To(Succeed())
-			Expect(sn.Labels).To(HaveKeyWithValue(networkv1beta1.LabelAccount, hubAccount))
-			Expect(sn.Spec.Provider).To(Equal(networkv1beta1.ProviderAWS))
+			Expect(sn.Labels).To(HaveKeyWithValue(networkv1.LabelAccount, hubAccount))
+			Expect(sn.Spec.Provider).To(Equal(networkv1.ProviderAWS))
 			Expect(sn.Spec.NetworkID).To(Equal(fix.hubVPC))
-			Expect(sn.Labels).To(HaveKeyWithValue(networkv1beta1.LabelProvider, "aws"))
+			Expect(sn.Labels).To(HaveKeyWithValue(networkv1.LabelProvider, "aws"))
 			Expect(sn.Status.Name).To(Equal("prod-public-a"))
 			Expect(sn.Status.CIDRBlock).To(Equal("10.0.1.0/24"))
 			Expect(sn.Status.Zone).To(Equal(awsRegion + "a"))
@@ -289,20 +287,20 @@ spec:
 			Expect(sn.Status.MissingTags).To(BeEmpty())
 
 			By("checking the untagged private subnet")
-			sn = &networkv1beta1.Subnet{}
+			sn = &networkv1.Subnet{}
 			Expect(getObject(resSubnets, fix.privateSubnet, sn)).To(Succeed())
 			Expect(sn.Status.AWS.Public).To(BeFalse())
 			Expect(sn.Status.MissingTags).To(Equal([]string{"hs/owner", "hs/env", "hs/tier"}))
 
 			By("checking the spoke account subnet reached through AssumeRole")
-			sn = &networkv1beta1.Subnet{}
+			sn = &networkv1.Subnet{}
 			Expect(getObject(resSubnets, fix.spokeSubnet, sn)).To(Succeed())
 			Expect(sn.Spec.Account).To(Equal(spokeAccount))
 			Expect(sn.Status.TotalIPs).To(HaveValue(Equal(int64(11))))
 			Expect(sn.Status.Owner).To(Equal("team-partner"))
 
 			By("checking VPC aggregates and the cross-account CIDR overlap")
-			vpc := &networkv1beta1.Network{}
+			vpc := &networkv1.Network{}
 			Expect(getObject(resNetworks, fix.hubVPC, vpc)).To(Succeed())
 			Expect(vpc.Status.Name).To(Equal("prod"))
 			Expect(vpc.Status.Owner).To(Equal("platform"))
@@ -311,13 +309,13 @@ spec:
 			Expect(vpc.Status.OverlapsWith).To(Equal([]string{spokeAccount + "/" + awsRegion + "/" + fix.spokeVPC}))
 
 			By("checking that the VPC without hs/managed=true is ignored")
-			Expect(getObject(resNetworks, fix.unmanagedVPC, &networkv1beta1.Network{})).NotTo(Succeed())
+			Expect(getObject(resNetworks, fix.unmanagedVPC, &networkv1.Network{})).NotTo(Succeed())
 		})
 
 		It("counts the resources nobody tagged without mirroring them", func() {
 			By("waiting for the unmanaged sandbox VPC and its subnet to be counted")
 			Eventually(func(g Gomega) {
-				scope := &networkv1beta1.NetworkScope{}
+				scope := &networkv1.NetworkScope{}
 				g.Expect(getObject(resScopes, scopeName, scope)).To(Succeed())
 				hub := targetStatus(scope, hubAccount)
 				g.Expect(hub).NotTo(BeNil(), "the hub account has no target status yet")
@@ -330,8 +328,8 @@ spec:
 			}, 3*time.Minute, 2*time.Second).Should(Succeed())
 
 			By("checking that counting them did not put them in the inventory")
-			Expect(getObject(resNetworks, fix.unmanagedVPC, &networkv1beta1.Network{})).NotTo(Succeed())
-			Expect(getObject(resSubnets, fix.unmanagedSubnet, &networkv1beta1.Subnet{})).NotTo(Succeed())
+			Expect(getObject(resNetworks, fix.unmanagedVPC, &networkv1.Network{})).NotTo(Succeed())
+			Expect(getObject(resSubnets, fix.unmanagedSubnet, &networkv1.Subnet{})).NotTo(Succeed())
 		})
 
 		It("removes a subnet deleted in AWS on the next resync", func() {
@@ -351,7 +349,7 @@ spec:
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func(g Gomega) {
-				scope := &networkv1beta1.NetworkScope{}
+				scope := &networkv1.NetworkScope{}
 				g.Expect(getObject(resScopes, scopeName, scope)).To(Succeed())
 				cond := readyCondition(scope)
 				g.Expect(cond).NotTo(BeNil())
@@ -359,7 +357,7 @@ spec:
 				g.Expect(cond.Message).To(ContainSubstring("333333333333/" + awsRegion))
 				g.Expect(scope.Status.Subnets).To(Equal(int32(2)))
 			}, 2*time.Minute, 2*time.Second).Should(Succeed())
-			Expect(getObject(resSubnets, fix.publicSubnet, &networkv1beta1.Subnet{})).To(Succeed())
+			Expect(getObject(resSubnets, fix.publicSubnet, &networkv1.Subnet{})).To(Succeed())
 		})
 
 		It("syncs a changed account within seconds of an EC2 change event", func() {
@@ -369,7 +367,7 @@ spec:
 			_, err := utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred())
 			Eventually(func(g Gomega) {
-				scope := &networkv1beta1.NetworkScope{}
+				scope := &networkv1.NetworkScope{}
 				g.Expect(getObject(resScopes, scopeName, scope)).To(Succeed())
 				g.Expect(scope.Status.ObservedGeneration).To(Equal(scope.Generation))
 			}, time.Minute, time.Second).Should(Succeed())
@@ -380,7 +378,7 @@ spec:
 			sendChangeEvent(ctx, spokeAccount, "CreateSubnet")
 
 			Eventually(func(g Gomega) {
-				sn := &networkv1beta1.Subnet{}
+				sn := &networkv1.Subnet{}
 				g.Expect(getObject(resSubnets, subnet, sn)).To(Succeed())
 				g.Expect(sn.Spec.Account).To(Equal(spokeAccount))
 				g.Expect(sn.Status.TotalIPs).To(HaveValue(Equal(int64(251))))
@@ -396,7 +394,7 @@ spec:
 			By("claiming a /24 in two AZs of the hub VPC")
 			cmd := exec.Command("kubectl", "apply", "-f", "-")
 			cmd.Stdin = strings.NewReader(fmt.Sprintf(`
-apiVersion: network.hypersurgery.dev/v1beta1
+apiVersion: network.hypersurgery.dev/v1
 kind: SubnetClaim
 metadata:
   name: payments
@@ -417,14 +415,14 @@ spec:
 			_, err := utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create the SubnetClaim")
 
-			var claim networkv1beta1.SubnetClaim
+			var claim networkv1.SubnetClaim
 			Eventually(func(g Gomega) {
 				out, err := utils.Run(exec.Command("kubectl", "get", resClaims, "payments", "-n", "default", "-o", "json"))
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(json.Unmarshal([]byte(out), &claim)).To(Succeed())
 				g.Expect(claim.Status.Allocations).To(HaveLen(2))
 				for _, a := range claim.Status.Allocations {
-					g.Expect(a.State).To(Equal(networkv1beta1.AllocationCreated), a.Error)
+					g.Expect(a.State).To(Equal(networkv1.AllocationCreated), a.Error)
 					g.Expect(a.SubnetID).To(HavePrefix("subnet-"))
 				}
 				g.Expect(claimReady(&claim)).NotTo(BeNil())
@@ -451,7 +449,7 @@ spec:
 			By("checking that the inventory picked them up")
 			Eventually(func(g Gomega) {
 				for _, a := range claim.Status.Allocations {
-					sn := &networkv1beta1.Subnet{}
+					sn := &networkv1.Subnet{}
 					g.Expect(getObject(resSubnets, a.SubnetID, sn)).To(Succeed())
 					g.Expect(sn.Status.CIDRBlock).To(Equal(a.CIDRBlock))
 					g.Expect(sn.Status.Owner).To(Equal("team-payments"))
@@ -584,7 +582,7 @@ spec:
 		It("takes an unmanaged VPC and its subnet over with ResourceImports", func() {
 			By("importing the sandbox VPC and the untagged subnet inside it")
 			applyImports(fmt.Sprintf(`
-apiVersion: network.hypersurgery.dev/v1beta1
+apiVersion: network.hypersurgery.dev/v1
 kind: ResourceImport
 metadata:
   name: sandbox-vpc-import
@@ -599,7 +597,7 @@ spec:
     hs/managed: "true"
     hs/owner: team-sandbox
 ---
-apiVersion: network.hypersurgery.dev/v1beta1
+apiVersion: network.hypersurgery.dev/v1
 kind: ResourceImport
 metadata:
   name: sandbox-subnet-import
@@ -618,9 +616,9 @@ spec:
 
 			for _, name := range []string{"sandbox-vpc-import", "sandbox-subnet-import"} {
 				Eventually(func(g Gomega) {
-					imp := &networkv1beta1.ResourceImport{}
+					imp := &networkv1.ResourceImport{}
 					g.Expect(getNamespaced(resImports, "default", name, imp)).To(Succeed())
-					g.Expect(imp.Status.State).To(Equal(networkv1beta1.ImportApplied), imp.Status.Error)
+					g.Expect(imp.Status.State).To(Equal(networkv1.ImportApplied), imp.Status.Error)
 					g.Expect(importReady(imp)).NotTo(BeNil())
 					g.Expect(importReady(imp).Status).To(Equal(metav1.ConditionTrue), importReady(imp).Message)
 					g.Expect(imp.Status.AppliedTags).To(Equal(imp.Spec.Tags))
@@ -641,11 +639,11 @@ spec:
 
 			By("waiting for the inventory to pick both up")
 			Eventually(func(g Gomega) {
-				vpc := &networkv1beta1.Network{}
+				vpc := &networkv1.Network{}
 				g.Expect(getObject(resNetworks, fix.unmanagedVPC, vpc)).To(Succeed())
 				g.Expect(vpc.Status.Owner).To(Equal("team-sandbox"))
 
-				sn := &networkv1beta1.Subnet{}
+				sn := &networkv1.Subnet{}
 				g.Expect(getObject(resSubnets, fix.unmanagedSubnet, sn)).To(Succeed())
 				g.Expect(sn.Spec.NetworkID).To(Equal(fix.unmanagedVPC))
 				g.Expect(sn.Status.Owner).To(Equal("team-sandbox"))
@@ -659,7 +657,7 @@ spec:
 				fix.unmanagedVPC, "10.50.2.0/24", awsRegion+"b")
 
 			applyImports(fmt.Sprintf(`
-apiVersion: network.hypersurgery.dev/v1beta1
+apiVersion: network.hypersurgery.dev/v1
 kind: ResourceImport
 metadata:
   name: dry-run-import
@@ -676,9 +674,9 @@ spec:
 `, scopeName, hubAccount, awsRegion, subnet))
 
 			Eventually(func(g Gomega) {
-				imp := &networkv1beta1.ResourceImport{}
+				imp := &networkv1.ResourceImport{}
 				g.Expect(getNamespaced(resImports, "default", "dry-run-import", imp)).To(Succeed())
-				g.Expect(imp.Status.State).To(Equal(networkv1beta1.ImportSkipped))
+				g.Expect(imp.Status.State).To(Equal(networkv1.ImportSkipped))
 				g.Expect(importReady(imp)).NotTo(BeNil())
 				g.Expect(importReady(imp).Reason).To(Equal("DryRun"))
 				g.Expect(importReady(imp).Message).To(ContainSubstring("hs/owner=team-sandbox"))
@@ -704,7 +702,7 @@ spec:
 			var stdout, stderr strings.Builder
 			cmd.Stdout, cmd.Stderr = &stdout, &stderr
 			Expect(cmd.Run()).To(Succeed(), stderr.String())
-			Expect(stdout.String()).To(ContainSubstring("apiVersion: network.hypersurgery.dev/v1beta1"))
+			Expect(stdout.String()).To(ContainSubstring("apiVersion: network.hypersurgery.dev/v1\n"))
 			Expect(stdout.String()).To(ContainSubstring("provider: AWS"))
 			Expect(stderr.String()).To(ContainSubstring("namespaceSelector"), "the note about the selector")
 
@@ -763,7 +761,7 @@ spec:
 
 			By("calling the dashboard as each of them, and as nobody at all")
 			base := fmt.Sprintf("http://%s.%s.svc.cluster.local", dashboard, namespace)
-			subnets := base + "/apis/network.hypersurgery.dev/v1beta1/subnets"
+			subnets := base + "/apis/network.hypersurgery.dev/v1/subnets"
 			script := strings.Join([]string{
 				// The Service may take a moment to route to the new pod.
 				"for i in $(seq 1 30); do curl -sf --max-time 5 -o /dev/null " + base + "/dashboard/ && break; sleep 2; done",
@@ -917,6 +915,29 @@ spec:
 			controllerPodName = newLeader
 		})
 
+		It("serves v1beta1 through the API server's own conversion, the webhooks being off", func() {
+			By("checking that every CRD stores v1 only and converts without a webhook")
+			for _, res := range []string{resScopes, resNetworks, resSubnets, resClaims, resImports, resExports} {
+				out, err := kubectlOut("get", "crd", res, "-o",
+					"go-template={{ with .spec.conversion }}{{ .strategy }}{{ else }}None{{ end }} {{ .status.storedVersions }}")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(out).To(Equal("None [v1]"), res)
+			}
+
+			By("reading the scope at v1beta1, the same as at v1")
+			Eventually(func(g Gomega) {
+				v1 := map[string]any{}
+				g.Expect(getObject(resScopes, scopeName, &v1)).To(Succeed())
+				beta := map[string]any{}
+				g.Expect(getObject("networkscopes.v1beta1.network.hypersurgery.dev", scopeName, &beta)).To(Succeed())
+				g.Expect(beta["apiVersion"]).To(Equal("network.hypersurgery.dev/v1beta1"))
+				meta := func(o map[string]any) map[string]any { m, _ := o["metadata"].(map[string]any); return m }
+				g.Expect(meta(beta)["resourceVersion"]).To(Equal(meta(v1)["resourceVersion"]), "written in between")
+				g.Expect(beta["spec"]).To(Equal(v1["spec"]))
+				g.Expect(beta["status"]).To(Equal(v1["status"]))
+			}).Should(Succeed())
+		})
+
 		// +kubebuilder:scaffold:e2e-webhooks-checks
 
 		// TODO: Customize the e2e test suite with scenarios specific to your project.
@@ -1034,7 +1055,7 @@ func applyImports(manifest string) {
 }
 
 // targetStatus returns the status of one account's target in the scope's region, or nil.
-func targetStatus(scope *networkv1beta1.NetworkScope, account string) *networkv1beta1.TargetStatus {
+func targetStatus(scope *networkv1.NetworkScope, account string) *networkv1.TargetStatus {
 	for i := range scope.Status.Targets {
 		if scope.Status.Targets[i].Account == account && scope.Status.Targets[i].Region == awsRegion {
 			return &scope.Status.Targets[i]
@@ -1044,7 +1065,7 @@ func targetStatus(scope *networkv1beta1.NetworkScope, account string) *networkv1
 }
 
 // sumUnmanaged adds up the per-target counts, which is what the scope total should be.
-func sumUnmanaged(scope *networkv1beta1.NetworkScope) int32 {
+func sumUnmanaged(scope *networkv1.NetworkScope) int32 {
 	var total int32
 	for _, t := range scope.Status.Targets {
 		total += t.UnmanagedNetworks + t.UnmanagedSubnets
@@ -1052,7 +1073,7 @@ func sumUnmanaged(scope *networkv1beta1.NetworkScope) int32 {
 	return total
 }
 
-func importReady(imp *networkv1beta1.ResourceImport) *metav1.Condition {
+func importReady(imp *networkv1.ResourceImport) *metav1.Condition {
 	for i := range imp.Status.Conditions {
 		if imp.Status.Conditions[i].Type == "Ready" {
 			return &imp.Status.Conditions[i]
@@ -1061,7 +1082,7 @@ func importReady(imp *networkv1beta1.ResourceImport) *metav1.Condition {
 	return nil
 }
 
-func claimReady(claim *networkv1beta1.SubnetClaim) *metav1.Condition {
+func claimReady(claim *networkv1.SubnetClaim) *metav1.Condition {
 	for i := range claim.Status.Conditions {
 		if claim.Status.Conditions[i].Type == "Ready" {
 			return &claim.Status.Conditions[i]
@@ -1070,7 +1091,7 @@ func claimReady(claim *networkv1beta1.SubnetClaim) *metav1.Condition {
 	return nil
 }
 
-func readyCondition(scope *networkv1beta1.NetworkScope) *metav1.Condition {
+func readyCondition(scope *networkv1.NetworkScope) *metav1.Condition {
 	for i := range scope.Status.Conditions {
 		if scope.Status.Conditions[i].Type == "Ready" {
 			return &scope.Status.Conditions[i]

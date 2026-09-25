@@ -16,7 +16,7 @@ limitations under the License.
 
 // Package v1alpha1 holds the Go types of aws.hypersurgery/v1alpha1, the API group the operator
 // used up to 0.8, for one purpose only: `manager migrate-manifests` reads manifests written for
-// it and converts them to network.hypersurgery.dev/v1beta1. The group is not served any more
+// it and converts them to network.hypersurgery.dev/v1. The group is not served any more
 // (it was removed in 0.9), so nothing here is registered in a scheme or generates a CRD, and
 // the validation markers the old CRDs were generated from are gone with them.
 package v1alpha1

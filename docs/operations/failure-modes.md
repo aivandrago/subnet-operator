@@ -18,14 +18,14 @@ skipped in the sync loop, the error is logged once, and the sync continues with 
   `networks`, `subnets` and `lastSyncTime` keep their **last good** values — "so a flapping
   account does not look empty" (`updateStatus`).
 - The `Ready` condition goes `False` with reason `SyncFailed` and a message naming the failed
-  targets.
+  targets, and a `TargetUnreachable` Warning Event on the scope carries the error.
 - `hs_target_up == 0` and `hs_target_sync_errors_total` increments (once per failed
   *attempted* sync, not once per reconcile).
 - Alert: [`SubnetInventoryTargetDown`](runbook.md#subnetinventorytargetdown).
 
 **What it does not do.**
 
-- It does not delete the target's `VPC` and `Subnet` objects. `deleteGone` only runs for a
+- It does not delete the target's `Network` and `Subnet` objects. `deleteGone` only runs for a
   target whose snapshot succeeded, so the last known inventory of an unreachable account stays
   in the cluster, visibly stale rather than silently missing.
 - It does not zero the numbers, and it does not mark the whole scope failed — the other
@@ -74,7 +74,7 @@ backed off again.
 
 **What the operator does.** Removing a region or an account from `spec` bumps the generation,
 which forces a full sync (`needsFullSync`). At the end of that sync `deleteRemovedTargets`
-deletes the `VPC` and `Subnet` objects whose `account/region` labels are no longer in the
+deletes the `Network` and `Subnet` objects whose `account/region` labels are no longer in the
 spec. Deleting the whole `NetworkScope` is the same story through owner references: the
 objects are garbage-collected by Kubernetes and `metrics.Forget(scope)` drops every series.
 
@@ -97,6 +97,7 @@ partial sync deletes nothing outside the targets it synced.
 | Reason | Meaning | What to do |
 |---|---|---|
 | `ScopeNotFound` | `spec.scopeRef` names no `NetworkScope` | fix the reference |
+| `NamespaceNotAllowed` | the scope's `spec.namespaceSelector` does not select the claim's namespace (unset selects none, `{}` all) | move the claim, or have the scope's owner select the namespace |
 | `AccountNotInScope` | the account/region pair is not covered by that scope | add it to the scope |
 | `ProviderNotEnabled` | the scope's `spec.provider` is not one the operator was started with (`--providers`, chart `providers.<name>.enabled`); the scope itself says the same | enable the provider |
 | `NetworkNotFound` | the network (VPC) has not been discovered (wrong ID, wrong account, or the network selector excludes it) | check `kubectl get hsnet`, the selector, and that the target is healthy |
@@ -104,6 +105,7 @@ partial sync deletes nothing outside the targets it synced.
 | `WritesDisabled` | `mode: Create` but the manager runs without `--enable-writes` | the CIDRs *are* reserved — create the subnets yourself, or enable writes |
 | `NoWriteRole` | the account has no `writeRoleARN` | add one (`deploy/iam/spoke-write-role.cfn.yaml`) |
 | `CreateNotSupported` | `mode: Create` on a provider that cannot create subnets (none today; `status.capabilities` of the scope lacks `CreateSubnet`) | use `mode: Allocate` |
+| `ZonesRequired`, `InvalidPrefixLength` | the claim asks for something an AWS subnet cannot be: no zones, or a prefix outside /16–/28. The webhook refuses these at apply time; the status only says so for a claim created while it was off | fix the spec |
 | `CreateFailed` | AWS rejected at least one `CreateSubnet` | read `status.allocations[].error` |
 
 **What the operator does with an unsatisfiable claim.** Allocation is all-or-nothing per pass:
@@ -121,7 +123,8 @@ cache, so two claims racing in the same VPC do not hand out the same block.
   succeed without touching the object.
 - Deleting the claim does not delete its subnets, and removing an AZ from the claim does not
   delete that AZ's subnet — the object is dropped from `status.allocations` and the subnet
-  stays in AWS (`Reconcile`: "Subnets stay: deleting them is a human decision, made in AWS").
+  stays in AWS (`Reconcile`: "Subnets stay: deleting them is a human decision, made in the
+  cloud").
 
 **A partial `Create` is possible and is reported.** If `CreateSubnet` succeeds but the
 follow-up `ModifySubnetAttribute` or `AssociateRouteTable` fails, the subnet ID is recorded
@@ -131,9 +134,9 @@ with the error, state `Failed` — precisely so the next pass does not create a 
 
 **Nothing is lost, and nothing is reverted.** The operator holds no state that AWS depends on.
 
-- **During the outage** the inventory freezes. `hs_*` series stop being scraped, which is
-  why you want the `absent()` alert from the [runbook](runbook.md#subnetinventorystale) — the
-  shipped `SubnetInventoryStale` rule cannot fire when the metric itself is gone.
+- **During the outage** the inventory freezes. `hs_*` series stop being scraped, so the
+  shipped `SubnetInventoryStale` rule cannot fire; [`SubnetOperatorDown`](runbook.md#subnetoperatordown),
+  which fires on the absence of the scrape itself, is the alert for this.
 - **Events queue up.** EventBridge keeps delivering to SQS; messages are only deleted after
   the poller has read them, so an outage shorter than the queue's retention loses nothing.
   (A crash *between* deleting a message and finishing the sync does lose that event — the
@@ -186,7 +189,7 @@ move with every pod, so they are refreshed by the periodic resync instead.
 
 ## Two scopes covering the same account and region
 
-The first scope to create a `VPC` or `Subnet` object owns it. The second sees the
+The first scope to create a `Network` or `Subnet` object owns it. The second sees the
 `network.hypersurgery.dev/scope` label of another scope, skips the object and logs
 `object belongs to another NetworkScope, skipping` (`upsert`). Its own counts will be lower
 than reality and nothing says so in the status. Do not overlap scopes; split the organization
@@ -197,3 +200,20 @@ by account or region instead.
 `SheetExport` is an output. The sheet is rewritten on every refresh and never read back, so a
 broken export cannot corrupt the inventory; it only stops updating and reports the failure in
 its own status. Nothing else in the operator waits on it.
+
+## The conversion webhook is unreachable
+
+From 1.0 the API server converts between `network.hypersurgery.dev/v1beta1` and `v1` through
+the operator's webhook, once the operator has rewritten every stored object at v1 (before that
+the CRDs use the API server's own conversion, which is exact for the two versions). Everything
+is stored at v1, so a request at v1 never needs the webhook: the controllers, the dashboard,
+`kubectl get` without a version, garbage collection and namespace deletion carry on while the
+operator is down. A request at v1beta1 fails with `conversion webhook for ... failed` until an
+operator pod is ready again. A client that must keep working without the operator should use v1;
+after the operator is uninstalled, set the CRDs back to `None`
+([upgrades](upgrades.md#rolling-back-to-09)) or remove the clients that still ask for v1beta1.
+
+If the webhook's certificate Secret has no `ca.crt` (a cert-manager issuer that does not fill
+it), the operator keeps the CRDs at `None` and logs `Could not configure the CRDs' conversion`
+every minute; conversion then works without the webhook.
+

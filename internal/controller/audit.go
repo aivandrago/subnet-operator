@@ -21,7 +21,7 @@ import (
 	kevents "k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
+	networkv1 "hypersurgery.dev/subnet-operator/api/v1"
 	"hypersurgery.dev/subnet-operator/internal/audit"
 )
 
@@ -95,7 +95,7 @@ func createdBy(obj client.Object, webhooksEnabled bool) string {
 	if !webhooksEnabled {
 		return audit.CreatedByUnknown
 	}
-	if v := obj.GetAnnotations()[networkv1beta1.AnnotationCreatedBy]; v != "" {
+	if v := obj.GetAnnotations()[networkv1.AnnotationCreatedBy]; v != "" {
 		return v
 	}
 	return audit.CreatedByUnknown

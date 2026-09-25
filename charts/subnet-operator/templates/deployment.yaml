@@ -1,3 +1,4 @@
+{{- include "subnet-operator.removedValues" . }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -67,6 +68,13 @@ spec:
             - --webhook-cert-path=/tmp/k8s-webhook-server/serving-certs
             {{- else }}
             - --enable-webhooks=false
+            {{- end }}
+            {{- /* dig: a release upgraded with --reuse-values has no webhook.conversion yet. */}}
+            {{- if and .Values.webhook.enabled (dig "conversion" "enabled" true .Values.webhook) }}
+            - --crd-conversion=webhook
+            - --conversion-webhook-service={{ .Release.Namespace }}/{{ include "subnet-operator.fullname" . }}-webhook
+            {{- else }}
+            - --crd-conversion=none
             {{- end }}
             {{- with .Values.extraArgs }}
             {{- toYaml . | nindent 12 }}

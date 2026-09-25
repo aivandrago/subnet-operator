@@ -134,8 +134,8 @@ The API groups and versions the webhooks serve.
 */}}
 {{- define "subnet-operator.webhook.apis" -}}
 - group: network.hypersurgery.dev
-  version: v1beta1
-  path: network-hypersurgery-dev-v1beta1
+  version: v1
+  path: network-hypersurgery-dev-v1
 {{- end -}}
 
 {{/*
@@ -153,31 +153,61 @@ enabled: the operator refuses to start without.
 {{- join "," $enabled -}}
 {{- end -}}
 
-{{/* AWS settings, with the deprecated 0.8 names (events.*, aws.*) as fallbacks until 0.10. */}}
+{{/* AWS settings, all under providers.aws. */}}
 {{- define "subnet-operator.aws.eventsQueueUrl" -}}
-{{- coalesce .Values.providers.aws.events.queueUrl (dig "queueUrl" "" (default dict .Values.events)) | default "" -}}
+{{- .Values.providers.aws.events.queueUrl | default "" -}}
 {{- end -}}
 {{- define "subnet-operator.aws.eventsDebounce" -}}
-{{- coalesce .Values.providers.aws.events.debounce (dig "debounce" "" (default dict .Values.events)) "10s" -}}
+{{- .Values.providers.aws.events.debounce | default "10s" -}}
 {{- end -}}
 {{- define "subnet-operator.aws.region" -}}
-{{- coalesce .Values.providers.aws.region (dig "region" "" (default dict .Values.aws)) | default "" -}}
+{{- .Values.providers.aws.region | default "" -}}
 {{- end -}}
 {{- define "subnet-operator.aws.podIdentity" -}}
-{{- $new := default dict .Values.providers.aws.podIdentity -}}
-{{- $old := dig "egress" "podIdentity" dict (default dict .Values.networkPolicy) | default dict -}}
-{{- $enabled := true -}}
-{{- if hasKey $new "enabled" -}}
-{{- $enabled = $new.enabled -}}
-{{- else if hasKey $old "enabled" -}}
-{{- $enabled = $old.enabled -}}
-{{- end -}}
-enabled: {{ $enabled }}
-cidr: {{ coalesce $new.cidr $old.cidr "169.254.170.23/32" }}
-port: {{ coalesce $new.port $old.port 80 }}
+{{- $p := default dict .Values.providers.aws.podIdentity -}}
+enabled: {{ hasKey $p "enabled" | ternary $p.enabled true }}
+cidr: {{ $p.cidr | default "169.254.170.23/32" }}
+port: {{ $p.port | default 80 }}
 {{- end -}}
 {{- define "subnet-operator.aws.endpointURL" -}}
-{{- coalesce .Values.providers.aws.endpointURL (dig "endpointURL" "" (default dict .Values.aws)) | default "" -}}
+{{- .Values.providers.aws.endpointURL | default "" -}}
+{{- end -}}
+
+{{/*
+Values and manager flags deprecated in 0.9 and removed in 1.0. Rendered as they are, they would
+be ignored without a word: the operator would run without its event queue, in another region
+or against AWS instead of an emulator, or the NetworkPolicy would cut it off from the Pod
+Identity agent. Refused instead, naming the replacement. Empty strings are what 0.9's own
+values.yaml had, which `helm upgrade --reuse-values` carries over, so only a value that is set
+counts.
+*/}}
+{{- define "subnet-operator.removedValues" -}}
+{{- $moved := dict
+    "events.queueUrl" (dig "queueUrl" "" (default dict .Values.events))
+    "events.debounce" (dig "debounce" "" (default dict .Values.events))
+    "aws.region" (dig "region" "" (default dict .Values.aws))
+    "aws.endpointURL" (dig "endpointURL" "" (default dict .Values.aws)) -}}
+{{- range $old := keys $moved | sortAlpha -}}
+{{- if get $moved $old -}}
+{{- fail (printf "%s was removed in 1.0; use providers.aws.%s" $old (trimPrefix "aws." $old)) -}}
+{{- end -}}
+{{- end -}}
+{{- if dig "egress" "podIdentity" nil (default dict .Values.networkPolicy) -}}
+{{- fail "networkPolicy.egress.podIdentity was removed in 1.0; use providers.aws.podIdentity (the same keys: enabled, cidr, port)" -}}
+{{- end -}}
+{{- range .Values.extraArgs -}}
+{{- $arg := toString . -}}
+{{- range $old := list "--events-queue-url" "--events-debounce" -}}
+{{- if or (eq $arg $old) (hasPrefix (printf "%s=" $old) $arg) -}}
+{{- fail (printf "extraArgs: %s was removed in 1.0; use providers.aws.events.%s (or --aws-%s)" $old (eq $old "--events-queue-url" | ternary "queueUrl" "debounce") (trimPrefix "--" $old)) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- range .Values.extraEnv -}}
+{{- if eq (toString .name) "EVENTS_QUEUE_URL" -}}
+{{- fail "extraEnv: EVENTS_QUEUE_URL was removed in 1.0; use providers.aws.events.queueUrl" -}}
+{{- end -}}
+{{- end -}}
 {{- end -}}
 
 {{/*

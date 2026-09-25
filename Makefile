@@ -51,6 +51,17 @@ manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and Cust
 generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
 	"$(CONTROLLER_GEN)" object:headerFile="hack/boilerplate.go.txt",year=$(YEAR) paths="./..."
 
+# The API reference is generated from the Go types of the stable API, so a field cannot be added
+# to v1 without appearing in it: CI regenerates it and fails on a diff.
+.PHONY: api-docs
+api-docs: crd-ref-docs ## Generate the v1 API reference, docs/reference/api.md.
+	@mkdir -p docs/reference
+	@tmp=$$(mktemp -d); \
+	"$(CRD_REF_DOCS)" --source-path=./api/v1 --config=hack/api-docs/config.yaml --renderer=markdown \
+		--output-path="$$tmp/api.md" --log-level=warn && \
+	{ head -n 1 "$$tmp/api.md"; echo; cat hack/api-docs/header.md; tail -n +2 "$$tmp/api.md"; } > docs/reference/api.md; \
+	rc=$$?; rm -rf "$$tmp"; exit $$rc
+
 .PHONY: fmt
 fmt: ## Run go fmt against code.
 	go fmt ./...
@@ -60,7 +71,7 @@ vet: ## Run go vet against code.
 	go vet ./...
 
 .PHONY: test
-test: manifests generate fmt vet setup-envtest ## Run tests.
+test: manifests generate fmt vet setup-envtest kustomize ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell "$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
 
 # The scale test syncs one NetworkScope of 400 account/region targets (the capacity the README
@@ -112,8 +123,9 @@ test-e2e: setup-test-e2e manifests generate fmt vet helm ## Run the e2e tests in
 # The upgrade test installs the latest published chart, creates every kind of object, upgrades
 # to this checkout (CRDs first, then helm upgrade) and checks nothing was lost or re-reported.
 # UPGRADE_FROM picks the previous chart version instead of the latest; UPGRADE_CHART another
-# chart reference, e.g. hypersurgery/subnet-operator from ChartMuseum. The test expects 0.8, the
-# last release that migrated aws.hypersurgery/v1alpha1: upgrading from 0.7 goes through it.
+# chart reference, e.g. hypersurgery/subnet-operator from ChartMuseum. The test expects 0.9, the
+# last release that stored network.hypersurgery.dev/v1beta1: it checks that the objects 0.9 wrote
+# are rewritten at v1 and stay readable at both versions.
 UPGRADE_FROM ?=
 UPGRADE_CHART ?=
 
@@ -267,6 +279,130 @@ deploy: manifests kustomize kubectl ## Deploy controller to the K8s cluster spec
 undeploy: kustomize kubectl ## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
 	"$(KUSTOMIZE)" build config/default | "$(KUBECTL)" delete --ignore-not-found=$(ignore-not-found) -f -
 
+##@ OLM bundle
+
+# The OLM bundle for OperatorHub (docs/olm.md). The bundle is generated, not committed: its
+# source is config/manifests (the ClusterServiceVersion base, whose CRD descriptors come from the
+# +operator-sdk markers in api/) plus config/default and config/webhook. The release workflow
+# generates it with the operator image's digest and publishes it as a signed bundle image.
+
+# VERSION is the operator version the bundle describes, without a leading v. It defaults to the
+# chart's appVersion, which is the version of the latest release.
+VERSION ?= $(shell sed -n 's/^appVersion: *"\{0,1\}\([^"]*\)"\{0,1\}$$/\1/p' $(CHART_DIR)/Chart.yaml)
+BUNDLE_PACKAGE ?= subnet-operator
+IMAGE_TAG_BASE ?= ghcr.io/aivandrago/subnet-operator
+# The operator image the bundle deploys. A release passes it by digest (image@sha256:...), and
+# the digest then pins both the Deployment and relatedImages.
+BUNDLE_OPERATOR_IMG ?= $(IMAGE_TAG_BASE):$(VERSION)
+BUNDLE_IMG ?= $(IMAGE_TAG_BASE)-bundle:v$(VERSION)
+# With a digest, operator-sdk also lists the image in relatedImages, which is what mirroring
+# tools for disconnected clusters read. It needs no registry access for an image given by digest.
+BUNDLE_DIGEST_FLAG = $(if $(findstring @sha256:,$(BUNDLE_OPERATOR_IMG)),--use-image-digests)
+# alpha until 1.0; the release workflow publishes 1.0 and later to stable (docs/olm.md).
+CHANNELS ?= alpha
+DEFAULT_CHANNEL ?= $(firstword $(subst $(comma), ,$(CHANNELS)))
+comma := ,
+# The upgrade graph: every bundle replaces the previous published one (BUNDLE_REPLACES, a
+# version; empty for the first bundle) and skips everything older than itself, so OLM upgrades
+# any earlier version straight to this one.
+BUNDLE_REPLACES ?=
+BUNDLE_SKIP_RANGE ?= <$(VERSION)
+# The commit time, so the same commit always generates the same bundle.
+BUNDLE_CREATED_AT ?= $(shell TZ=UTC git log -1 --format=%cd --date=format-local:%Y-%m-%dT%H:%M:%SZ 2>/dev/null)
+
+.PHONY: bundle
+bundle: manifests kustomize operator-sdk ## Generate the OLM bundle in bundle/ (VERSION, BUNDLE_OPERATOR_IMG, CHANNELS, BUNDLE_REPLACES).
+	@[ -n "$(VERSION)" ] || { echo "Set VERSION"; exit 1; }
+	"$(OPERATOR_SDK)" generate kustomize manifests -q --package $(BUNDLE_PACKAGE) --apis-dir api
+	@# Everything that depends on the release is set in a copy of config/, so generating a
+	@# bundle never changes a committed file.
+	@set -e; \
+	tmp=$$(mktemp -d); trap 'rm -rf "$$tmp"' EXIT; \
+	cp -R config "$$tmp/"; \
+	( cd "$$tmp/config/manager" && "$(KUSTOMIZE)" edit set image controller=$(BUNDLE_OPERATOR_IMG) ); \
+	case "$(DEFAULT_CHANNEL)" in stable) maturity=stable ;; *) maturity=alpha ;; esac; \
+	patch='[{"op":"add","path":"/metadata/annotations/containerImage","value":"$(BUNDLE_OPERATOR_IMG)"},'; \
+	patch="$$patch"'{"op":"add","path":"/metadata/annotations/olm.skipRange","value":"$(BUNDLE_SKIP_RANGE)"},'; \
+	patch="$$patch"'{"op":"replace","path":"/spec/maturity","value":"'"$$maturity"'"}'; \
+	if [ -n "$(BUNDLE_REPLACES)" ]; then \
+		patch="$$patch"',{"op":"add","path":"/spec/replaces","value":"$(BUNDLE_PACKAGE).v$(BUNDLE_REPLACES)"}'; \
+	fi; \
+	( cd "$$tmp/config/manifests" && "$(KUSTOMIZE)" edit add patch --kind ClusterServiceVersion --patch "$$patch]" ); \
+	rm -rf bundle; \
+	"$(KUSTOMIZE)" build "$$tmp/config/manifests" | "$(OPERATOR_SDK)" generate bundle -q --overwrite \
+		$(BUNDLE_DIGEST_FLAG) --version $(VERSION) --package $(BUNDLE_PACKAGE) \
+		--channels $(CHANNELS) --default-channel $(DEFAULT_CHANNEL) \
+		> "$$tmp/generate.log" 2>&1 || { cat "$$tmp/generate.log"; exit 1; }; \
+	grep -v '^[0-9/]* [0-9:]* ' "$$tmp/generate.log" || true
+	@# operator-sdk stamps the time it ran; the commit time keeps a release's bundle reproducible.
+	sed -i.bak 's/^    createdAt: .*/    createdAt: "$(BUNDLE_CREATED_AT)"/' bundle/manifests/$(BUNDLE_PACKAGE).clusterserviceversion.yaml
+	rm -f bundle/manifests/$(BUNDLE_PACKAGE).clusterserviceversion.yaml.bak
+	@# The webhook Service only told operator-sdk which Deployment serves the webhooks. OLM
+	@# creates a Service of its own for them, so this one would only be a second, unused one.
+	rm -f bundle/manifests/webhook-service_v1_service.yaml
+
+# The operatorframework suite is what OperatorHub's own pipeline runs: the OperatorHub metadata
+# (operatorhubv2, capabilities, categories), good practices and deprecated APIs.
+.PHONY: bundle-validate
+bundle-validate: bundle ## Generate the bundle and validate it with the OperatorHub and good-practices suites.
+	"$(OPERATOR_SDK)" bundle validate ./bundle --select-optional suite=operatorframework
+
+.PHONY: bundle-build
+bundle-build: ## Build the bundle image (run make bundle first).
+	$(CONTAINER_TOOL) build -f bundle.Dockerfile -t $(BUNDLE_IMG) .
+
+.PHONY: bundle-push
+bundle-push: ## Push the bundle image.
+	$(CONTAINER_TOOL) push $(BUNDLE_IMG)
+
+# A file-based catalog holding the bundles in BUNDLE_IMGS (pushed bundle images), for installing
+# through a CatalogSource the way OperatorHub's catalog does.
+CATALOG_IMG ?= $(IMAGE_TAG_BASE)-catalog:v$(VERSION)
+BUNDLE_IMGS ?= $(BUNDLE_IMG)
+
+.PHONY: catalog
+catalog: opm ## Render a file-based catalog of BUNDLE_IMGS into catalog/ (the bundle images must be pushed).
+	rm -rf catalog && mkdir -p catalog/$(BUNDLE_PACKAGE)
+	"$(OPM)" init $(BUNDLE_PACKAGE) --default-channel=$(DEFAULT_CHANNEL) --icon=site/dashboard/icon.svg \
+		--output yaml > catalog/$(BUNDLE_PACKAGE)/index.yaml
+	"$(OPM)" render $(BUNDLE_IMGS) --output yaml >> catalog/$(BUNDLE_PACKAGE)/index.yaml
+	@set -e; for img in $(BUNDLE_IMGS); do \
+		name=$$("$(OPM)" render $$img --output json | sed -n 's/^    "name": "\($(BUNDLE_PACKAGE)\.v[^"]*\)".*/\1/p' | head -1); \
+		echo "---"; echo "schema: olm.channel"; echo "package: $(BUNDLE_PACKAGE)"; \
+		echo "name: $(DEFAULT_CHANNEL)"; echo "entries:"; echo "- name: $$name"; \
+	done >> catalog/$(BUNDLE_PACKAGE)/index.yaml
+	"$(OPM)" validate catalog
+
+.PHONY: catalog-build
+catalog-build: opm ## Build the catalog image from catalog/.
+	"$(OPM)" generate dockerfile catalog
+	$(CONTAINER_TOOL) build -f catalog.Dockerfile -t $(CATALOG_IMG) .
+
+.PHONY: catalog-push
+catalog-push: ## Push the catalog image.
+	$(CONTAINER_TOOL) push $(CATALOG_IMG)
+
+# test-olm installs OLM and then the bundle into a Kind cluster, through a registry container on
+# the Kind network, checks that the webhooks work with the certificates OLM issues, and runs
+# scorecard (hack/olm/test.sh). OLM's release manifests carry no checksums, so theirs are pinned
+# here; the images they name are pinned by digest upstream.
+OLM_VERSION ?= v0.46.0
+OLM_CRDS_SHA256 ?= 2ecd51a33dfa00a5abcae7bf47bcc4eea6c6d6b4212bb36d6b887aa6ef6d63c5
+OLM_SHA256 ?= 3a6cd5caea67bedc11464ad443fa0826d3777d7f1b4f2dfa00766a739f2ab44c
+OLM_REGISTRY_IMAGE ?= registry:3.1.2@sha256:c87f33837722a100572e95d7dc4bf539fc42cf68202b13c3bc03c0ff54c3a649
+# The image of the registry pod operator-sdk run bundle starts; the same version as OPM_VERSION.
+OLM_OPM_IMAGE ?= quay.io/operator-framework/opm:v1.74.0@sha256:b32d3891616662620da08d7f0ec42c2e69fa2de43427dc975d35b12f7a969a0f
+
+.PHONY: test-olm
+test-olm: setup-test-e2e kustomize operator-sdk kubectl ## Install the bundle through OLM in Kind, check the webhooks, run scorecard, then tear everything down.
+	@status=0; \
+	KIND="$(KIND)" KUBECTL="$(KUBECTL)" OPERATOR_SDK="$(OPERATOR_SDK)" KIND_CLUSTER="$(KIND_CLUSTER)" \
+		OLM_VERSION="$(OLM_VERSION)" OLM_CRDS_SHA256="$(OLM_CRDS_SHA256)" OLM_SHA256="$(OLM_SHA256)" \
+		REGISTRY_IMAGE="$(OLM_REGISTRY_IMAGE)" OPM_IMAGE="$(OLM_OPM_IMAGE)" VERSION="$(VERSION)" \
+		hack/olm/test.sh || status=$$?; \
+	$(MAKE) cleanup-test-e2e; \
+	exit $$status
+
 ##@ Dependencies
 
 ## Location to install dependencies to
@@ -280,12 +416,15 @@ HELM ?= $(LOCALBIN)/helm
 KIND ?= $(LOCALBIN)/kind
 KUSTOMIZE ?= $(LOCALBIN)/kustomize
 CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
+CRD_REF_DOCS ?= $(LOCALBIN)/crd-ref-docs
 ENVTEST ?= $(LOCALBIN)/setup-envtest
 GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
 
 ## Tool Versions
 KUSTOMIZE_VERSION ?= v5.8.1
 CONTROLLER_TOOLS_VERSION ?= v0.22.0
+CRD_REF_DOCS_VERSION ?= v0.3.0
+CRD_REF_DOCS_SUM ?= h1:9bGSUkBR56Z7TuDGQAu3KGbBkagwwZ6RkZmS+qvDuDM=
 
 #ENVTEST_VERSION is the controller-runtime version to use for setup-envtest, derived from go.mod
 ENVTEST_VERSION ?= $(shell v='$(call gomodver,sigs.k8s.io/controller-runtime)'; \
@@ -358,6 +497,51 @@ $(AH): $(LOCALBIN)
 	}
 	@ln -sf "$(AH)-$(AH_VERSION)" "$(AH)"
 
+# The OLM bundle tools. Each release publishes a checksums.txt that lists every binary.
+OPERATOR_SDK ?= $(LOCALBIN)/operator-sdk
+OPERATOR_SDK_VERSION ?= v1.42.3
+
+.PHONY: operator-sdk
+operator-sdk: $(OPERATOR_SDK) ## Download operator-sdk locally if necessary (checksum verified).
+$(OPERATOR_SDK): $(LOCALBIN)
+	@[ -f "$(OPERATOR_SDK)-$(OPERATOR_SDK_VERSION)" ] || { \
+		set -e; \
+		name=operator-sdk_$$(go env GOOS)_$$(go env GOARCH); \
+		base=https://github.com/operator-framework/operator-sdk/releases/download/$(OPERATOR_SDK_VERSION); \
+		echo "Downloading $$base/$$name"; \
+		tmp=$$(mktemp -d); \
+		curl -fsSLo "$$tmp/$$name" "$$base/$$name"; \
+		want=$$(curl -fsSL "$$base/checksums.txt" | grep " $$name$$" | cut -d' ' -f1); \
+		got=$(call sha256of,$$tmp/$$name); \
+		[ -n "$$want" ] && [ "$$want" = "$$got" ] || { echo "checksum mismatch for $$name"; exit 1; }; \
+		chmod +x "$$tmp/$$name"; \
+		mv "$$tmp/$$name" "$(OPERATOR_SDK)-$(OPERATOR_SDK_VERSION)"; \
+		rm -rf "$$tmp"; \
+	}
+	@ln -sf "$(OPERATOR_SDK)-$(OPERATOR_SDK_VERSION)" "$(OPERATOR_SDK)"
+
+OPM ?= $(LOCALBIN)/opm
+OPM_VERSION ?= v1.74.0
+
+.PHONY: opm
+opm: $(OPM) ## Download opm locally if necessary (checksum verified).
+$(OPM): $(LOCALBIN)
+	@[ -f "$(OPM)-$(OPM_VERSION)" ] || { \
+		set -e; \
+		name=$$(go env GOOS)-$$(go env GOARCH)-opm; \
+		base=https://github.com/operator-framework/operator-registry/releases/download/$(OPM_VERSION); \
+		echo "Downloading $$base/$$name"; \
+		tmp=$$(mktemp -d); \
+		curl -fsSLo "$$tmp/$$name" "$$base/$$name"; \
+		want=$$(curl -fsSL "$$base/checksums.txt" | grep " $$name$$" | cut -d' ' -f1); \
+		got=$(call sha256of,$$tmp/$$name); \
+		[ -n "$$want" ] && [ "$$want" = "$$got" ] || { echo "checksum mismatch for $$name"; exit 1; }; \
+		chmod +x "$$tmp/$$name"; \
+		mv "$$tmp/$$name" "$(OPM)-$(OPM_VERSION)"; \
+		rm -rf "$$tmp"; \
+	}
+	@ln -sf "$(OPM)-$(OPM_VERSION)" "$(OPM)"
+
 ORAS ?= $(LOCALBIN)/oras
 ORAS_VERSION ?= 1.3.4
 
@@ -418,6 +602,16 @@ $(KUBECTL): $(LOCALBIN)
 kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.
 $(KUSTOMIZE): $(LOCALBIN)
 	$(call go-install-tool,$(KUSTOMIZE),sigs.k8s.io/kustomize/kustomize/v5,$(KUSTOMIZE_VERSION))
+
+# crd-ref-docs is installed with go install like the tools above, which checks the module
+# against the Go checksum database; the module hash is also pinned here, so a re-tagged release
+# cannot slip in.
+.PHONY: crd-ref-docs
+crd-ref-docs: $(CRD_REF_DOCS) ## Download crd-ref-docs locally if necessary (checksum verified).
+$(CRD_REF_DOCS): $(LOCALBIN)
+	@sum=$$(GOFLAGS=-mod=mod go mod download -json github.com/elastic/crd-ref-docs@$(CRD_REF_DOCS_VERSION) | sed -n 's/^[[:space:]]*"Sum": "\(.*\)",$$/\1/p'); \
+	[ "$$sum" = "$(CRD_REF_DOCS_SUM)" ] || { echo "crd-ref-docs $(CRD_REF_DOCS_VERSION): module hash $$sum, want $(CRD_REF_DOCS_SUM)" >&2; exit 1; }
+	$(call go-install-tool,$(CRD_REF_DOCS),github.com/elastic/crd-ref-docs,$(CRD_REF_DOCS_VERSION))
 
 .PHONY: controller-gen
 controller-gen: $(CONTROLLER_GEN) ## Download controller-gen locally if necessary.

@@ -4,7 +4,7 @@
 #
 # Terraform-first teams: set mode: Allocate. The CIDRs land in status.allocations and
 # Terraform creates the subnets from them.
-apiVersion: network.hypersurgery.dev/v1beta1
+apiVersion: network.hypersurgery.dev/v1
 kind: SubnetClaim
 metadata:
   name: payments

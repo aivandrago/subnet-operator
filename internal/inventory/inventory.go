@@ -24,13 +24,13 @@ import (
 	"context"
 	"errors"
 
-	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
+	networkv1 "hypersurgery.dev/subnet-operator/api/v1"
 )
 
 // Target is one account/region pair to discover or write to.
 type Target struct {
 	// Provider is the cloud of the target: the provider of the scope it was expanded from.
-	Provider networkv1beta1.Provider
+	Provider networkv1.Provider
 	// Scope is the NetworkScope the target was expanded from. Discovery does not depend on
 	// it; it only labels what a provider reports about the target, such as throttled calls.
 	Scope   string
@@ -75,7 +75,7 @@ type Network struct {
 	// Tags are the network's decoded ownership and other metadata.
 	Tags map[string]string
 
-	AWS *networkv1beta1.AWSNetworkStatus
+	AWS *networkv1.AWSNetworkStatus
 }
 
 // Subnet is a discovered subnet.
@@ -95,11 +95,11 @@ type Subnet struct {
 	AvailableIPs *int64
 	// OwnershipSource says whether Tags carry the subnet's own ownership metadata or its
 	// network's.
-	OwnershipSource networkv1beta1.OwnershipSource
+	OwnershipSource networkv1.OwnershipSource
 	// Tags are the subnet's decoded ownership and other metadata.
 	Tags map[string]string
 
-	AWS *networkv1beta1.AWSSubnetStatus
+	AWS *networkv1.AWSSubnetStatus
 }
 
 // Snapshot is the result of discovering one target.
@@ -150,7 +150,7 @@ type CreateSubnetRequest struct {
 	// Tags are the ownership and other metadata the subnet is created with.
 	Tags map[string]string
 
-	AWS *networkv1beta1.AWSClaimOptions
+	AWS *networkv1.AWSClaimOptions
 }
 
 // SubnetWriter creates subnets. Implementations must never delete anything.

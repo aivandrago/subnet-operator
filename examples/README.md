@@ -2,8 +2,12 @@
 
 Manifests you can copy. They use the `hs/` tag prefix; if your organization already tags
 differently, keep your keys and point `networkSelector.matchTags`, `requiredSubnetTags` and `tagKeys`
-at them. They are written for `network.hypersurgery.dev/v1beta1`; manifests for the older
-`aws.hypersurgery/v1alpha1` convert with `manager migrate-manifests` (see the upgrade guide).
+at them. They are written for `network.hypersurgery.dev/v1` (1.0 and later); for 0.8 and 0.9,
+change the `apiVersion` to `network.hypersurgery.dev/v1beta1`, which has the same fields. Manifests
+for the older `aws.hypersurgery/v1alpha1` or for v1beta1 convert with `manager migrate-manifests`
+(see the [upgrade guide](../docs/operations/upgrades.md#upgrading-from-09-to-10)). Every field is in
+the [API reference](../docs/reference/api.md). The tests send every manifest here to the API
+server, so one that no longer applies fails CI rather than whoever copies it.
 
 | File | What it shows |
 |---|---|

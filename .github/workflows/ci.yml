@@ -24,6 +24,13 @@ jobs:
           go-version-file: go.mod
           cache: true
       - run: make lint
+      # The OLM bundle is generated from config/manifests and the +operator-sdk markers in api/;
+      # the regenerated CSV base must match the committed one, and the bundle must pass the
+      # validation OperatorHub runs.
+      - name: OLM bundle validates
+        run: |
+          make bundle-validate
+          git diff --exit-code
 
   test:
     name: Tests
@@ -37,10 +44,11 @@ jobs:
 
       # The generated code, CRDs and the chart's copies of them are committed, so a
       # pull request that edits api/ without regenerating them is caught here rather
-      # than by a confusing failure at install time.
-      - name: Generated code and manifests are up to date
+      # than by a confusing failure at install time. The v1 API reference in
+      # docs/reference/api.md is generated from the same types.
+      - name: Generated code, manifests and API reference are up to date
         run: |
-          make manifests generate
+          make manifests generate api-docs
           git diff --exit-code
 
       - name: Helm chart lints and renders

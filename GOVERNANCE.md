@@ -36,3 +36,5 @@ Changing either needs agreement among all maintainers and a written rationale in
 
 Maintainers cut releases when there is something worth shipping. Each release has a tag, notes
 that say what was verified and what was not, a chart version and a container image.
+
+The steps, from the release commit to publishing, are in [docs/release.md](docs/release.md).

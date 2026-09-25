@@ -23,6 +23,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -31,7 +32,9 @@ import (
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
 	authenticationv1 "k8s.io/api/authentication/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
@@ -43,15 +46,17 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
+	networkv1 "hypersurgery.dev/subnet-operator/api/v1"
 	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
 	"hypersurgery.dev/subnet-operator/internal/audit"
 	awscloud "hypersurgery.dev/subnet-operator/internal/cloud/aws"
 	"hypersurgery.dev/subnet-operator/internal/controller"
+	"hypersurgery.dev/subnet-operator/internal/crdversions"
 	"hypersurgery.dev/subnet-operator/internal/inventory"
 	"hypersurgery.dev/subnet-operator/internal/metrics"
 	"hypersurgery.dev/subnet-operator/internal/migration"
 	"hypersurgery.dev/subnet-operator/internal/provider"
-	webhookv1beta1 "hypersurgery.dev/subnet-operator/internal/webhook/v1beta1"
+	webhookv1 "hypersurgery.dev/subnet-operator/internal/webhook/v1"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -62,7 +67,11 @@ var (
 
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+	// The operator records Events on its own CRDs when it migrates their storage version.
+	utilruntime.Must(apiextensionsv1.AddToScheme(scheme))
 
+	utilruntime.Must(networkv1.AddToScheme(scheme))
+	// v1beta1 is still served; the conversion webhook needs both versions in the scheme.
 	utilruntime.Must(networkv1beta1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
@@ -78,11 +87,12 @@ func main() {
 	var metricsAddr string
 	var metricsCertPath, metricsCertName, metricsCertKey string
 	var webhookCertPath, webhookCertName, webhookCertKey string
+	var crdConversion, conversionService string
 	var webhookPort int
 	var discoveryConcurrency int
 	var providerNames string
-	var awsEventsQueueURL, eventsQueueURL string
-	var awsEventsDebounce, eventsDebounce time.Duration
+	var awsEventsQueueURL string
+	var awsEventsDebounce time.Duration
 	var auditSink string
 	var enableWrites bool
 	var enableWebhooks bool
@@ -123,13 +133,10 @@ func main() {
 	flag.StringVar(&awsEventsQueueURL, "aws-events-queue-url", "",
 		"AWS: SQS queue fed by EventBridge with EC2 change events. When set, changed accounts/regions are "+
 			"resynced within seconds instead of waiting for the resync interval.")
-	flag.DurationVar(&awsEventsDebounce, "aws-events-debounce", 0,
-		"AWS: how long EC2 change events are collected before the affected accounts/regions are resynced "+
-			"(default 10s).")
-	flag.StringVar(&eventsQueueURL, "events-queue-url", os.Getenv("EVENTS_QUEUE_URL"),
-		"Deprecated, use --aws-events-queue-url (removed in 0.10). Defaults to $EVENTS_QUEUE_URL.")
-	flag.DurationVar(&eventsDebounce, "events-debounce", 10*time.Second,
-		"Deprecated, use --aws-events-debounce (removed in 0.10).")
+	flag.DurationVar(&awsEventsDebounce, "aws-events-debounce", 10*time.Second,
+		"AWS: how long EC2 change events are collected before the affected accounts/regions are resynced.")
+	// Deprecated in 0.9, removed in 1.0: refused, naming the replacement.
+	removed := registerRemovedFlags(flag.CommandLine)
 	flag.StringVar(&auditSink, "audit-sink", audit.ModeStdout,
 		"Where the audit trail goes: 'stdout' writes one JSON line per import, allocation and policy "+
 			"decision to stdout, apart from the operational log on stderr; 'off' writes none. "+
@@ -138,6 +145,14 @@ func main() {
 		"Allow SubnetClaims in Create mode to create subnets in AWS. Off by default: the operator is read-only.")
 	flag.BoolVar(&enableWebhooks, "enable-webhooks", true,
 		"Serve the admission webhooks. They need a serving certificate and stay off without one.")
+	flag.StringVar(&crdConversion, "crd-conversion", crdversions.ConversionUnmanaged,
+		"How the API server converts between the served versions of the operator's CRDs: 'webhook' points "+
+			"their conversion at the operator's webhook (the Service --conversion-webhook-service names, with the CA "+
+			"in ca.crt next to the webhook certificate), 'none' leaves it to the API server, and empty leaves the CRDs "+
+			"as they were installed. The operator sets it once nothing is stored at v1beta1 any more, and "+
+			"'webhook' falls back to 'none' while the webhooks are not served.")
+	flag.StringVar(&conversionService, "conversion-webhook-service", "",
+		"namespace/name of the Service in front of the webhook server, for --crd-conversion=webhook.")
 	flag.StringVar(&metricsCertPath, "metrics-cert-path", "",
 		"The directory that contains the metrics server certificate.")
 	flag.StringVar(&metricsCertName, "metrics-cert-name", "tls.crt", "The name of the metrics server certificate file.")
@@ -151,6 +166,11 @@ func main() {
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+
+	if err := removed.check(os.Getenv); err != nil {
+		setupLog.Error(err, "Removed settings are used; replace them and start again")
+		os.Exit(1)
+	}
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
 	// due to its vulnerabilities. More specifically, disabling http/2 will
@@ -175,7 +195,7 @@ func main() {
 	}
 
 	if len(webhookCertPath) > 0 && enableWebhooks {
-		if !webhookv1beta1.CertificateAvailable(webhookCertPath, webhookCertName) {
+		if !webhookv1.CertificateAvailable(webhookCertPath, webhookCertName) {
 			setupLog.Error(errors.New("no certificate at the configured path"),
 				"The webhook certificate is missing; start with --enable-webhooks=false to run without it",
 				"webhook-cert-path", webhookCertPath, "webhook-cert-name", webhookCertName)
@@ -297,23 +317,29 @@ func main() {
 	// inventory. Being told where the certificate is and not finding it there is a different
 	// matter, and fatal.
 	if enableWebhooks && webhookCertPath == "" &&
-		!webhookv1beta1.CertificateAvailable("", webhookCertName) {
+		!webhookv1.CertificateAvailable("", webhookCertName) {
 		setupLog.Info("No webhook certificate found, so the admission webhooks stay off; "+
 			"the controllers still check everything they always did",
-			"dir", webhookv1beta1.DefaultCertDir, "cert", webhookCertName)
+			"dir", webhookv1.DefaultCertDir, "cert", webhookCertName)
 		enableWebhooks = false
+	}
+
+	// After an upgrade from 0.9, objects stored as v1beta1 are rewritten at v1, and the CRDs'
+	// conversion is pointed at the webhook once nothing needs it for the operator's own reads.
+	upgrader, err := crdUpgrader(cfg, mgr, crdConversion, conversionService, enableWebhooks, webhookCertPath)
+	if err != nil {
+		setupLog.Error(err, "Invalid CRD conversion settings")
+		os.Exit(1)
+	}
+	if err := mgr.Add(upgrader); err != nil {
+		setupLog.Error(err, "Failed to add the CRD version migration")
+		os.Exit(1)
 	}
 
 	// The auto-import policy creates imports as the operator; saying so on the import needs
 	// the name the API server knows the operator by.
 	identity := whoAmI(mgr.GetConfig())
 
-	if awsEventsQueueURL == "" {
-		awsEventsQueueURL = eventsQueueURL
-	}
-	if awsEventsDebounce <= 0 {
-		awsEventsDebounce = eventsDebounce
-	}
 	providers, err := newProviders(context.Background(), providerNames, providerConfig{
 		aws: awscloud.Options{
 			EventsQueueURL: awsEventsQueueURL,
@@ -397,17 +423,30 @@ func main() {
 		os.Exit(1)
 	}
 	if enableWebhooks {
-		if err := webhookv1beta1.SetupNetworkScopeWebhookWithManager(mgr, providers); err != nil {
+		// First, so that the builders below find /convert taken.
+		webhookv1.SetupConversionWebhookWithManager(mgr)
+		if err := webhookv1.SetupNetworkScopeWebhookWithManager(mgr, providers); err != nil {
 			setupLog.Error(err, "Failed to create webhook", "webhook", "NetworkScope")
 			os.Exit(1)
 		}
-		if err := webhookv1beta1.SetupSubnetClaimWebhookWithManager(mgr, providers, enableWrites); err != nil {
+		if err := webhookv1.SetupSubnetClaimWebhookWithManager(mgr, providers, enableWrites); err != nil {
 			setupLog.Error(err, "Failed to create webhook", "webhook", "SubnetClaim")
 			os.Exit(1)
 		}
-		if err := webhookv1beta1.SetupResourceImportWebhookWithManager(mgr, providers, enableWrites); err != nil {
+		if err := webhookv1.SetupResourceImportWebhookWithManager(mgr, providers, enableWrites); err != nil {
 			setupLog.Error(err, "Failed to create webhook", "webhook", "ResourceImport")
 			os.Exit(1)
+		}
+		// Conversion between v1beta1 and v1, served at /convert for every kind.
+		for kind, setup := range map[string]func(ctrl.Manager) error{
+			"Network":     webhookv1.SetupNetworkWebhookWithManager,
+			"Subnet":      webhookv1.SetupSubnetWebhookWithManager,
+			"SheetExport": webhookv1.SetupSheetExportWebhookWithManager,
+		} {
+			if err := setup(mgr); err != nil {
+				setupLog.Error(err, "Failed to create webhook", "webhook", kind)
+				os.Exit(1)
+			}
 		}
 	}
 	// +kubebuilder:scaffold:builder
@@ -503,19 +542,65 @@ func whoAmI(cfg *rest.Config) string {
 	return review.Status.UserInfo.Username
 }
 
-// migrateManifests is `manager migrate-manifests`: aws.hypersurgery/v1alpha1 manifests on stdin,
-// network.hypersurgery.dev/v1beta1 manifests on stdout, notes on stderr.
+// crdUpgrader builds the runnable that migrates the CRDs' storage version and configures their
+// conversion. It reads past the cache: the operator does not watch CRDs, and has no right to.
+func crdUpgrader(cfg *rest.Config, mgr ctrl.Manager, conversion, service string, webhooks bool,
+	certDir string) (*crdversions.Upgrader, error) {
+	c, err := client.New(cfg, client.Options{Scheme: scheme})
+	if err != nil {
+		return nil, err
+	}
+	u := &crdversions.Upgrader{
+		Client:     c,
+		Recorder:   mgr.GetEventRecorder("network.hypersurgery.dev/crd-versions"),
+		Conversion: conversion,
+	}
+	switch conversion {
+	case crdversions.ConversionUnmanaged, crdversions.ConversionNone:
+	case crdversions.ConversionWebhook:
+		namespace, name, ok := strings.Cut(service, "/")
+		if !ok || namespace == "" || name == "" {
+			return nil, fmt.Errorf("--crd-conversion=webhook needs --conversion-webhook-service=<namespace>/<name>, got %q",
+				service)
+		}
+		if !webhooks {
+			setupLog.Info("The webhooks are not served, so the CRDs' conversion is left to the API server",
+				"crd-conversion", crdversions.ConversionNone)
+			u.Conversion = crdversions.ConversionNone
+			break
+		}
+		if certDir == "" {
+			certDir = webhookv1.DefaultCertDir
+		}
+		u.Service = types.NamespacedName{Namespace: namespace, Name: name}
+		u.CAFile = filepath.Join(certDir, "ca.crt")
+	default:
+		return nil, fmt.Errorf("--crd-conversion must be %q, %q or empty, got %q",
+			crdversions.ConversionWebhook, crdversions.ConversionNone, conversion)
+	}
+	return u, nil
+}
+
+// migrateManifests is `manager migrate-manifests`: aws.hypersurgery/v1alpha1 or
+// network.hypersurgery.dev/v1beta1 manifests on stdin, network.hypersurgery.dev/v1 manifests on
+// stdout, notes on stderr.
 func migrateManifests(args []string) int {
 	fs := flag.NewFlagSet("migrate-manifests", flag.ContinueOnError)
 	fs.Usage = func() {
 		_, _ = fmt.Fprint(fs.Output(), `Usage: manager migrate-manifests < old.yaml > new.yaml
 
-Rewrites aws.hypersurgery/v1alpha1 NetworkScope, SubnetClaim, ResourceImport and SheetExport
-documents as network.hypersurgery.dev/v1beta1, with the mapping the in-cluster migration of
-0.8 used. VPC and Subnet documents are left out: the operator discovers them. Every other
-document is copied unchanged. Comments inside converted documents are not kept, and neither is
-status: objects in a cluster, with their reservations and history, are migrated by 0.8 only.
-Notes about what changed (for example an unset namespaceSelector made explicit) go to stderr.
+Rewrites manifests as network.hypersurgery.dev/v1:
+
+- aws.hypersurgery/v1alpha1 NetworkScope, SubnetClaim, ResourceImport and SheetExport documents
+  are converted with the mapping the in-cluster migration of 0.8 used. VPC and Subnet documents
+  are left out: the operator discovers them. Comments inside these documents are not kept, and
+  neither is status: objects in a cluster, with their reservations and history, were migrated
+  by 0.8 only.
+- network.hypersurgery.dev/v1beta1 documents get apiVersion network.hypersurgery.dev/v1 and are
+  otherwise kept as written, comments included: v1 has the same fields.
+
+Every other document is copied unchanged. Notes about what changed (for example an unset
+namespaceSelector made explicit) go to stderr.
 `)
 	}
 	if err := fs.Parse(args); err != nil {

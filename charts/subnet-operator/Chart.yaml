@@ -2,8 +2,8 @@ apiVersion: v2
 name: subnet-operator
 description: Kubernetes operator that discovers cloud networks and subnets (AWS today) from resource tags and keeps a live inventory in the cluster
 type: application
-version: 0.9.0
-appVersion: "0.9.0"
+version: 1.0.0
+appVersion: "1.0.0"
 kubeVersion: ">=1.28.0-0"
 keywords:
   - aws
@@ -30,11 +30,10 @@ annotations:
   artifacthub.io/operator: "true"
   artifacthub.io/operatorCapabilities: Basic Install
   artifacthub.io/category: networking
-  # A v1beta1 API until 1.0: every release before 1.0 is a pre-release.
-  artifacthub.io/prerelease: "true"
+  artifacthub.io/prerelease: "false"
   artifacthub.io/images: |
     - name: subnet-operator
-      image: ghcr.io/aivandrago/subnet-operator:0.9.0
+      image: ghcr.io/aivandrago/subnet-operator:1.0.0
       platforms:
         - linux/amd64
         - linux/arm64
@@ -50,55 +49,47 @@ annotations:
     - name: Dashboard demo
       url: https://hypersurgery.dev/dashboard/
   artifacthub.io/changes: |
-    - kind: removed
-      description: aws.hypersurgery/v1alpha1 is removed with its CRDs, webhooks and the migration controller; upgrade from 0.8 only after it migrated every object, see the upgrade guide
     - kind: added
-      description: The operator does not start its controllers while aws.hypersurgery/v1alpha1 objects that 0.8 never migrated exist; it stays not ready and names them
+      description: The v1 API for all six kinds, the stored version, with a written compatibility promise; v1beta1 stays served, deprecated, until at least 1.2
+    - kind: added
+      description: A conversion webhook between v1beta1 and v1, and the operator rewrites stored objects at v1 and trims storedVersions itself
+    - kind: changed
+      description: In v1, regions and requiredSubnetTags are sets and autoImport.accountDefaults is a map keyed by account; the webhook refuses the same duplicates at v1beta1
     - kind: removed
-      description: The manager flag --migrate-v1alpha1
-    - kind: removed
-      description: The 0.7 chart values networkScope.vpcTagSelector and roleARN, externalID and writeRoleARN next to an account's id are refused
-    - kind: changed
-      description: The old CRDs are not deleted by the upgrade; delete them yourself once nothing is left to migrate
-    - kind: changed
-      description: Metrics are renamed from hs_aws_* to hs_* with provider, network_id and zone labels, without an overlap
-    - kind: changed
-      description: The alert VPCCIDROverlap is renamed NetworkCIDROverlap; alert labels and texts are cloud-neutral
+      description: The chart values events.*, aws.* and networkPolicy.egress.podIdentity, the flags --events-queue-url and --events-debounce and EVENTS_QUEUE_URL; use providers.aws and --aws-events-*
+    - kind: added
+      description: An OLM bundle, signed, in the stable channel
+    - kind: added
+      description: Every alert carries a runbook_url pointing at its own runbook section
     - kind: fixed
-      description: UnmanagedNetworkResource fires for a single new resource, and the first auto-import after a restart is counted
-    - kind: added
-      description: Providers are registered per cloud, with their settings under providers.aws; NetworkScope reports status.capabilities and status.ownership
-    - kind: deprecated
-      description: events.*, aws.* and networkPolicy.egress.podIdentity are now under providers.aws, and --events-queue-url and --events-debounce are --aws-events-*; the old names are removed in 0.10
-    - kind: added
-      description: manager migrate-manifests keeps converting aws.hypersurgery/v1alpha1 manifests for GitOps repositories
+      description: Conversion keeps objects as written, so GitOps tools reading at v1beta1 see no drift
   artifacthub.io/crds: |
     - kind: NetworkScope
-      version: v1beta1
+      version: v1
       name: networkscopes.network.hypersurgery.dev
       description: Accounts and regions of one provider to discover
     - kind: Network
-      version: v1beta1
+      version: v1
       name: networks.network.hypersurgery.dev
       description: A discovered network (AWS VPC)
     - kind: Subnet
-      version: v1beta1
+      version: v1
       name: subnets.network.hypersurgery.dev
       description: A discovered subnet
     - kind: ResourceImport
-      version: v1beta1
+      version: v1
       name: resourceimports.network.hypersurgery.dev
       description: Takes an existing network or subnet under management by tagging it
     - kind: SheetExport
-      version: v1beta1
+      version: v1
       name: sheetexports.network.hypersurgery.dev
       description: Read-only mirror of a scope in a Google Sheet
     - kind: SubnetClaim
-      version: v1beta1
+      version: v1
       name: subnetclaims.network.hypersurgery.dev
       description: Subnets on demand, allocated from a network and optionally created
   artifacthub.io/crdsExamples: |
-    - apiVersion: network.hypersurgery.dev/v1beta1
+    - apiVersion: network.hypersurgery.dev/v1
       kind: NetworkScope
       metadata:
         name: organization
@@ -120,7 +111,7 @@ annotations:
               operator: In
               values: [team-payments]
         resyncInterval: 10m
-    - apiVersion: network.hypersurgery.dev/v1beta1
+    - apiVersion: network.hypersurgery.dev/v1
       kind: SubnetClaim
       metadata:
         name: payments
@@ -136,7 +127,7 @@ annotations:
         owner: team-payments
         env: prod
         tier: private
-    - apiVersion: network.hypersurgery.dev/v1beta1
+    - apiVersion: network.hypersurgery.dev/v1
       kind: ResourceImport
       metadata:
         name: subnet-04d1c2b3a4e5f607-import
@@ -151,7 +142,7 @@ annotations:
           hs/owner: team-payments
           hs/env: prod
           hs/tier: private
-    - apiVersion: network.hypersurgery.dev/v1beta1
+    - apiVersion: network.hypersurgery.dev/v1
       kind: SheetExport
       metadata:
         name: organization

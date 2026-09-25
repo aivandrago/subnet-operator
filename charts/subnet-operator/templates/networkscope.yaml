@@ -14,7 +14,7 @@ lost, and the scope would read it with the operator's own identity. Refused inst
 {{- end }}
 {{- $accounts := .Values.networkScope.accounts }}
 {{- $matchTags := .Values.networkScope.networkSelector.matchTags }}
-apiVersion: network.hypersurgery.dev/v1beta1
+apiVersion: network.hypersurgery.dev/v1
 kind: NetworkScope
 metadata:
   name: {{ .Values.networkScope.name }}

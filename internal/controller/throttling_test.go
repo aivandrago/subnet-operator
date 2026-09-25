@@ -35,7 +35,7 @@ import (
 	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
+	networkv1 "hypersurgery.dev/subnet-operator/api/v1"
 	"hypersurgery.dev/subnet-operator/internal/inventory"
 )
 
@@ -117,9 +117,9 @@ var _ = Describe("NetworkScope Controller under API throttling", func() {
 		return res.RequeueAfter
 	}
 
-	getScope := func() *networkv1beta1.NetworkScope {
+	getScope := func() *networkv1.NetworkScope {
 		GinkgoHelper()
-		s := &networkv1beta1.NetworkScope{}
+		s := &networkv1.NetworkScope{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: scopeName}, s)).To(Succeed())
 		return s
 	}
@@ -145,12 +145,12 @@ var _ = Describe("NetworkScope Controller under API throttling", func() {
 		// The top of each delay, so the schedule below is exact.
 		reconciler.backoff.jitter = func() float64 { return 0.999999 }
 
-		Expect(k8sClient.Create(ctx, &networkv1beta1.NetworkScope{
+		Expect(k8sClient.Create(ctx, &networkv1.NetworkScope{
 			ObjectMeta: metav1.ObjectMeta{Name: scopeName},
-			Spec: networkv1beta1.NetworkScopeSpec{
-				Provider:          networkv1beta1.ProviderAWS,
+			Spec: networkv1.NetworkScopeSpec{
+				Provider:          networkv1.ProviderAWS,
 				NamespaceSelector: &metav1.LabelSelector{},
-				Accounts:          []networkv1beta1.Account{{ID: accountA}, {ID: accountB}},
+				Accounts:          []networkv1.Account{{ID: accountA}, {ID: accountB}},
 				Regions:           []string{region},
 				ResyncInterval:    &metav1.Duration{Duration: resync},
 			},
@@ -158,8 +158,8 @@ var _ = Describe("NetworkScope Controller under API throttling", func() {
 	})
 
 	AfterEach(func() {
-		Expect(k8sClient.DeleteAllOf(ctx, &networkv1beta1.Subnet{}, client.MatchingLabels{networkv1beta1.LabelScope: scopeName})).To(Succeed())
-		Expect(k8sClient.DeleteAllOf(ctx, &networkv1beta1.Network{}, client.MatchingLabels{networkv1beta1.LabelScope: scopeName})).To(Succeed())
+		Expect(k8sClient.DeleteAllOf(ctx, &networkv1.Subnet{}, client.MatchingLabels{networkv1.LabelScope: scopeName})).To(Succeed())
+		Expect(k8sClient.DeleteAllOf(ctx, &networkv1.Network{}, client.MatchingLabels{networkv1.LabelScope: scopeName})).To(Succeed())
 		Expect(k8sClient.Delete(ctx, getScope())).To(Succeed())
 	})
 
@@ -173,7 +173,7 @@ var _ = Describe("NetworkScope Controller under API throttling", func() {
 		throttling.mu.Unlock()
 		requeue := reconcileAt(resync) // t = 5m, full sync
 
-		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "vpc-bbb"}, &networkv1beta1.Network{})).To(Succeed(),
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "vpc-bbb"}, &networkv1.Network{})).To(Succeed(),
 			"a throttled target keeps its objects")
 		scope := getScope()
 		b := scope.Status.Targets[1]
@@ -285,14 +285,14 @@ var _ = Describe("NetworkScope discovery concurrency", func() {
 			scopeCounter++
 			name := fmt.Sprintf("concurrency-%d", scopeCounter)
 			names = append(names, name)
-			accounts := make([]networkv1beta1.Account, 0, 4)
+			accounts := make([]networkv1.Account, 0, 4)
 			for j := range 4 {
-				accounts = append(accounts, networkv1beta1.Account{ID: fmt.Sprintf("3%02d%09d", i, j)})
+				accounts = append(accounts, networkv1.Account{ID: fmt.Sprintf("3%02d%09d", i, j)})
 			}
-			scope := &networkv1beta1.NetworkScope{
+			scope := &networkv1.NetworkScope{
 				ObjectMeta: metav1.ObjectMeta{Name: name},
-				Spec: networkv1beta1.NetworkScopeSpec{
-					Provider: networkv1beta1.ProviderAWS, Accounts: accounts, Regions: []string{region}},
+				Spec: networkv1.NetworkScopeSpec{
+					Provider: networkv1.ProviderAWS, Accounts: accounts, Regions: []string{region}},
 			}
 			Expect(k8sClient.Create(ctx, scope)).To(Succeed())
 			DeferCleanup(func() { Expect(k8sClient.Delete(ctx, scope)).To(Succeed()) })

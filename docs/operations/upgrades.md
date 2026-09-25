@@ -1,5 +1,30 @@
 # Upgrades and rollback
 
+## From which version?
+
+Every upgrade uses the same two steps, [the new CRDs first, then the release](#upgrading).
+Some releases have to be passed through rather than skipped, because they are the ones that move
+objects: 0.8 moves every `aws.hypersurgery/v1alpha1` object to `network.hypersurgery.dev`, and
+nothing after it can; 1.0 expects what 0.9 stored. Find the release you run and follow its row
+from left to right, finishing each hop (the rollout completes, the checks in
+[Verifying an upgrade](#verifying-an-upgrade) pass) before starting the next:
+
+| You run | Hops to 1.0 | Read, in this order |
+|---|---|---|
+| 0.1, 0.2 | 0.7.1 → 0.8 → 0.9 → 1.0 | [0.2 to 0.3](#upgrading-02x--03x-one-behaviour-change-to-plan-for), [0.3 to 0.7](#upgrading-from-03-to-07), [0.6 to 0.7](#upgrading-from-06-to-07-namespace-restricted-scopes-and-created_by), [0.7 to 0.8](#upgrading-from-07-to-08), [0.8 to 0.9](#upgrading-from-08-to-09), [0.9 to 1.0](#upgrading-from-09-to-10) |
+| 0.3 to 0.6 | 0.7.1 → 0.8 → 0.9 → 1.0 | [0.3 to 0.7](#upgrading-from-03-to-07), [0.6 to 0.7](#upgrading-from-06-to-07-namespace-restricted-scopes-and-created_by), then as above from 0.7 to 0.8 |
+| 0.7 | 0.8 → 0.9 → 1.0 | [0.7 to 0.8](#upgrading-from-07-to-08), [0.8 to 0.9](#upgrading-from-08-to-09), [0.9 to 1.0](#upgrading-from-09-to-10) |
+| 0.8 | 0.9 → 1.0 | [0.8 to 0.9](#upgrading-from-08-to-09), [0.9 to 1.0](#upgrading-from-09-to-10) |
+| 0.9 | 1.0 | [0.9 to 1.0](#upgrading-from-09-to-10) |
+
+Up to 0.7 the chart is `aws-subnet-operator`, and the hop to 0.7.1 is made with that chart
+(`hypersurgery/aws-subnet-operator --version 0.7.1`, or
+`oci://ghcr.io/aivandrago/charts/aws-subnet-operator`); from 0.8 on it is `subnet-operator`.
+The CRDs of 0.1 to 0.7 only ever gained fields, so one hop from any of them to 0.7.1 is enough.
+Only the latest release is tested as the starting point of an upgrade in CI
+([policy](../policy.md#the-upgrade-test)); the longer paths are the same steps, one after
+another.
+
 ## What each release added
 
 Taken from the tags in this repository (`git show <tag>:charts/aws-subnet-operator/Chart.yaml`,
@@ -12,18 +37,26 @@ and the release notes.
 | v0.2.0 | 0.2.0 | **+ `subnetclaims`** | `SubnetClaim`; `accounts[].writeRoleARN` on `NetworkScope`; `writes.enabled` → `--enable-writes`; RBAC for claims |
 | v0.3.0 | 0.3.0 | **+ `resourceimports`** | `ResourceImport`; `spec.discoverUnmanaged` (**default `true`**) and `spec.autoImport` on `NetworkScope`; `UnmanagedNetworkResource` and `AutoImportedResources` alerts; unmanaged and auto-import metrics; RBAC for imports |
 | v0.3.0 | 0.3.1 | unchanged | Dashboard panels for unmanaged resources and policy decisions — chart only, same image |
+| v0.4.0 | 0.4.0 | unchanged | Admission webhooks (the chart serves them, with or without cert-manager), Kubernetes Events and the JSON audit trail, credential Secrets read only in their own namespace, two replicas with a disruption budget |
+| v0.4.1 | 0.4.1 | unchanged | The image is public and signed, at `ghcr.io/aivandrago/subnet-operator` |
+| v0.5.0 | 0.5.0 | `networkscopes` gains `status.targets[].unmanagedIDs` | Known unmanaged resources survive a restart; `SubnetOperatorDown`, `SubnetClaimNotReady` and `ResourceImportNotSettled` alerts with their metrics; no IPv4 capacity reported for IPv6-only subnets |
+| v0.6.0 | 0.6.0 | unchanged | Backoff for throttled accounts, the throttling metrics and `SubnetInventoryTargetThrottled`; the chart published to ghcr.io and signed; the dashboard app in the chart (`dashboard.enabled`) |
+| v0.7.0 | 0.7.0 (0.7.1: the same code, the last `aws-subnet-operator` chart) | `networkscopes` gains `spec.namespaceSelector` | Namespace-restricted scopes, the authenticated creator on claims and imports — [its own section](#upgrading-from-06-to-07-namespace-restricted-scopes-and-created_by); memory limit 512Mi |
 | v0.8.0 | **`subnet-operator`** 0.8.0 | **+ `network.hypersurgery.dev`**: `networkscopes`, `networks`, `subnets`, `subnetclaims`, `resourceimports`, `sheetexports`; the `aws.hypersurgery` CRDs stay, deprecated | The cloud-neutral API, the migration of every old object, the rename of the project and the chart — [its own section](#upgrading-from-07-to-08) |
 | v0.9.0 | `subnet-operator` 0.9.0 | `network.hypersurgery.dev` only. The chart no longer ships the `aws.hypersurgery` CRDs; the ones 0.8 installed stay in the cluster until you delete them | The old group removed, a guard against objects 0.8 never migrated, metrics renamed to `hs_*`, providers — [its own section](#upgrading-from-08-to-09) |
+| v1.0.0 | `subnet-operator` 1.0.0 | The same six CRDs, each with **`v1`** (stored) next to `v1beta1` (deprecated, served) | The API graduated to v1 with a [compatibility promise](../api-compatibility.md), stored objects rewritten at v1 by the operator, the conversion webhook (`webhook.conversion.enabled`, `--crd-conversion`), duplicate list entries refused in a `NetworkScope`, the operator's RBAC on its own CRDs, the `hs_crd_stored_versions` and `hs_storage_migration_rewritten_objects_total` metrics, an [OLM bundle](../olm.md); the values and flags 0.9 deprecated are removed — [its own section](#upgrading-from-09-to-10) |
 
 Up to 0.7 all kinds are `aws.hypersurgery/v1alpha1`; 0.8 serves both groups, 0.9 only
-`network.hypersurgery.dev/v1beta1`. There is only ever one API version per group, there is no
+`network.hypersurgery.dev/v1beta1`. Up to 0.9 there is only ever one API version per group and no
 conversion webhook (the admission webhooks that arrived in 0.4.0 validate and default, they do not
-convert), and every field added in 0.2.0 and 0.3.0 is optional. The CRD diffs between tags are
-additions only:
+convert). 1.0 serves `v1` and `v1beta1` of the same group, stores `v1`, and converts between
+them with a webhook. Every field added from 0.2.0 to 0.7.0 is optional. The CRD diffs between
+those tags are additions only:
 
 ```sh
 git diff v0.1.0 v0.2.0 --stat -- config/crd/bases   # + subnetclaims, + writeRoleARN
 git diff v0.2.0 v0.3.0 --stat -- config/crd/bases   # + resourceimports, + autoImport/discoverUnmanaged
+git diff v0.3.0 v0.7.1 --stat -- config/crd/bases   # + unmanagedIDs, + namespaceSelector
 ```
 
 ## Upgrading
@@ -55,7 +88,7 @@ Contributors upgrading from a checkout: `make helm-crds` refreshes the chart's c
 
 ## What happens to existing objects
 
-- **`VPC` and `Subnet` objects are outputs, not state.** They are rebuilt from AWS on the
+- **`Network` and `Subnet` objects (`VPC` and `Subnet` up to 0.7) are outputs, not state.** They are rebuilt from AWS on the
   first sync after the restart and owned by their `NetworkScope`. Losing them costs one
   resync, nothing else.
 - **`NetworkScope` spec and status survive untouched.** New optional fields simply appear with
@@ -76,13 +109,15 @@ Contributors upgrading from a checkout: `make helm-crds` refreshes the chart's c
 |---|---|
 | `seenUnmanaged` (which unmanaged resources were already counted) | Since 0.5.0, rebuilt from `status.targets[].unmanagedIDs` on the first sync, so only resources that appeared meanwhile count as new. Before 0.5.0, `UnmanagedNetworkResource` fired again for every one you already knew about — see the [runbook](runbook.md#unmanagednetworkresource) |
 | `CreatorCache` (who created what, from CloudTrail) | auto-import falls back to VPC inheritance, then account defaults, then `no_owner`; it never guesses |
-| `pendingTargets` (targets an event marked changed) | the first sync after start is a full sync anyway, so nothing is missed |
+| targets a change event marked changed and not yet synced (the poller's debounce buffer, the controller's `pending` set) | the first sync after start is a full sync anyway, so nothing is missed |
 | cached `AssumeRole` credentials | one extra `sts:AssumeRole` per account |
 
 Events already delivered to SQS are **not** lost: they stay in the queue until the new leader
 consumes them (messages are deleted only after being parsed).
 
 ## Upgrading 0.2.x → 0.3.x: one behaviour change to plan for
+
+*History: for a 0.1 or 0.2 install on its way to 0.7.1.*
 
 `spec.discoverUnmanaged` defaults to `true`. With it on, discovery asks EC2 for *every* VPC in
 the target and applies the tag selector in Go, then makes one extra `DescribeSubnets` round
@@ -99,7 +134,32 @@ Set `discoverUnmanaged: false` on the scope if you want the 0.2.x behaviour back
 Auto-import stays off unless you configure `spec.autoImport`, and `Apply` mode additionally
 requires `--enable-writes` and a `writeRoleARN`.
 
-## Upgrading to namespace-restricted scopes and `created_by`
+## Upgrading from 0.3 to 0.7
+
+*History: for an install older than 0.7 on its way to 0.8.* Nothing between 0.3 and 0.7 changes
+existing objects, and every hop is the usual two steps, with the `aws-subnet-operator` chart.
+What to look at on the way:
+
+- **0.4**: the admission webhooks. The chart serves them with a certificate of its own, or one
+  from cert-manager (`webhook.certificate.certManager`); objects that were accepted before and that the
+  webhooks would refuse keep working until they are changed. The chart runs two replicas with a
+  disruption budget, and credential Secrets (`SheetExport`) are read only in the namespace they
+  live in.
+- **0.4.1**: the image is public at `ghcr.io/aivandrago/subnet-operator`. A values file that
+  sets `image.repository` to another registry keeps pulling from there; drop it, or mirror the
+  new image.
+- **0.5**: apply the CRDs before the chart as always: `status.targets[].unmanagedIDs` is what
+  lets a restart tell known unmanaged resources from new ones. New alerts arrive with it
+  (`SubnetOperatorDown`, `SubnetClaimNotReady`, `ResourceImportNotSettled`).
+- **0.6**: throttled accounts are backed off rather than reported unreachable, and alert as
+  `SubnetInventoryTargetThrottled`. The chart is published to ghcr.io as well.
+- **0.7**: the section below.
+
+## Upgrading from 0.6 to 0.7: namespace-restricted scopes and `created_by`
+
+*History: this is what 0.7 changed in the `aws.hypersurgery` group. In
+`network.hypersurgery.dev` (0.8 and later) an unset `namespaceSelector` allows **no**
+namespace; the move is in [0.7 to 0.8](#field-by-field).*
 
 The release that adds `NetworkScope.spec.namespaceSelector` and the `created-by` annotation
 changes nothing for existing objects on its own:
@@ -559,10 +619,12 @@ changes in AWS, and every 0.8 values file keeps working.
   `NetworkScope.status.capabilities` (`CreateSubnet`, `IPUsage`, and `ChangeEvents` when a queue
   is configured), `NetworkScope.status.ownership` (`ResourceTags` for networks and subnets on
   AWS) and `Subnet.status.ownershipSource` (`Subnet` on AWS).
-- **Values**: AWS settings move under `providers.aws`. The 0.8 names still work **until 0.10**,
-  and `helm install`/`upgrade` prints a note while they are set; the new name wins when both are.
+- **Values**: AWS settings move under `providers.aws`. The 0.8 names still work in 0.9, and
+  `helm install`/`upgrade` prints a note while they are set; the new name wins when both are.
+  They were announced for removal in 0.10 and are **removed in 1.0**, the release after 0.9
+  ([below](#values-and-flags-removed-in-10)).
 
-  | 0.8 (deprecated, removed in 0.10) | 0.9 |
+  | 0.8 (deprecated in 0.9, removed in 1.0) | 0.9 |
   |---|---|
   | `events.queueUrl`, `events.debounce` | `providers.aws.events.queueUrl`, `providers.aws.events.debounce` |
   | `aws.region`, `aws.endpointURL` | `providers.aws.region`, `providers.aws.endpointURL` |
@@ -572,7 +634,7 @@ changes in AWS, and every 0.8 values file keeps working.
 - **Flags** (only if you pass them yourself, e.g. with `extraArgs`): `--providers` (default
   `aws`) chooses the clouds; `--events-queue-url` and `--events-debounce` became
   `--aws-events-queue-url` and `--aws-events-debounce`. The old flags and `EVENTS_QUEUE_URL`
-  still work until 0.10.
+  still work in 0.9, and are removed in 1.0.
 - **New condition reasons**: `ProviderNotEnabled` on a scope, claim or import whose provider the
   operator is not started with (replaces `ProviderNotSupported`, which no release could
   produce for a valid object), and `CreateNotSupported` on a Create-mode claim of a provider
@@ -580,6 +642,197 @@ changes in AWS, and every 0.8 values file keeps working.
 - **An EC2 subnet without an `AvailableIpAddressCount`** is now reported with unknown free IPs
   (unset `availableIPs` and `utilizationPercent`) instead of as full. EC2 always sends the count,
   so this only matters for emulators.
+
+## Upgrading from 0.9 to 1.0
+
+1.0 graduates the API to `network.hypersurgery.dev/v1` ([ADR 0002](../adr/0002-multi-cloud-model.md)
+§10, #58). v1 has the same fields as v1beta1; what changes is where objects are stored and what
+is promised about them ([API compatibility](../api-compatibility.md)):
+
+- **v1 is the storage version.** Every object is stored at v1 once the upgrade is done.
+- **v1beta1 is deprecated and still served**, until at least 1.2 and six months after 1.0.
+  `kubectl` prints a warning for every request at v1beta1; reads and writes keep working, and
+  are converted to and from v1.
+- **The operator reads and writes v1**, and its admission webhooks are registered for v1. The
+  API server hands them requests made at v1beta1 converted to v1, so both versions get the same
+  defaults and checks.
+
+**Upgrade from 0.9.** Coming from 0.8 or older, upgrade to 0.9 first ([above](#upgrading-from-08-to-09)).
+
+### Before you start
+
+- **Move the values and flags 0.9 deprecated.** `events.*`, `aws.*` and
+  `networkPolicy.egress.podIdentity` are removed, and so are `--events-queue-url`,
+  `--events-debounce` and `EVENTS_QUEUE_URL`. The 1.0 chart refuses to render while one is set,
+  and the 1.0 operator refuses to start with one, so move them before you upgrade
+  ([below](#values-and-flags-removed-in-10)). 0.9 already reads the new names, so the moved
+  values can go in first, on 0.9.
+
+- **RBAC you manage yourself.** The operator now needs, on its own six CRDs by name and on
+  nothing else of `apiextensions.k8s.io`: `get` and `patch` on `customresourcedefinitions`, and
+  `get` and `update` on `customresourcedefinitions/status` (see `config/rbac/role.yaml`). The
+  chart's ClusterRole has them.
+- **The kustomize install** (`make deploy`) still has no webhooks by default, so its CRDs keep
+  the API server's own conversion. Uncommenting its `[WEBHOOK]` and `[CERTMANAGER]` sections
+  (with [cert-manager](https://cert-manager.io/) in the cluster) now also points every CRD's
+  conversion at the webhook, with the CA cert-manager injects. That wiring is covered by a
+  render test and envtest, not yet by an end-to-end run with cert-manager (#86). The Helm chart
+  needs nothing new.
+- **A GitOps tool that manages the CRDs** may report `spec.conversion` as drift, because the
+  operator sets it and the CRDs in `crds/` do not. Tell it to ignore that field (Argo CD:
+  `ignoreDifferences` with `jsonPointers: [/spec/conversion]` on the six CRDs).
+
+### Steps
+
+The usual two, [above](#upgrading): the new CRDs first, then the release.
+
+```sh
+helm repo update hypersurgery
+helm pull hypersurgery/subnet-operator --untar      # or oci://ghcr.io/aivandrago/charts/subnet-operator
+kubectl apply -f subnet-operator/crds/
+helm upgrade subnet-operator hypersurgery/subnet-operator -n <namespace> -f my-values.yaml
+kubectl -n <namespace> rollout status deployment/<deployment>
+```
+
+Applying the 1.0 CRDs adds v1 to each of them as the storage version and marks v1beta1
+deprecated. The objects already in the cluster are untouched by that: they stay stored as
+v1beta1 until they are written again, and each CRD's `status.storedVersions` now lists both,
+`[v1beta1 v1]`.
+
+### What the operator does on its first start
+
+Nothing to do by hand; this is what to expect, and what to check.
+
+1. **It rewrites every object at v1.** The leader writes each object of each kind back
+   unchanged, through its status subresource, so the API server stores it again at v1. Nothing
+   in it changes but its `resourceVersion`: not the spec, not the generation, not the status.
+   The admission webhooks are not called for it. It takes about one write per object.
+2. **It trims `status.storedVersions` to `[v1]`** on each CRD whose objects it rewrote. A
+   version that is still listed there cannot be removed from the CRD, which is what a release
+   after 1.2 does with v1beta1.
+3. **It records it**: an Event `StorageVersionMigrated` on each CRD (`kubectl get events -n
+   default --field-selector reason=StorageVersionMigrated`), a log line per CRD, the counter
+   `hs_storage_migration_rewritten_objects_total{kind}`, and `hs_crd_stored_versions{kind,
+   version}`, which is 1 for each listed version: `v1` alone once it is done.
+4. **It then points the CRDs' conversion at its webhook** (strategy `Webhook`, the Service
+   `<fullname>-webhook` — `subnet-operator-webhook` for a release called `subnet-operator` —,
+   path `/convert`, the CA from `ca.crt` in the webhook certificate's Secret), with an Event `ConversionConfigured`, and keeps it so every minute, following a
+   renewed CA. Until the objects are rewritten, the CRDs keep the `None` strategy they are
+   installed with: v1beta1 and v1 have the same fields, so the API server converts exactly on
+   its own, and the operator's reads do not depend on its own webhook while it starts. With
+   `webhook.enabled=false` or `webhook.conversion.enabled=false` the CRDs stay at `None`.
+
+Every later start finds `[v1]` and rewrites nothing. If the operator cannot finish, it logs
+`Could not migrate the stored objects to v1 yet` with the reason and tries again every minute;
+the usual reasons are CRDs that were not applied (the message says so) and RBAC of your own
+that lacks the rules above. Nothing else waits for it: the controllers run meanwhile.
+
+```sh
+for crd in networkscopes networks subnets subnetclaims resourceimports sheetexports; do
+  kubectl get crd $crd.network.hypersurgery.dev \
+    -o jsonpath='{.metadata.name}: {.status.storedVersions} {.spec.conversion.strategy}{"\n"}'
+done
+# networkscopes.network.hypersurgery.dev: ["v1"] Webhook
+# ...
+```
+
+### Reading and writing v1beta1
+
+`kubectl get subnetclaims` now shows v1, the preferred version. v1beta1 is still there, by name:
+`kubectl get subnetclaims.v1beta1.network.hypersurgery.dev`. With the conversion webhook, a
+request at v1beta1 needs a running operator pod to answer it (a request at v1 does not, since
+everything is stored at v1); while none is ready, v1beta1 requests fail and v1 requests work.
+That includes clients that still ask for v1beta1 after the operator is uninstalled: use v1, or
+set the CRDs back to `None` as below.
+
+One thing v1 checks that v1beta1 did not: `spec.regions`, `spec.accounts[].regions` and
+`spec.requiredSubnetTags` of a `NetworkScope` list each value once, and
+`spec.autoImport.accountDefaults` has one entry per account. The webhook refuses a duplicate at
+either version. A scope that already has one keeps working, and an update that leaves that list
+as it was is accepted.
+
+### Rolling back to 0.9
+
+Set the CRDs' conversion back to `None` first, then roll the release back. 0.9 reads and writes
+v1beta1 and does not serve the conversion webhook, so with `Webhook` every request it makes
+would fail:
+
+```sh
+for crd in networkscopes networks subnets subnetclaims resourceimports sheetexports; do
+  kubectl patch crd $crd.network.hypersurgery.dev --type=merge \
+    -p '{"spec":{"conversion":{"strategy":"None","webhook":null}}}'
+done
+helm rollback subnet-operator <revision> -n <namespace>
+```
+
+Keep the 1.0 CRDs. The 0.9 ones cannot be applied any more once `storedVersions` is `[v1]` (the
+API server refuses a CRD that drops a stored version), and they do not need to be: 0.9 works
+with v1beta1 as the 1.0 CRDs serve it, and what it writes is stored at v1. Upgrading to 1.0
+again later finds nothing to rewrite. `helm rollback` restores the values the 0.9 revision was
+installed with; values you moved under `providers.aws` for 1.0 are read by 0.9 as well.
+
+`internal/crdversions/rollback_test.go` runs the `kubectl` lines above, as they are written
+here, against a real API server in the state 1.0 leaves it in, and checks each of these
+statements: the conversion is `None` afterwards, v1beta1 reads and writes work, the 0.9 CRDs
+are refused, and an upgrade after that rewrites nothing.
+
+### Manifests in git
+
+Change `apiVersion: network.hypersurgery.dev/v1beta1` to `network.hypersurgery.dev/v1`; nothing
+else changes. `manager migrate-manifests` does it for a whole directory and keeps every document
+as it was written otherwise, comments included (it still converts `aws.hypersurgery/v1alpha1`
+too):
+
+```sh
+docker run --rm -i ghcr.io/aivandrago/subnet-operator:<version> migrate-manifests < old.yaml > new.yaml
+```
+
+A manifest left at v1beta1 keeps applying, with a warning, until v1beta1 is no longer served.
+
+### Values and flags removed in 1.0
+
+Deprecated in 0.9 ([Providers](#providers)), announced for removal in 0.10, and removed in 1.0,
+which follows 0.9 ([policy](../policy.md#deprecation)):
+
+| Removed in 1.0 | Instead |
+|---|---|
+| `events.queueUrl`, `events.debounce` | `providers.aws.events.queueUrl`, `providers.aws.events.debounce` |
+| `aws.region`, `aws.endpointURL` | `providers.aws.region`, `providers.aws.endpointURL` |
+| `networkPolicy.egress.podIdentity` (`enabled`, `cidr`, `port`) | `providers.aws.podIdentity`, the same keys |
+| `--events-queue-url`, `EVENTS_QUEUE_URL` | `--aws-events-queue-url` (the chart sets it from `providers.aws.events.queueUrl`) |
+| `--events-debounce` | `--aws-events-debounce` (the chart: `providers.aws.events.debounce`) |
+
+A values file that still sets one of these fails to render, naming the replacement, for example
+`Error: execution error at (subnet-operator/templates/deployment.yaml:1:4): aws.region was
+removed in 1.0; use providers.aws.region`; so do the old flags in `extraArgs` and
+`EVENTS_QUEUE_URL` in `extraEnv`. Nothing is changed in the cluster by the refused upgrade. The
+operator itself, outside the chart, refuses to start with an old flag or with
+`EVENTS_QUEUE_URL` set, and logs which replaces it. Without that, it would run without its event
+queue, in another region or against another endpoint, or the NetworkPolicy would cut it off from
+the EKS Pod Identity agent, and nothing would say so. An empty value (`queueUrl: ""`), as 0.9's
+own defaults have, is not refused.
+
+**`helm upgrade --reuse-values`** reuses the values the 0.9 release was installed with, old
+names included. Check them, and upgrade with a values file instead where they need moving:
+
+```sh
+helm get values subnet-operator -n <namespace> -o yaml > my-values.yaml
+# move events.*, aws.* and networkPolicy.egress.podIdentity under providers.aws, then:
+helm upgrade subnet-operator hypersurgery/subnet-operator -n <namespace> -f my-values.yaml
+```
+
+The [upgrade test](../policy.md#the-upgrade-test) installs 0.9 with the `providers.aws` names,
+checks that an upgrade with the old ones is refused and changes nothing, and then upgrades.
+
+### Values, flags and metrics
+
+| New in 1.0 | What it does |
+|---|---|
+| `webhook.conversion.enabled` (default `true`) | The operator points the CRDs' conversion at its webhook; `false` leaves it to the API server (`None`) |
+| `--crd-conversion` (`webhook`, `none`, or empty) | What the chart's value turns into; empty, the default outside the chart, leaves the CRDs' conversion as installed (the kustomize install sets it with cert-manager's CA injector) |
+| `--conversion-webhook-service` (`<namespace>/<name>`) | The Service in front of the webhook, for `--crd-conversion=webhook` |
+| `hs_crd_stored_versions{kind, version}` | 1 for each version a CRD's `status.storedVersions` lists |
+| `hs_storage_migration_rewritten_objects_total{kind}` | Objects the operator rewrote at the storage version |
 
 ## Rollback
 
@@ -604,7 +857,8 @@ What that does and does not do:
   leaves `ResourceImport` objects in the cluster, unreconciled. Delete them if the clutter
   bothers you — deleting a `ResourceImport` does not remove any tag.
 - **Pin the image if you roll back only the chart.** `image.tag` defaults to the chart's
-  `appVersion`; chart 0.3.1 and 0.3.0 both carry appVersion `v0.3.0`.
+  `appVersion`, so a chart rollback also rolls the image back unless your values pin
+  `image.tag`.
 
 After a rollback, check the same things as after an upgrade.
 
@@ -617,6 +871,7 @@ On your own cluster:
 ```sh
 kubectl -n subnet-operator-system rollout status deployment/subnet-operator
 kubectl get crds | grep hypersurgery                     # the kinds of the target version (and aws.hypersurgery until you delete it)
+kubectl get crd subnetclaims.network.hypersurgery.dev -o jsonpath='{.status.storedVersions}'   # from 1.0: ["v1"]
 kubectl get nscope                                       # Ready=True, "Last sync" within a resync interval
 kubectl get nscope <scope> -o jsonpath='{.status.conditions[?(@.type=="Ready")].message}'
 ```

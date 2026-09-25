@@ -51,35 +51,61 @@ func TestTheAWSProviderIsEnabledByDefault(t *testing.T) {
 	}
 }
 
-// providers.aws.* is where 0.9 configures AWS; the 0.8 names (events.*, aws.*) keep working
-// until 0.10, and the new name wins when both are set.
-func TestAWSSettingsUnderProvidersAndTheirDeprecatedNames(t *testing.T) {
+// providers.aws.* is where AWS is configured.
+func TestAWSSettingsUnderProviders(t *testing.T) {
+	args, env := managerSettings(t, "providers.aws.events.queueUrl=https://sqs.eu-central-1.amazonaws.com/1/q",
+		"providers.aws.events.debounce=30s", "providers.aws.region=eu-central-1",
+		"providers.aws.endpointURL=http://moto:5000")
+	for _, want := range []string{"--aws-events-queue-url=https://sqs.eu-central-1.amazonaws.com/1/q",
+		"--aws-events-debounce=30s"} {
+		if !slices.Contains(args, want) {
+			t.Errorf("args = %v, missing %s", args, want)
+		}
+	}
+	if env["AWS_REGION"] != "eu-central-1" || env["AWS_ENDPOINT_URL"] != "http://moto:5000" {
+		t.Errorf("env = %v", env)
+	}
+
+	args, _ = managerSettings(t, "providers.aws.events.queueUrl=https://sqs.eu-central-1.amazonaws.com/1/q")
+	if !slices.Contains(args, "--aws-events-debounce=10s") {
+		t.Errorf("args = %v, want the default debounce of 10s", args)
+	}
+}
+
+// The values and flags deprecated in 0.9 were removed in 1.0 (owner decision, 2026-09-25).
+// Rendered as they are, they would be ignored without a word, so the chart refuses them and
+// names the replacement.
+func TestTheValuesRemovedIn10AreRefused(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		set  []string
+		set  string
+		want string
 	}{
-		{"providers.aws", []string{"providers.aws.events.queueUrl=https://sqs.eu-central-1.amazonaws.com/1/q",
-			"providers.aws.events.debounce=30s", "providers.aws.region=eu-central-1",
-			"providers.aws.endpointURL=http://moto:5000"}},
-		{"the 0.7 names", []string{"events.queueUrl=https://sqs.eu-central-1.amazonaws.com/1/q",
-			"events.debounce=30s", "aws.region=eu-central-1", "aws.endpointURL=http://moto:5000"}},
-		{"both, the new ones win", []string{"providers.aws.events.queueUrl=https://sqs.eu-central-1.amazonaws.com/1/q",
-			"events.queueUrl=https://sqs.eu-west-1.amazonaws.com/1/old", "providers.aws.events.debounce=30s",
-			"events.debounce=5s", "providers.aws.region=eu-central-1", "aws.region=eu-west-1",
-			"providers.aws.endpointURL=http://moto:5000"}},
+		{"events.queueUrl=https://sqs.eu-central-1.amazonaws.com/1/q", "use providers.aws.events.queueUrl"},
+		{"events.debounce=30s", "use providers.aws.events.debounce"},
+		{"aws.region=eu-central-1", "use providers.aws.region"},
+		{"aws.endpointURL=http://moto:5000", "use providers.aws.endpointURL"},
+		{"networkPolicy.egress.podIdentity.enabled=false", "use providers.aws.podIdentity"},
+		{"networkPolicy.egress.podIdentity.port=81", "use providers.aws.podIdentity"},
+		{"extraArgs[0]=--events-queue-url=https://sqs.eu-central-1.amazonaws.com/1/q", "--aws-events-queue-url"},
+		{"extraArgs[0]=--events-debounce=30s", "--aws-events-debounce"},
+		{"extraEnv[0].name=EVENTS_QUEUE_URL", "use providers.aws.events.queueUrl"},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			args, env := managerSettings(t, tc.set...)
-			for _, want := range []string{"--aws-events-queue-url=https://sqs.eu-central-1.amazonaws.com/1/q",
-				"--aws-events-debounce=30s"} {
-				if !slices.Contains(args, want) {
-					t.Errorf("args = %v, missing %s", args, want)
-				}
-			}
-			if env["AWS_REGION"] != "eu-central-1" || env["AWS_ENDPOINT_URL"] != "http://moto:5000" {
-				t.Errorf("env = %v", env)
-			}
-		})
+		out, err := exec.Command(helmBinary(t), "template", "release", chartDir, "--set", tc.set).CombinedOutput()
+		if err == nil {
+			t.Errorf("%s rendered; want it refused", tc.set)
+			continue
+		}
+		if !strings.Contains(string(out), tc.want) || !strings.Contains(string(out), "removed in 1.0") {
+			t.Errorf("%s: %s; want a message naming %q", tc.set, out, tc.want)
+		}
+	}
+
+	// helm upgrade --reuse-values from 0.9 carries 0.9's defaults, which are empty: they
+	// render, and so do the flags that replaced the removed ones.
+	r := render(t, "events.queueUrl=", "events.debounce=", "aws.region=", "aws.endpointURL=",
+		"extraArgs[0]=--aws-events-debounce=30s")
+	if !slices.Contains(r.names, "Deployment/release-subnet-operator") {
+		t.Errorf("no Deployment among %v", r.names)
 	}
 }
 
@@ -131,25 +157,19 @@ func podIdentityEgress(t *testing.T, set ...string) string {
 	return ""
 }
 
-// The Pod Identity agent is AWS's, so its egress rule is configured under providers.aws since
-// 0.9 (owner decision, 2026-09-25). The 0.8 name, networkPolicy.egress.podIdentity, keeps
-// working until 0.10, and a key set under the new name wins.
-func TestPodIdentityEgressUnderProvidersAndItsDeprecatedName(t *testing.T) {
+// The Pod Identity agent is AWS's, so its egress rule is configured under providers.aws
+// (owner decision, 2026-09-25).
+func TestPodIdentityEgressUnderProviders(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		set  []string
 		want string
 	}{
 		{"defaults", nil, "169.254.170.23/32:80"},
-		{"providers.aws, off (IRSA)", []string{"providers.aws.podIdentity.enabled=false"}, ""},
-		{"providers.aws, elsewhere", []string{"providers.aws.podIdentity.cidr=10.0.0.1/32",
+		{"off (IRSA)", []string{"providers.aws.podIdentity.enabled=false"}, ""},
+		{"elsewhere", []string{"providers.aws.podIdentity.cidr=10.0.0.1/32",
 			"providers.aws.podIdentity.port=81"}, "10.0.0.1/32:81"},
-		{"the 0.8 name, off", []string{"networkPolicy.egress.podIdentity.enabled=false"}, ""},
-		{"the 0.8 name, elsewhere", []string{"networkPolicy.egress.podIdentity.cidr=10.0.0.1/32",
-			"networkPolicy.egress.podIdentity.port=81"}, "10.0.0.1/32:81"},
-		{"both, the new one wins", []string{"networkPolicy.egress.podIdentity.enabled=false",
-			"providers.aws.podIdentity.enabled=true", "networkPolicy.egress.podIdentity.port=81",
-			"providers.aws.podIdentity.port=82"}, "169.254.170.23/32:82"},
+		{"on, explicitly", []string{"providers.aws.podIdentity.enabled=true"}, "169.254.170.23/32:80"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := podIdentityEgress(t, tc.set...); got != tc.want {

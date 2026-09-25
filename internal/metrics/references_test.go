@@ -37,7 +37,9 @@ const root = "../.."
 
 // otherMetrics are exported by other packages of the operator.
 var otherMetrics = map[string][]string{
-	"hs_migration_pending_objects": {"kind"},
+	"hs_migration_pending_objects":                 {"kind"},
+	"hs_crd_stored_versions":                       {"kind", "version"},
+	"hs_storage_migration_rewritten_objects_total": {"kind"},
 }
 
 // removedAllowed are the files that may still name the hs_aws_* metrics 0.9 removed: the ones
@@ -286,6 +288,12 @@ func TestEveryAlertHasARunbookSection(t *testing.T) {
 		if !anchors[strings.ToLower(rule.name)] {
 			missing = append(missing, rule.name)
 		}
+		// Alertmanager shows runbook_url next to the alert: each one links its own section.
+		own := "runbook_url: \"https://github.com/aivandrago/subnet-operator/blob/main/docs/operations/runbook.md#" +
+			strings.ToLower(rule.name) + "\""
+		if !strings.Contains(rule.body, own) {
+			t.Errorf("alert %s has no runbook_url annotation linking its runbook section", rule.name)
+		}
 		for _, m := range link.FindAllStringSubmatch(rule.body, -1) {
 			if !anchors[m[1]] {
 				t.Errorf("alert %s links to runbook.md#%s, which is not a section", rule.name, m[1])
@@ -295,5 +303,23 @@ func TestEveryAlertHasARunbookSection(t *testing.T) {
 	slices.Sort(missing)
 	if len(missing) > 0 {
 		t.Errorf("alerts without a section in docs/operations/runbook.md: %v", missing)
+	}
+}
+
+// The troubleshooting index in docs/operations/README.md links every alert the chart ships to
+// its runbook entry, so someone paged by an alert finds it from the index as well as from the
+// alert's runbook_url.
+func TestTroubleshootingIndexListsEveryAlert(t *testing.T) {
+	index := read(t, "docs/operations/README.md")
+	_, section, found := strings.Cut(index, "## Troubleshooting index")
+	if !found {
+		t.Fatal("docs/operations/README.md has no \"## Troubleshooting index\" section")
+	}
+	for _, rule := range alertRules(t) {
+		link := "(runbook.md#" + strings.ToLower(rule.name) + ")"
+		if !strings.Contains(section, "`"+rule.name+"`") || !strings.Contains(section, link) {
+			t.Errorf("the troubleshooting index in docs/operations/README.md does not list alert %s with a link %s",
+				rule.name, link)
+		}
 	}
 }

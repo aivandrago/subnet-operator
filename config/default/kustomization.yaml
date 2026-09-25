@@ -222,6 +222,60 @@ patches:
 #     name: serving-cert
 #     fieldPath: .metadata.namespace # Namespace of the certificate CR
 #   targets: # Do not remove or uncomment the following scaffold marker; required to generate code for target CRD.
+#     - select:
+#         kind: CustomResourceDefinition
+#         name: networkscopes.network.hypersurgery.dev
+#       fieldPaths:
+#         - .metadata.annotations.[cert-manager.io/inject-ca-from]
+#       options:
+#         delimiter: '/'
+#         index: 0
+#         create: true
+#     - select:
+#         kind: CustomResourceDefinition
+#         name: networks.network.hypersurgery.dev
+#       fieldPaths:
+#         - .metadata.annotations.[cert-manager.io/inject-ca-from]
+#       options:
+#         delimiter: '/'
+#         index: 0
+#         create: true
+#     - select:
+#         kind: CustomResourceDefinition
+#         name: subnets.network.hypersurgery.dev
+#       fieldPaths:
+#         - .metadata.annotations.[cert-manager.io/inject-ca-from]
+#       options:
+#         delimiter: '/'
+#         index: 0
+#         create: true
+#     - select:
+#         kind: CustomResourceDefinition
+#         name: sheetexports.network.hypersurgery.dev
+#       fieldPaths:
+#         - .metadata.annotations.[cert-manager.io/inject-ca-from]
+#       options:
+#         delimiter: '/'
+#         index: 0
+#         create: true
+#     - select:
+#         kind: CustomResourceDefinition
+#         name: subnetclaims.network.hypersurgery.dev
+#       fieldPaths:
+#         - .metadata.annotations.[cert-manager.io/inject-ca-from]
+#       options:
+#         delimiter: '/'
+#         index: 0
+#         create: true
+#     - select:
+#         kind: CustomResourceDefinition
+#         name: resourceimports.network.hypersurgery.dev
+#       fieldPaths:
+#         - .metadata.annotations.[cert-manager.io/inject-ca-from]
+#       options:
+#         delimiter: '/'
+#         index: 0
+#         create: true
 # +kubebuilder:scaffold:crdkustomizecainjectionns
 # - source:
 #     kind: Certificate
@@ -230,4 +284,58 @@ patches:
 #     name: serving-cert
 #     fieldPath: .metadata.name
 #   targets: # Do not remove or uncomment the following scaffold marker; required to generate code for target CRD.
+#     - select:
+#         kind: CustomResourceDefinition
+#         name: networkscopes.network.hypersurgery.dev
+#       fieldPaths:
+#         - .metadata.annotations.[cert-manager.io/inject-ca-from]
+#       options:
+#         delimiter: '/'
+#         index: 1
+#         create: true
+#     - select:
+#         kind: CustomResourceDefinition
+#         name: networks.network.hypersurgery.dev
+#       fieldPaths:
+#         - .metadata.annotations.[cert-manager.io/inject-ca-from]
+#       options:
+#         delimiter: '/'
+#         index: 1
+#         create: true
+#     - select:
+#         kind: CustomResourceDefinition
+#         name: subnets.network.hypersurgery.dev
+#       fieldPaths:
+#         - .metadata.annotations.[cert-manager.io/inject-ca-from]
+#       options:
+#         delimiter: '/'
+#         index: 1
+#         create: true
+#     - select:
+#         kind: CustomResourceDefinition
+#         name: sheetexports.network.hypersurgery.dev
+#       fieldPaths:
+#         - .metadata.annotations.[cert-manager.io/inject-ca-from]
+#       options:
+#         delimiter: '/'
+#         index: 1
+#         create: true
+#     - select:
+#         kind: CustomResourceDefinition
+#         name: subnetclaims.network.hypersurgery.dev
+#       fieldPaths:
+#         - .metadata.annotations.[cert-manager.io/inject-ca-from]
+#       options:
+#         delimiter: '/'
+#         index: 1
+#         create: true
+#     - select:
+#         kind: CustomResourceDefinition
+#         name: resourceimports.network.hypersurgery.dev
+#       fieldPaths:
+#         - .metadata.annotations.[cert-manager.io/inject-ca-from]
+#       options:
+#         delimiter: '/'
+#         index: 1
+#         create: true
 # +kubebuilder:scaffold:crdkustomizecainjectionname

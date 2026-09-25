@@ -13,6 +13,12 @@ resources:
 patches:
 # [WEBHOOK] To enable webhook, uncomment all the sections with [WEBHOOK] prefix.
 # patches here are for enabling the conversion webhook for each CRD
+#- path: patches/webhook_in_networkscopes.yaml
+#- path: patches/webhook_in_networks.yaml
+#- path: patches/webhook_in_subnets.yaml
+#- path: patches/webhook_in_sheetexports.yaml
+#- path: patches/webhook_in_subnetclaims.yaml
+#- path: patches/webhook_in_resourceimports.yaml
 # +kubebuilder:scaffold:crdkustomizewebhookpatch
 
 # [WEBHOOK] To enable webhook, uncomment the following section

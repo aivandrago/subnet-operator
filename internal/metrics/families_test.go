@@ -28,7 +28,7 @@ import (
 
 	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 
-	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
+	networkv1 "hypersurgery.dev/subnet-operator/api/v1"
 )
 
 // The metrics, as ADR 0002 §7 decides them, with the hs_aws_* name each had up to 0.8. The
@@ -136,11 +136,11 @@ func exerciseEverything(t *testing.T, scope string) {
 	})
 	sub := subnet("subnet-1", "team-a", 10)
 	sub.Status.Zone = "eu-central-1a"
-	net := networkv1beta1.Network{
-		Spec:   networkv1beta1.NetworkSpec{ID: "vpc-1", Account: "111111111111", Region: "eu-central-1"},
-		Status: networkv1beta1.NetworkStatus{Name: "hub", OverlapsWith: []string{"vpc-2"}},
+	net := networkv1.Network{
+		Spec:   networkv1.NetworkSpec{ID: "vpc-1", Account: "111111111111", Region: "eu-central-1"},
+		Status: networkv1.NetworkStatus{Name: "hub", OverlapsWith: []string{"vpc-2"}},
 	}
-	SetScope(scope, aws, []networkv1beta1.Network{net}, []networkv1beta1.Subnet{sub},
+	SetScope(scope, aws, []networkv1.Network{net}, []networkv1.Subnet{sub},
 		[]TargetResult{{Account: "111111111111", Region: "eu-central-1", Synced: true}}, 42)
 	Unmanaged(scope, aws, "111111111111", "eu-central-1", KindNetwork, []string{"vpc-9"})
 	Unmanaged(scope, aws, "111111111111", "eu-central-1", KindSubnet, []string{"subnet-9"})

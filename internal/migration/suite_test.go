@@ -32,7 +32,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
+	networkv1 "hypersurgery.dev/subnet-operator/api/v1"
 )
 
 // The specs run against a real API server with the CRDs of this release and, as a cluster
@@ -57,7 +57,7 @@ var _ = BeforeSuite(func() {
 	logf.SetLogger(zap.New(zap.WriteTo(GinkgoWriter), zap.UseDevMode(true)))
 	ctx, cancel = context.WithCancel(context.TODO())
 
-	Expect(networkv1beta1.AddToScheme(scheme.Scheme)).To(Succeed())
+	Expect(networkv1.AddToScheme(scheme.Scheme)).To(Succeed())
 
 	testEnv = &envtest.Environment{
 		CRDDirectoryPaths: []string{

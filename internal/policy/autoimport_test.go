@@ -21,7 +21,7 @@ import (
 	"slices"
 	"testing"
 
-	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
+	networkv1 "hypersurgery.dev/subnet-operator/api/v1"
 )
 
 const (
@@ -30,15 +30,15 @@ const (
 	console  = "arn:aws:sts::111111111111:assumed-role/ops-admin/anton"
 )
 
-func fullPolicy() *networkv1beta1.AutoImportPolicy {
-	return &networkv1beta1.AutoImportPolicy{
-		Mode: networkv1beta1.AutoImportApply,
-		FromCreator: []networkv1beta1.CreatorRule{
+func fullPolicy() *networkv1.AutoImportPolicy {
+	return &networkv1.AutoImportPolicy{
+		Mode: networkv1.AutoImportApply,
+		FromCreator: []networkv1.CreatorRule{
 			{PrincipalPrefix: "arn:aws:sts::222222222222:assumed-role/payments-", Tags: map[string]string{"hs/owner": "team-payments"}},
 		},
 		InheritFromNetwork: []string{"hs/owner", "hs/env"},
-		AccountDefaults:    []networkv1beta1.AccountDefault{{Account: "111111111111", Tags: map[string]string{"hs/owner": "team-platform"}}},
-		Skip: []networkv1beta1.SkipRule{
+		AccountDefaults:    []networkv1.AccountDefault{{Account: "111111111111", Tags: map[string]string{"hs/owner": "team-platform"}}},
+		Skip: []networkv1.SkipRule{
 			{TagKey: "managed-by", TagValue: "terraform"},
 			{PrincipalPrefix: "arn:aws:sts::222222222222:assumed-role/terraform-"},
 		},
@@ -55,13 +55,13 @@ func TestDecide(t *testing.T) {
 		name     string
 		resource Resource
 		creator  string
-		policy   *networkv1beta1.AutoImportPolicy
+		policy   *networkv1.AutoImportPolicy
 		want     Verdict
 		tags     map[string]string
 	}{
 		{
 			name: "off by default", resource: subnet(nil, nil), creator: payments,
-			policy: &networkv1beta1.AutoImportPolicy{}, want: VerdictNone,
+			policy: &networkv1.AutoImportPolicy{}, want: VerdictNone,
 		},
 		{
 			name: "nil policy", resource: subnet(nil, nil), creator: payments, policy: nil, want: VerdictNone,
@@ -166,14 +166,14 @@ func TestDecideCustomManagedTag(t *testing.T) {
 	if got.Tags["netops/managed"] != "yes" {
 		t.Fatalf("tags = %v, want the custom managed tag", got.Tags)
 	}
-	if _, ok := got.Tags[networkv1beta1.DefaultManagedTag]; ok {
+	if _, ok := got.Tags[networkv1.DefaultManagedTag]; ok {
 		t.Error("the default managed tag must not be added as well")
 	}
 }
 
 func TestDecideDryRunStillDecides(t *testing.T) {
 	p := fullPolicy()
-	p.Mode = networkv1beta1.AutoImportDryRun
+	p.Mode = networkv1.AutoImportDryRun
 	// Dry run is about what the controller does with the decision, not about the decision.
 	if got := Decide(subnet(nil, nil), payments, p); got.Verdict != VerdictImport {
 		t.Fatalf("verdict = %q, want import", got.Verdict)

@@ -133,6 +133,7 @@ type NetworkScopeSpec struct {
 	// clouds, a new scope does. More values are added by the releases that implement them.
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="provider is immutable"
 	// +required
+	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Provider",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:select:AWS"}
 	Provider Provider `json:"provider"`
 
 	// accounts to discover.
@@ -141,6 +142,7 @@ type NetworkScopeSpec struct {
 	// +listType=map
 	// +listMapKey=id
 	// +required
+	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Accounts"
 	Accounts []Account `json:"accounts"`
 
 	// regions to discover in every account (unless the account overrides them): AWS regions
@@ -148,17 +150,20 @@ type NetworkScopeSpec struct {
 	// +kubebuilder:validation:MinItems=1
 	// +listType=atomic
 	// +required
+	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Regions"
 	Regions []string `json:"regions"`
 
 	// networkSelector limits discovery to the networks (AWS VPCs) it selects. When unset or
 	// empty, every network is discovered.
 	// +optional
+	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Network Selector"
 	NetworkSelector *NetworkSelector `json:"networkSelector,omitempty"`
 
 	// requiredSubnetTags are tag keys every subnet must have. Missing keys are reported in the
 	// Subnet status and as metrics.
 	// +listType=atomic
 	// +optional
+	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Required Subnet Tags"
 	RequiredSubnetTags []string `json:"requiredSubnetTags,omitempty"`
 
 	// tagKeys maps inventory fields (owner, env, tier) to tag keys. Unset keys default per
@@ -169,6 +174,7 @@ type NetworkScopeSpec struct {
 	// resyncInterval is how often the full inventory is refreshed.
 	// +kubebuilder:default="10m"
 	// +optional
+	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Resync Interval",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text","urn:alm:descriptor:com.tectonic.ui:advanced"}
 	ResyncInterval *metav1.Duration `json:"resyncInterval,omitempty"`
 
 	// discoverUnmanaged also lists the networks the selector does not match, and their
@@ -176,11 +182,13 @@ type NetworkScopeSpec struct {
 	// staying invisible. They are reported and alerted on, never mirrored as objects.
 	// +kubebuilder:default=true
 	// +optional
+	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Discover Unmanaged",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:booleanSwitch","urn:alm:descriptor:com.tectonic.ui:advanced"}
 	DiscoverUnmanaged *bool `json:"discoverUnmanaged,omitempty"`
 
 	// autoImport tags unmanaged resources on its own, deriving the tags from who created the
 	// resource, from its network, or from the account. Off unless configured.
 	// +optional
+	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Auto Import",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:advanced"}
 	AutoImport *AutoImportPolicy `json:"autoImport,omitempty"`
 
 	// namespaceSelector selects the namespaces whose SubnetClaims and ResourceImports may refer
@@ -195,6 +203,7 @@ type NetworkScopeSpec struct {
 	// When unset, no namespace may use the scope. (In aws.hypersurgery/v1alpha1 unset allowed
 	// every namespace; migrated scopes get an explicit {} instead.)
 	// +optional
+	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Namespace Selector"
 	NamespaceSelector *metav1.LabelSelector `json:"namespaceSelector,omitempty"`
 
 	// aws holds scope-wide AWS settings. Only valid with provider AWS.
@@ -241,19 +250,23 @@ type NetworkScopeStatus struct {
 
 	// lastSyncTime is when the last full sync finished.
 	// +optional
+	// +operator-sdk:csv:customresourcedefinitions:type=status,displayName="Last Sync",xDescriptors={"urn:alm:descriptor:timestamp"}
 	LastSyncTime *metav1.Time `json:"lastSyncTime,omitempty"`
 
 	// networks is the number of networks discovered across all targets.
 	// +optional
+	// +operator-sdk:csv:customresourcedefinitions:type=status,displayName="Networks",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:number"}
 	Networks int32 `json:"networks,omitempty"`
 
 	// subnets is the number of subnets discovered across all targets.
 	// +optional
+	// +operator-sdk:csv:customresourcedefinitions:type=status,displayName="Subnets",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:number"}
 	Subnets int32 `json:"subnets,omitempty"`
 
 	// unmanaged is the number of discovered resources without the managed tag, across all
 	// targets. Anything above zero is something nobody has taken responsibility for.
 	// +optional
+	// +operator-sdk:csv:customresourcedefinitions:type=status,displayName="Unmanaged",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:number"}
 	Unmanaged int32 `json:"unmanaged,omitempty"`
 
 	// capabilities lists what the scope's provider can do as the operator runs it:
@@ -269,16 +282,19 @@ type NetworkScopeStatus struct {
 	// targets reports each account/region pair.
 	// +listType=atomic
 	// +optional
+	// +operator-sdk:csv:customresourcedefinitions:type=status,displayName="Targets"
 	Targets []TargetStatus `json:"targets,omitempty"`
 
 	// conditions: Ready is True when every target synced successfully.
 	// +listType=map
 	// +listMapKey=type
 	// +optional
+	// +operator-sdk:csv:customresourcedefinitions:type=status,displayName="Conditions",xDescriptors={"urn:alm:descriptor:io.kubernetes.conditions"}
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
 // +kubebuilder:object:root=true
+// +kubebuilder:deprecatedversion:warning="network.hypersurgery.dev/v1beta1 is deprecated: use network.hypersurgery.dev/v1, which has the same fields. v1beta1 is served until at least 1.2 and six months after 1.0"
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Cluster,shortName=nscope,categories=hypersurgery
 // +kubebuilder:printcolumn:name="Provider",type=string,JSONPath=`.spec.provider`
@@ -287,6 +303,7 @@ type NetworkScopeStatus struct {
 // +kubebuilder:printcolumn:name="Unmanaged",type=integer,JSONPath=`.status.unmanaged`
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
 // +kubebuilder:printcolumn:name="Last sync",type=date,JSONPath=`.status.lastSyncTime`
+// +operator-sdk:csv:customresourcedefinitions:displayName="Network Scope",resources={{Network,v1,""},{Subnet,v1,""},{ResourceImport,v1,""},{Event,v1,""}}
 
 // NetworkScope selects the accounts and regions of one provider whose networks and subnets
 // are discovered.

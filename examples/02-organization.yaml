@@ -1,6 +1,6 @@
 # Several accounts, reached with sts:AssumeRole. Deploy deploy/iam/spoke-readonly-role.cfn.yaml
 # to each account first; the role name there matches the roleARN below.
-apiVersion: network.hypersurgery.dev/v1beta1
+apiVersion: network.hypersurgery.dev/v1
 kind: NetworkScope
 metadata:
   name: organization

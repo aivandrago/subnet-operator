@@ -36,7 +36,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
+	networkv1 "hypersurgery.dev/subnet-operator/api/v1"
 	"hypersurgery.dev/subnet-operator/internal/audit"
 	"hypersurgery.dev/subnet-operator/internal/inventory"
 	"hypersurgery.dev/subnet-operator/internal/metrics"
@@ -79,7 +79,7 @@ type ResourceImportReconciler struct {
 func (r *ResourceImportReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
-	imp := &networkv1beta1.ResourceImport{}
+	imp := &networkv1.ResourceImport{}
 	if err := r.Get(ctx, req.NamespacedName, imp); err != nil {
 		if apierrors.IsNotFound(err) {
 			metrics.ForgetImport(req.Namespace, req.Name)
@@ -107,12 +107,12 @@ func (r *ResourceImportReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	return ctrl.Result{RequeueAfter: requeue}, nil
 }
 
-func (r *ResourceImportReconciler) reconcile(ctx context.Context, imp *networkv1beta1.ResourceImport) (
-	networkv1beta1.ResourceImportStatus, time.Duration, error) {
+func (r *ResourceImportReconciler) reconcile(ctx context.Context, imp *networkv1.ResourceImport) (
+	networkv1.ResourceImportStatus, time.Duration, error) {
 	status := *imp.Status.DeepCopy()
 	status.ObservedGeneration = imp.Generation
 
-	fail := func(state, reason, msg string) (networkv1beta1.ResourceImportStatus, time.Duration, error) {
+	fail := func(state, reason, msg string) (networkv1.ResourceImportStatus, time.Duration, error) {
 		status.State = state
 		setImportCondition(&status, ConditionReady, metav1.ConditionFalse, reason, msg, imp.Generation)
 		eventf(r.Recorder, imp, corev1.EventTypeWarning, reason, ActionApplyTags, "%s", msg)
@@ -121,15 +121,15 @@ func (r *ResourceImportReconciler) reconcile(ctx context.Context, imp *networkv1
 
 	// Already done: CreateTags is idempotent, but calling AWS on every resync would be noise
 	// in somebody's CloudTrail for no reason.
-	if status.State == networkv1beta1.ImportApplied && maps.Equal(status.AppliedTags, imp.Spec.Tags) &&
+	if status.State == networkv1.ImportApplied && maps.Equal(status.AppliedTags, imp.Spec.Tags) &&
 		meta.IsStatusConditionTrue(status.Conditions, ConditionReady) {
 		return status, 0, nil
 	}
 
-	scope := &networkv1beta1.NetworkScope{}
+	scope := &networkv1.NetworkScope{}
 	if err := r.Get(ctx, types.NamespacedName{Name: imp.Spec.ScopeRef}, scope); err != nil {
 		if apierrors.IsNotFound(err) {
-			return fail(networkv1beta1.ImportFailed, "ScopeNotFound",
+			return fail(networkv1.ImportFailed, "ScopeNotFound",
 				fmt.Sprintf("NetworkScope %q not found", imp.Spec.ScopeRef))
 		}
 		return status, 0, err
@@ -140,25 +140,25 @@ func (r *ResourceImportReconciler) reconcile(ctx context.Context, imp *networkv1
 	if refusal, err := namespaceRefusal(ctx, r.Client, scope, imp.Namespace); err != nil {
 		return status, 0, err
 	} else if refusal != "" {
-		return fail(networkv1beta1.ImportFailed, tenancy.ReasonNamespaceNotAllowed, refusal)
+		return fail(networkv1.ImportFailed, tenancy.ReasonNamespaceNotAllowed, refusal)
 	}
 	p, ok := r.Providers.Get(scope.Spec.Provider)
 	if !ok {
-		return fail(networkv1beta1.ImportFailed, ReasonProviderNotEnabled, r.Providers.NotEnabled(scope.Spec.Provider))
+		return fail(networkv1.ImportFailed, ReasonProviderNotEnabled, r.Providers.NotEnabled(scope.Spec.Provider))
 	}
 	// The webhook refuses the same imports at apply time.
 	if reason, msg := p.ImportRefusal(imp); reason != "" {
-		return fail(networkv1beta1.ImportFailed, reason, msg)
+		return fail(networkv1.ImportFailed, reason, msg)
 	}
 	target, ok := writeTarget(scope, p, imp.Spec.Account, imp.Spec.Region)
 	if !ok {
-		return fail(networkv1beta1.ImportFailed, "AccountNotInScope",
+		return fail(networkv1.ImportFailed, "AccountNotInScope",
 			fmt.Sprintf("account %s in %s is not covered by NetworkScope %q",
 				imp.Spec.Account, imp.Spec.Region, scope.Name))
 	}
 
 	if imp.Spec.DryRun {
-		status.State = networkv1beta1.ImportSkipped
+		status.State = networkv1.ImportSkipped
 		status.Error = ""
 		setImportCondition(&status, ConditionReady, metav1.ConditionTrue, "DryRun",
 			fmt.Sprintf("dry run: %s would get %s", imp.Spec.ResourceID, formatTags(imp.Spec.Tags)), imp.Generation)
@@ -168,11 +168,11 @@ func (r *ResourceImportReconciler) reconcile(ctx context.Context, imp *networkv1
 		return status, 0, nil
 	}
 	if !r.WritesEnabled {
-		return fail(networkv1beta1.ImportPending, "WritesDisabled",
+		return fail(networkv1.ImportPending, "WritesDisabled",
 			"the operator runs read-only; start it with --enable-writes to apply tags")
 	}
 	if provider.MissingWriteIdentity(p, scope, imp.Spec.Account) {
-		return fail(networkv1beta1.ImportPending, "NoWriteRole",
+		return fail(networkv1.ImportPending, "NoWriteRole",
 			fmt.Sprintf("account %s has no %s in NetworkScope %q; one with %s alone is enough",
 				imp.Spec.Account, p.WriteIdentityField(), scope.Name, p.OwnershipPermission()))
 	}
@@ -180,11 +180,11 @@ func (r *ResourceImportReconciler) reconcile(ctx context.Context, imp *networkv1
 	if err := p.WriteOwnership(ctx, target, imp.Spec.ResourceID, imp.Spec.Tags); err != nil {
 		status.Error = err.Error()
 		r.record(ctx, imp, audit.ResultFailed, err.Error())
-		return fail(networkv1beta1.ImportFailed, "TagsNotApplied", err.Error())
+		return fail(networkv1.ImportFailed, "TagsNotApplied", err.Error())
 	}
 
 	now := metav1.Now()
-	status.State = networkv1beta1.ImportApplied
+	status.State = networkv1.ImportApplied
 	status.AppliedTags = maps.Clone(imp.Spec.Tags)
 	status.AppliedTime = &now
 	status.Error = ""
@@ -206,7 +206,7 @@ func (r *ResourceImportReconciler) reconcile(ctx context.Context, imp *networkv1
 // which is what the auto-import policy filled with the CloudTrail creator, so a line written
 // here and a line written by the policy name the same person. created_by is the Kubernetes
 // user that created the import, which is what to believe when the two disagree.
-func (r *ResourceImportReconciler) record(ctx context.Context, imp *networkv1beta1.ResourceImport,
+func (r *ResourceImportReconciler) record(ctx context.Context, imp *networkv1.ResourceImport,
 	result, failure string) {
 	if r.Audit == nil {
 		return
@@ -245,11 +245,11 @@ func (r *ResourceImportReconciler) record(ctx context.Context, imp *networkv1bet
 // which is what the audit line should say rather than claiming the resource had no tags.
 func (r *ResourceImportReconciler) knownTags(ctx context.Context, resourceID string) map[string]string {
 	key := types.NamespacedName{Name: resourceID}
-	subnet := &networkv1beta1.Subnet{}
+	subnet := &networkv1.Subnet{}
 	if err := r.reader().Get(ctx, key, subnet); err == nil {
 		return subnet.Status.Tags
 	}
-	network := &networkv1beta1.Network{}
+	network := &networkv1.Network{}
 	if err := r.reader().Get(ctx, key, network); err == nil {
 		return network.Status.Tags
 	}
@@ -273,17 +273,17 @@ func formatTags(tags map[string]string) string {
 	return strings.Join(parts, ", ")
 }
 
-func setImportCondition(status *networkv1beta1.ResourceImportStatus, typ string, st metav1.ConditionStatus,
+func setImportCondition(status *networkv1.ResourceImportStatus, typ string, st metav1.ConditionStatus,
 	reason, msg string, gen int64) {
 	meta.SetStatusCondition(&status.Conditions, metav1.Condition{
 		Type: typ, Status: st, Reason: reason, Message: msg, ObservedGeneration: gen,
 	})
 }
 
-func (r *ResourceImportReconciler) writeStatus(ctx context.Context, imp *networkv1beta1.ResourceImport,
-	status networkv1beta1.ResourceImportStatus) error {
+func (r *ResourceImportReconciler) writeStatus(ctx context.Context, imp *networkv1.ResourceImport,
+	status networkv1.ResourceImportStatus) error {
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		latest := &networkv1beta1.ResourceImport{}
+		latest := &networkv1.ResourceImport{}
 		if err := r.Get(ctx, client.ObjectKeyFromObject(imp), latest); err != nil {
 			return client.IgnoreNotFound(err)
 		}
@@ -295,7 +295,7 @@ func (r *ResourceImportReconciler) writeStatus(ctx context.Context, imp *network
 // SetupWithManager sets up the controller with the Manager.
 func (r *ResourceImportReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&networkv1beta1.ResourceImport{}).
+		For(&networkv1.ResourceImport{}).
 		Named("resourceimport").
 		Complete(r)
 }

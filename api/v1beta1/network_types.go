@@ -24,13 +24,17 @@ import (
 // NetworkSpec identifies the observed network. It is written by the operator, not by users.
 type NetworkSpec struct {
 	// provider is the provider of the scope that discovered the network.
+	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Provider",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
 	Provider Provider `json:"provider"`
 	// id is the provider's ID of the network; for AWS the VPC ID.
+	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="ID",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
 	ID string `json:"id"`
 	// account is the account that owns the network.
+	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Account",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
 	Account string `json:"account"`
 	// region of the network. Empty for providers whose networks are global.
 	// +optional
+	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Region",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
 	Region string `json:"region,omitempty"`
 }
 
@@ -45,13 +49,16 @@ type AWSNetworkStatus struct {
 type NetworkStatus struct {
 	// name is the value of the Name tag.
 	// +optional
+	// +operator-sdk:csv:customresourcedefinitions:type=status,displayName="Name",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
 	Name string `json:"name,omitempty"`
 	// state is the provider's state of the network.
 	// +optional
+	// +operator-sdk:csv:customresourcedefinitions:type=status,displayName="State",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
 	State string `json:"state,omitempty"`
 	// cidrBlocks are the associated IPv4 CIDR blocks, primary first.
 	// +listType=atomic
 	// +optional
+	// +operator-sdk:csv:customresourcedefinitions:type=status,displayName="CIDR Blocks"
 	CIDRBlocks []string `json:"cidrBlocks,omitempty"`
 	// ipv6CIDRBlocks are the associated IPv6 CIDR blocks.
 	// +listType=atomic
@@ -59,6 +66,7 @@ type NetworkStatus struct {
 	IPv6CIDRBlocks []string `json:"ipv6CIDRBlocks,omitempty"`
 	// owner is read from the owner tag configured in the NetworkScope.
 	// +optional
+	// +operator-sdk:csv:customresourcedefinitions:type=status,displayName="Owner",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
 	Owner string `json:"owner,omitempty"`
 	// env is read from the env tag configured in the NetworkScope.
 	// +optional
@@ -68,6 +76,7 @@ type NetworkStatus struct {
 	Tags map[string]string `json:"tags,omitempty"`
 	// subnets is the number of discovered subnets.
 	// +optional
+	// +operator-sdk:csv:customresourcedefinitions:type=status,displayName="Subnets",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:number"}
 	Subnets int32 `json:"subnets,omitempty"`
 	// totalIPs is the sum of usable IPv4 addresses in all subnets. Unset when unknown.
 	// +optional
@@ -75,11 +84,13 @@ type NetworkStatus struct {
 	// availableIPs is the sum of free IPv4 addresses in all subnets. Unset when the free
 	// addresses of any subnet are unknown.
 	// +optional
+	// +operator-sdk:csv:customresourcedefinitions:type=status,displayName="Free IPs",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:number"}
 	AvailableIPs *int64 `json:"availableIPs,omitempty"`
 	// overlapsWith lists networks in the same NetworkScope whose CIDRs overlap this one, as
 	// "<account>/<region>/<id>". Overlaps break peering and transit routing.
 	// +listType=atomic
 	// +optional
+	// +operator-sdk:csv:customresourcedefinitions:type=status,displayName="Overlaps With"
 	OverlapsWith []string `json:"overlapsWith,omitempty"`
 	// aws holds what only an AWS VPC has.
 	// +optional
@@ -87,6 +98,7 @@ type NetworkStatus struct {
 }
 
 // +kubebuilder:object:root=true
+// +kubebuilder:deprecatedversion:warning="network.hypersurgery.dev/v1beta1 is deprecated: use network.hypersurgery.dev/v1, which has the same fields. v1beta1 is served until at least 1.2 and six months after 1.0"
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Cluster,shortName=hsnet,categories=hypersurgery
 // +kubebuilder:printcolumn:name="Provider",type=string,JSONPath=`.spec.provider`
@@ -99,6 +111,7 @@ type NetworkStatus struct {
 // +kubebuilder:printcolumn:name="Free IPs",type=integer,JSONPath=`.status.availableIPs`
 // +kubebuilder:printcolumn:name="Env",type=string,JSONPath=`.status.env`,priority=1
 // +kubebuilder:printcolumn:name="Overlaps",type=string,JSONPath=`.status.overlapsWith`,priority=1
+// +operator-sdk:csv:customresourcedefinitions:displayName="Network"
 
 // Network is a network discovered by a NetworkScope: an AWS VPC. It is read-only for users.
 // On AWS the object is named after the VPC ID.

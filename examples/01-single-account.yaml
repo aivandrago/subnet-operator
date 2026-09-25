@@ -1,6 +1,6 @@
 # The smallest useful scope: the account the operator runs in, one region.
 # The operator needs no roleARN for its own account.
-apiVersion: network.hypersurgery.dev/v1beta1
+apiVersion: network.hypersurgery.dev/v1
 kind: NetworkScope
 metadata:
   name: single-account

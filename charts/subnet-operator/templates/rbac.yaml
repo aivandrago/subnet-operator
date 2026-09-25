@@ -28,6 +28,29 @@ rules:
   - apiGroups: [aws.hypersurgery]
     resources: [networkscopes, sheetexports, subnetclaims, resourceimports]
     verbs: [list]
+  # The operator's own CRDs, by name, and no other: after an upgrade it rewrites the objects
+  # stored at an older version and trims status.storedVersions (the status rule), and it sets
+  # their conversion to its webhook, with the webhook's CA, or to None (the patch rule).
+  - apiGroups: [apiextensions.k8s.io]
+    resources: [customresourcedefinitions]
+    resourceNames:
+      - networkscopes.network.hypersurgery.dev
+      - networks.network.hypersurgery.dev
+      - subnets.network.hypersurgery.dev
+      - subnetclaims.network.hypersurgery.dev
+      - resourceimports.network.hypersurgery.dev
+      - sheetexports.network.hypersurgery.dev
+    verbs: [get, patch]
+  - apiGroups: [apiextensions.k8s.io]
+    resources: [customresourcedefinitions/status]
+    resourceNames:
+      - networkscopes.network.hypersurgery.dev
+      - networks.network.hypersurgery.dev
+      - subnets.network.hypersurgery.dev
+      - subnetclaims.network.hypersurgery.dev
+      - resourceimports.network.hypersurgery.dev
+      - sheetexports.network.hypersurgery.dev
+    verbs: [get, update]
   # A NetworkScope's namespaceSelector is matched against namespace labels, by the webhooks
   # and the controllers alike. Labels only: nothing in a namespace is read.
   - apiGroups: [""]

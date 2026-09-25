@@ -20,7 +20,7 @@ import (
 	"strings"
 	"testing"
 
-	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
+	networkv1 "hypersurgery.dev/subnet-operator/api/v1"
 	"hypersurgery.dev/subnet-operator/internal/inventory"
 )
 
@@ -28,14 +28,14 @@ import (
 // these tests want: the registry must not call them.
 type stub struct {
 	Provider
-	name  networkv1beta1.Provider
+	name  networkv1.Provider
 	read  inventory.Identity
 	write inventory.Identity
 }
 
-func (s stub) Name() networkv1beta1.Provider { return s.name }
+func (s stub) Name() networkv1.Provider { return s.name }
 
-func (s stub) Identity(_ networkv1beta1.Account, access Access) inventory.Identity {
+func (s stub) Identity(_ networkv1.Account, access Access) inventory.Identity {
 	if access == Write {
 		return s.write
 	}
@@ -97,8 +97,8 @@ func TestNilRegistryHasNoProviders(t *testing.T) {
 // An account reached through a read identity of its own is not the operator's account, so it
 // needs a write identity of its own too; the operator's own account does not.
 func TestMissingWriteIdentity(t *testing.T) {
-	scope := &networkv1beta1.NetworkScope{Spec: networkv1beta1.NetworkScopeSpec{
-		Accounts: []networkv1beta1.Account{{ID: "a"}}}}
+	scope := &networkv1.NetworkScope{Spec: networkv1.NetworkScopeSpec{
+		Accounts: []networkv1.Account{{ID: "a"}}}}
 	for _, tc := range []struct {
 		name        string
 		read, write inventory.Identity

@@ -27,7 +27,7 @@ import (
 	"slices"
 	"strings"
 
-	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
+	networkv1 "hypersurgery.dev/subnet-operator/api/v1"
 )
 
 // Verdict is what the policy decided.
@@ -73,8 +73,8 @@ type Decision struct {
 // Decide works out what should happen to one unmanaged resource. The creator is the
 // CloudTrail principal that created it, empty when it is not known (the event is gone, or the
 // resource predates the operator).
-func Decide(r Resource, creator string, p *networkv1beta1.AutoImportPolicy) Decision {
-	if p == nil || p.Mode == "" || p.Mode == networkv1beta1.AutoImportOff {
+func Decide(r Resource, creator string, p *networkv1.AutoImportPolicy) Decision {
+	if p == nil || p.Mode == "" || p.Mode == networkv1.AutoImportOff {
 		return Decision{Verdict: VerdictNone, Reason: "auto-import is off"}
 	}
 	if rule, ok := matchSkip(r, creator, p.Skip); ok {
@@ -130,7 +130,7 @@ func Decide(r Resource, creator string, p *networkv1beta1.AutoImportPolicy) Deci
 
 	required := p.RequiredTags
 	if len(required) == 0 {
-		required = []string{networkv1beta1.DefaultOwnerTagKey}
+		required = []string{networkv1.DefaultOwnerTagKey}
 	}
 	var missing []string
 	for _, key := range required {
@@ -153,10 +153,10 @@ func Decide(r Resource, creator string, p *networkv1beta1.AutoImportPolicy) Deci
 	// The managed tag is what actually puts the resource in the inventory.
 	managedTag, managedValue := p.ManagedTag, p.ManagedValue
 	if managedTag == "" {
-		managedTag = networkv1beta1.DefaultManagedTag
+		managedTag = networkv1.DefaultManagedTag
 	}
 	if managedValue == "" {
-		managedValue = networkv1beta1.DefaultManagedValue
+		managedValue = networkv1.DefaultManagedValue
 	}
 	tags[managedTag] = managedValue
 
@@ -179,7 +179,7 @@ func keepExisting(tags, existing map[string]string) []string {
 	return kept
 }
 
-func matchSkip(r Resource, creator string, rules []networkv1beta1.SkipRule) (networkv1beta1.SkipRule, bool) {
+func matchSkip(r Resource, creator string, rules []networkv1.SkipRule) (networkv1.SkipRule, bool) {
 	for _, rule := range rules {
 		if rule.PrincipalPrefix != "" && creator != "" && strings.HasPrefix(creator, rule.PrincipalPrefix) {
 			return rule, true
@@ -192,10 +192,10 @@ func matchSkip(r Resource, creator string, rules []networkv1beta1.SkipRule) (net
 			return rule, true
 		}
 	}
-	return networkv1beta1.SkipRule{}, false
+	return networkv1.SkipRule{}, false
 }
 
-func skipReason(rule networkv1beta1.SkipRule, creator string) string {
+func skipReason(rule networkv1.SkipRule, creator string) string {
 	switch {
 	case rule.PrincipalPrefix != "" && creator != "" && strings.HasPrefix(creator, rule.PrincipalPrefix):
 		return fmt.Sprintf("created by %q, which the policy skips", rule.PrincipalPrefix)

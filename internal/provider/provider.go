@@ -32,7 +32,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 
-	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
+	networkv1 "hypersurgery.dev/subnet-operator/api/v1"
 	"hypersurgery.dev/subnet-operator/internal/inventory"
 )
 
@@ -50,18 +50,18 @@ const (
 // Provider is one cloud.
 type Provider interface {
 	// Name is the value of NetworkScope.spec.provider the provider serves.
-	Name() networkv1beta1.Provider
+	Name() networkv1.Provider
 	// Capabilities lists what the provider can do as the operator runs it; it is reported on
 	// NetworkScope.status.capabilities. CreateSubnet must be listed exactly when CreateSubnet
 	// does not return ErrNotSupported.
-	Capabilities() []networkv1beta1.Capability
+	Capabilities() []networkv1.Capability
 	// Ownership says where the provider keeps ownership metadata (ADR 0002 §6).
-	Ownership() networkv1beta1.Ownership
+	Ownership() networkv1.Ownership
 
 	// Identity returns what the provider reaches an account with, for reading or for writing.
 	// An account without the provider's member, or with an empty one, is reached with the
 	// operator's own identity.
-	Identity(account networkv1beta1.Account, access Access) inventory.Identity
+	Identity(account networkv1.Account, access Access) inventory.Identity
 	// WriteIdentityField names the field of an account entry that holds the write identity,
 	// such as aws.writeRoleARN, for messages that tell somebody what to set.
 	WriteIdentityField() string
@@ -71,21 +71,21 @@ type Provider interface {
 
 	// ValidateScope checks what a scope of this provider must look like beyond its schema:
 	// region names, identities that belong to their account. Warnings do not refuse the scope.
-	ValidateScope(scope *networkv1beta1.NetworkScope) (warnings []string, errs field.ErrorList)
+	ValidateScope(scope *networkv1.NetworkScope) (warnings []string, errs field.ErrorList)
 	// ValidateClaim checks the provider-specific shape of a claim: account, network ID, zones,
 	// prefix length.
-	ValidateClaim(claim *networkv1beta1.SubnetClaim) field.ErrorList
+	ValidateClaim(claim *networkv1.SubnetClaim) field.ErrorList
 	// ValidateImport checks the provider-specific shape of an import: account, region,
 	// resource ID.
-	ValidateImport(imp *networkv1beta1.ResourceImport) field.ErrorList
+	ValidateImport(imp *networkv1.ResourceImport) field.ErrorList
 	// ValidateTags reports tag keys and values the provider would refuse to write.
 	ValidateTags(path *field.Path, tags map[string]string) field.ErrorList
 	// ClaimRefusal is what the claim controller reports when ValidateClaim would have refused
 	// a claim that got past a webhook that was not running: a condition reason and a message,
 	// or two empty strings.
-	ClaimRefusal(claim *networkv1beta1.SubnetClaim) (reason, message string)
+	ClaimRefusal(claim *networkv1.SubnetClaim) (reason, message string)
 	// ImportRefusal is ClaimRefusal for imports.
-	ImportRefusal(imp *networkv1beta1.ResourceImport) (reason, message string)
+	ImportRefusal(imp *networkv1.ResourceImport) (reason, message string)
 
 	inventory.Discoverer
 	inventory.SubnetWriter
@@ -105,14 +105,14 @@ type EventSink struct {
 }
 
 // HasCapability reports whether the provider lists the capability.
-func HasCapability(p Provider, c networkv1beta1.Capability) bool {
+func HasCapability(p Provider, c networkv1.Capability) bool {
 	return slices.Contains(p.Capabilities(), c)
 }
 
 // MissingWriteIdentity reports whether an account of the scope is reached with an identity
 // of its own for reading but has no write identity. Such an account is not the one the
 // operator runs in, so the operator's own identity cannot write there either.
-func MissingWriteIdentity(p Provider, scope *networkv1beta1.NetworkScope, accountID string) bool {
+func MissingWriteIdentity(p Provider, scope *networkv1.NetworkScope, accountID string) bool {
 	account, ok := scope.Account(accountID)
 	if !ok {
 		return false
@@ -126,13 +126,13 @@ func ownIdentity(id inventory.Identity) bool {
 
 // Registry holds the providers the operator runs with, by name.
 type Registry struct {
-	byName map[networkv1beta1.Provider]Provider
-	names  []networkv1beta1.Provider
+	byName map[networkv1.Provider]Provider
+	names  []networkv1.Provider
 }
 
 // NewRegistry registers the providers. Two providers of the same name are a programming error.
 func NewRegistry(providers ...Provider) (*Registry, error) {
-	r := &Registry{byName: map[networkv1beta1.Provider]Provider{}}
+	r := &Registry{byName: map[networkv1.Provider]Provider{}}
 	for _, p := range providers {
 		name := p.Name()
 		if name == "" {
@@ -158,7 +158,7 @@ func MustRegistry(providers ...Provider) *Registry {
 }
 
 // Get returns the provider of that name. A nil registry has none.
-func (r *Registry) Get(name networkv1beta1.Provider) (Provider, bool) {
+func (r *Registry) Get(name networkv1.Provider) (Provider, bool) {
 	if r == nil {
 		return nil, false
 	}
@@ -179,7 +179,7 @@ func (r *Registry) All() []Provider {
 }
 
 // NotEnabled is the message for a scope whose provider is not registered.
-func (r *Registry) NotEnabled(name networkv1beta1.Provider) string {
+func (r *Registry) NotEnabled(name networkv1.Provider) string {
 	var enabled []string
 	if r != nil {
 		for _, n := range r.names {

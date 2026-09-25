@@ -24,31 +24,31 @@ import (
 	dto "github.com/prometheus/client_model/go"
 	"k8s.io/utils/ptr"
 
-	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
+	networkv1 "hypersurgery.dev/subnet-operator/api/v1"
 )
 
-func subnet(id, owner string, available int64) networkv1beta1.Subnet {
-	return networkv1beta1.Subnet{
-		Spec: networkv1beta1.SubnetSpec{ID: id, NetworkID: "vpc-1", Account: "111111111111", Region: "eu-central-1"},
-		Status: networkv1beta1.SubnetStatus{Owner: owner, CIDRBlock: "10.0.0.0/24", TotalIPs: ptr.To[int64](251),
+func subnet(id, owner string, available int64) networkv1.Subnet {
+	return networkv1.Subnet{
+		Spec: networkv1.SubnetSpec{ID: id, NetworkID: "vpc-1", Account: "111111111111", Region: "eu-central-1"},
+		Status: networkv1.SubnetStatus{Owner: owner, CIDRBlock: "10.0.0.0/24", TotalIPs: ptr.To[int64](251),
 			AvailableIPs: new(available), MissingTags: []string{"hs/env"}},
 	}
 }
 
-const aws = networkv1beta1.ProviderAWS
+const aws = networkv1.ProviderAWS
 
 func TestSetScopeReplacesSeries(t *testing.T) {
 	t.Cleanup(func() { Forget("s1"); Forget("s2") })
 	targets := []TargetResult{{Account: "111111111111", Region: "eu-central-1", OK: true}}
-	SetScope("s1", aws, nil, []networkv1beta1.Subnet{subnet("subnet-1", "team-a", 10), subnet("subnet-2", "", 200)}, targets, 1)
-	SetScope("s2", aws, nil, []networkv1beta1.Subnet{subnet("subnet-9", "", 5)}, targets, 1)
+	SetScope("s1", aws, nil, []networkv1.Subnet{subnet("subnet-1", "team-a", 10), subnet("subnet-2", "", 200)}, targets, 1)
+	SetScope("s2", aws, nil, []networkv1.Subnet{subnet("subnet-9", "", 5)}, targets, 1)
 	if got := testutil.CollectAndCount(subnetAvailableIPs.vec); got != 3 {
 		t.Fatalf("want 3 series, got %d", got)
 	}
 
 	// subnet-2 disappeared and subnet-1 changed owner: no stale series may remain.
 	errsBefore := testutil.ToFloat64(targetSyncErrors.vec.WithLabelValues("aws", "s1", "111111111111", "eu-central-1"))
-	SetScope("s1", aws, nil, []networkv1beta1.Subnet{subnet("subnet-1", "team-b", 10)},
+	SetScope("s1", aws, nil, []networkv1.Subnet{subnet("subnet-1", "team-b", 10)},
 		[]TargetResult{{Account: "111111111111", Region: "eu-central-1", OK: false, Synced: true}}, 2)
 	if got := testutil.CollectAndCount(subnetAvailableIPs.vec); got != 2 {
 		t.Fatalf("want 2 series after resync, got %d", got)
@@ -77,14 +77,14 @@ func TestIPv6OnlySubnetReportsNoIPv4Capacity(t *testing.T) {
 	const scope = "ipv6-test"
 	t.Cleanup(func() { Forget(scope) })
 
-	v6only := networkv1beta1.Subnet{
-		Spec: networkv1beta1.SubnetSpec{ID: "subnet-v6", NetworkID: "vpc-1", Account: "111111111111", Region: "eu-central-1"},
-		Status: networkv1beta1.SubnetStatus{IPv6CIDRBlocks: []string{"2600:1f18:abcd:1200::/64"},
+	v6only := networkv1.Subnet{
+		Spec: networkv1.SubnetSpec{ID: "subnet-v6", NetworkID: "vpc-1", Account: "111111111111", Region: "eu-central-1"},
+		Status: networkv1.SubnetStatus{IPv6CIDRBlocks: []string{"2600:1f18:abcd:1200::/64"},
 			TotalIPs: ptr.To[int64](0), AvailableIPs: ptr.To[int64](0), MissingTags: []string{"hs/owner"}},
 	}
 	dual := subnet("subnet-dual", "team-a", 40)
 	dual.Status.IPv6CIDRBlocks = []string{"2600:1f18:abcd:1201::/64"}
-	SetScope(scope, aws, nil, []networkv1beta1.Subnet{v6only, dual}, nil, 1)
+	SetScope(scope, aws, nil, []networkv1.Subnet{v6only, dual}, nil, 1)
 
 	// Only the dual-stack subnet has IPv4 capacity, so it alone has the two capacity series.
 	for name, g := range map[string]interface {

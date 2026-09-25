@@ -29,7 +29,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
+	networkv1 "hypersurgery.dev/subnet-operator/api/v1"
 )
 
 // ReasonNamespaceNotAllowed is the status condition and Event reason of an object whose
@@ -54,7 +54,7 @@ func Refused(err error) bool {
 // Allowed reports whether objects in the namespace may refer to the scope. The namespace's
 // labels are read through reader; the scope's selector decides. A scope without a selector
 // allows no namespace, without reading anything.
-func Allowed(ctx context.Context, reader client.Reader, scope *networkv1beta1.NetworkScope, namespace string) (bool, error) {
+func Allowed(ctx context.Context, reader client.Reader, scope *networkv1.NetworkScope, namespace string) (bool, error) {
 	if scope.Spec.NamespaceSelector == nil {
 		return false, nil
 	}
@@ -74,7 +74,7 @@ func Allowed(ctx context.Context, reader client.Reader, scope *networkv1beta1.Ne
 
 // NotAllowedMessage is the sentence the webhooks and the controllers use for a refusal, so
 // that `kubectl apply` and `kubectl describe` say the same thing.
-func NotAllowedMessage(scope *networkv1beta1.NetworkScope, namespace string) string {
+func NotAllowedMessage(scope *networkv1.NetworkScope, namespace string) string {
 	if scope.Spec.NamespaceSelector == nil {
 		return fmt.Sprintf("NetworkScope %q does not allow namespace %q to use it: it has no spec.namespaceSelector, "+
 			"which allows no namespace; a cluster administrator decides which namespaces may use a scope",
@@ -87,13 +87,13 @@ func NotAllowedMessage(scope *networkv1beta1.NetworkScope, namespace string) str
 
 // Unrestricted reports whether the scope's selector allows every namespace: an empty selector,
 // which a migration from aws.hypersurgery/v1alpha1 writes for a scope that had none.
-func Unrestricted(scope *networkv1beta1.NetworkScope) bool {
+func Unrestricted(scope *networkv1.NetworkScope) bool {
 	sel := scope.Spec.NamespaceSelector
 	return sel != nil && len(sel.MatchLabels) == 0 && len(sel.MatchExpressions) == 0
 }
 
 // UnrestrictedWarning is the sentence for a scope whose selector allows every namespace.
-func UnrestrictedWarning(scope *networkv1beta1.NetworkScope) string {
+func UnrestrictedWarning(scope *networkv1.NetworkScope) string {
 	return fmt.Sprintf("NetworkScope %q has an empty spec.namespaceSelector, so a SubnetClaim or ResourceImport in any "+
 		"namespace can make the operator use its identities; select the namespaces that may use it", scope.Name)
 }
@@ -101,7 +101,7 @@ func UnrestrictedWarning(scope *networkv1beta1.NetworkScope) string {
 // NoNamespaceWarning is the sentence for a scope without a selector, which no SubnetClaim or
 // ResourceImport may use. That is a valid scope for inventory only, and a surprise for anybody
 // who expected the aws.hypersurgery/v1alpha1 behaviour.
-func NoNamespaceWarning(scope *networkv1beta1.NetworkScope) string {
+func NoNamespaceWarning(scope *networkv1.NetworkScope) string {
 	return fmt.Sprintf("NetworkScope %q has no spec.namespaceSelector, so no SubnetClaim or ResourceImport may use it; "+
 		"set one to let namespaces claim subnets or import resources through it", scope.Name)
 }

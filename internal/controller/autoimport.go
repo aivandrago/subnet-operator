@@ -28,7 +28,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
+	networkv1 "hypersurgery.dev/subnet-operator/api/v1"
 	"hypersurgery.dev/subnet-operator/internal/audit"
 	"hypersurgery.dev/subnet-operator/internal/inventory"
 	"hypersurgery.dev/subnet-operator/internal/metrics"
@@ -38,7 +38,7 @@ import (
 
 // discoverUnmanaged says whether the scope wants to see past its own tag selector. It
 // defaults to true: a resource nobody tagged is exactly the one worth knowing about.
-func discoverUnmanaged(scope *networkv1beta1.NetworkScope) bool {
+func discoverUnmanaged(scope *networkv1.NetworkScope) bool {
 	if scope.Spec.DiscoverUnmanaged == nil {
 		return true
 	}
@@ -47,7 +47,7 @@ func discoverUnmanaged(scope *networkv1beta1.NetworkScope) bool {
 
 // reportUnmanaged publishes the unmanaged counts as metrics and lets the auto-import policy
 // act on them. Failures here never fail the sync: the inventory is the job, this is extra.
-func (r *NetworkScopeReconciler) reportUnmanaged(ctx context.Context, scope *networkv1beta1.NetworkScope,
+func (r *NetworkScopeReconciler) reportUnmanaged(ctx context.Context, scope *networkv1.NetworkScope,
 	results []targetResult) {
 	log := logf.FromContext(ctx)
 	// Rebuild from this sync: an account whose last untagged subnet was imported should report
@@ -89,7 +89,7 @@ func (r *NetworkScopeReconciler) reportUnmanaged(ctx context.Context, scope *net
 		if !policyAllowed {
 			continue
 		}
-		if p := scope.Spec.AutoImport; p != nil && p.Mode != "" && p.Mode != networkv1beta1.AutoImportOff {
+		if p := scope.Spec.AutoImport; p != nil && p.Mode != "" && p.Mode != networkv1.AutoImportOff {
 			metrics.AutoImportTarget(scope.Name, res.target.Provider, res.target.Account, res.target.Region)
 		}
 		if err := r.runAutoImport(ctx, scope, res.snapshot); err != nil {
@@ -102,9 +102,9 @@ func (r *NetworkScopeReconciler) reportUnmanaged(ctx context.Context, scope *net
 // scope. The webhook refuses a scope that gets this wrong; this is for a scope written while
 // it was off, or a namespace relabelled since. A refused policy decides nothing: its imports
 // would be refused by the import controller anyway, and the Event says why on the scope.
-func (r *NetworkScopeReconciler) autoImportAllowed(ctx context.Context, scope *networkv1beta1.NetworkScope) bool {
+func (r *NetworkScopeReconciler) autoImportAllowed(ctx context.Context, scope *networkv1.NetworkScope) bool {
 	p := scope.Spec.AutoImport
-	if p == nil || p.Mode == "" || p.Mode == networkv1beta1.AutoImportOff {
+	if p == nil || p.Mode == "" || p.Mode == networkv1.AutoImportOff {
 		return true
 	}
 	namespace := p.ImportNamespace()
@@ -127,10 +127,10 @@ func (r *NetworkScopeReconciler) autoImportAllowed(ctx context.Context, scope *n
 // runAutoImport asks the policy about every unmanaged resource and writes a ResourceImport
 // for the ones it can attribute. It never applies tags itself: the import controller does
 // that, so a policy decision and a hand-written import go through exactly the same path.
-func (r *NetworkScopeReconciler) runAutoImport(ctx context.Context, scope *networkv1beta1.NetworkScope,
+func (r *NetworkScopeReconciler) runAutoImport(ctx context.Context, scope *networkv1.NetworkScope,
 	snap *inventory.Snapshot) error {
 	p := scope.Spec.AutoImport
-	if p == nil || p.Mode == "" || p.Mode == networkv1beta1.AutoImportOff {
+	if p == nil || p.Mode == "" || p.Mode == networkv1.AutoImportOff {
 		return nil
 	}
 	log := logf.FromContext(ctx)
@@ -172,7 +172,7 @@ func (r *NetworkScopeReconciler) runAutoImport(ctx context.Context, scope *netwo
 			}
 			if created {
 				result := audit.ResultApplied
-				if p.Mode == networkv1beta1.AutoImportDryRun {
+				if p.Mode == networkv1.AutoImportDryRun {
 					result = audit.ResultDryRun
 				}
 				metrics.AutoImport(scope.Name, scope.Spec.Provider, res.Account, res.Region, result)
@@ -201,7 +201,7 @@ func (r *NetworkScopeReconciler) runAutoImport(ctx context.Context, scope *netwo
 // recordDecision writes the audit line for one policy verdict. The tags are the ones the
 // resource carries now and the ones it would carry, so a SIEM can see the change the policy
 // asked for even when the import itself is applied minutes later, or not at all.
-func (r *NetworkScopeReconciler) recordDecision(ctx context.Context, scope *networkv1beta1.NetworkScope,
+func (r *NetworkScopeReconciler) recordDecision(ctx context.Context, scope *networkv1.NetworkScope,
 	res policy.Resource, decision policy.Decision, creator, result string) {
 	if r.Audit == nil {
 		return
@@ -232,39 +232,39 @@ func (r *NetworkScopeReconciler) recordDecision(ctx context.Context, scope *netw
 
 // ensureImport creates the ResourceImport for a resource unless one already exists. It
 // reports whether it created anything, so the metrics count decisions and not resyncs.
-func (r *NetworkScopeReconciler) ensureImport(ctx context.Context, scope *networkv1beta1.NetworkScope,
+func (r *NetworkScopeReconciler) ensureImport(ctx context.Context, scope *networkv1.NetworkScope,
 	res policy.Resource, decision policy.Decision, creator string) (bool, error) {
 	ns := scope.Spec.AutoImport.ImportNamespace()
 
-	existing := &networkv1beta1.ResourceImportList{}
+	existing := &networkv1.ResourceImportList{}
 	if err := r.reader().List(ctx, existing, client.InNamespace(ns),
-		client.MatchingLabels{networkv1beta1.LabelResource: res.ID}); err != nil {
+		client.MatchingLabels{networkv1.LabelResource: res.ID}); err != nil {
 		return false, err
 	}
 	if len(existing.Items) > 0 {
 		return false, nil
 	}
 
-	imp := &networkv1beta1.ResourceImport{
+	imp := &networkv1.ResourceImport{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      importName(res.ID),
 			Namespace: ns,
 			Labels: map[string]string{
-				networkv1beta1.LabelResource: res.ID,
-				networkv1beta1.LabelScope:    scope.Name,
-				networkv1beta1.LabelAccount:  res.Account,
-				networkv1beta1.LabelRegion:   res.Region,
+				networkv1.LabelResource: res.ID,
+				networkv1.LabelScope:    scope.Name,
+				networkv1.LabelAccount:  res.Account,
+				networkv1.LabelRegion:   res.Region,
 			},
 			Annotations: r.importAnnotations(decision),
 		},
-		Spec: networkv1beta1.ResourceImportSpec{
+		Spec: networkv1.ResourceImportSpec{
 			ScopeRef:    scope.Name,
 			Account:     res.Account,
 			Region:      res.Region,
 			ResourceID:  res.ID,
 			Tags:        decision.Tags,
 			RequestedBy: requestedBy(creator),
-			DryRun:      scope.Spec.AutoImport.Mode == networkv1beta1.AutoImportDryRun,
+			DryRun:      scope.Spec.AutoImport.Mode == networkv1.AutoImportDryRun,
 		},
 	}
 	if err := r.Create(ctx, imp); err != nil {
@@ -284,7 +284,7 @@ func (r *NetworkScopeReconciler) ensureImport(ctx context.Context, scope *networ
 func (r *NetworkScopeReconciler) importAnnotations(decision policy.Decision) map[string]string {
 	annotations := map[string]string{annotationReason: decision.Reason}
 	if r.Identity != "" {
-		annotations[networkv1beta1.AnnotationCreatedBy] = r.Identity
+		annotations[networkv1.AnnotationCreatedBy] = r.Identity
 	}
 	return annotations
 }
@@ -294,14 +294,14 @@ func (r *NetworkScopeReconciler) importAnnotations(decision policy.Decision) map
 // status, its Event and its audit line all read, so they never disagree about the person.
 func requestedBy(creator string) string {
 	if creator == "" {
-		return networkv1beta1.RequestedByPolicy
+		return networkv1.RequestedByPolicy
 	}
-	return fmt.Sprintf("%s (created by %s)", networkv1beta1.RequestedByPolicy, creator)
+	return fmt.Sprintf("%s (created by %s)", networkv1.RequestedByPolicy, creator)
 }
 
 // annotationReason carries the policy's sentence to the ResourceImport it writes, so the
 // import can say why the resource was taken over without deciding that again.
-const annotationReason = networkv1beta1.AnnotationReason
+const annotationReason = networkv1.AnnotationReason
 
 // importName keeps the object name predictable and inside the 253-character limit.
 func importName(resourceID string) string {

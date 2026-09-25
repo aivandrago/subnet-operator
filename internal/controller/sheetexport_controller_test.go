@@ -33,7 +33,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
+	networkv1 "hypersurgery.dev/subnet-operator/api/v1"
 	"hypersurgery.dev/subnet-operator/internal/sheets"
 )
 
@@ -73,9 +73,9 @@ var _ = Describe("SheetExport Controller", func() {
 		return reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: exportName}})
 	}
 
-	getExport := func() *networkv1beta1.SheetExport {
+	getExport := func() *networkv1.SheetExport {
 		GinkgoHelper()
-		e := &networkv1beta1.SheetExport{}
+		e := &networkv1.SheetExport{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: exportName}, e)).To(Succeed())
 		return e
 	}
@@ -96,40 +96,40 @@ var _ = Describe("SheetExport Controller", func() {
 				return syncer, nil
 			}}
 
-		scope := &networkv1beta1.NetworkScope{
+		scope := &networkv1.NetworkScope{
 			ObjectMeta: metav1.ObjectMeta{Name: scopeName},
-			Spec: networkv1beta1.NetworkScopeSpec{
-				Provider:          networkv1beta1.ProviderAWS,
+			Spec: networkv1.NetworkScopeSpec{
+				Provider:          networkv1.ProviderAWS,
 				NamespaceSelector: &metav1.LabelSelector{},
-				Accounts:          []networkv1beta1.Account{{ID: exportAccount}},
+				Accounts:          []networkv1.Account{{ID: exportAccount}},
 				Regions:           []string{exportRegion},
 			},
 		}
 		Expect(k8sClient.Create(ctx, scope)).To(Succeed())
 		synced := metav1.NewTime(time.Date(2026, 9, 22, 8, 5, 0, 0, time.UTC))
-		scope.Status.Targets = []networkv1beta1.TargetStatus{{Account: exportAccount, Region: exportRegion, LastSyncTime: &synced}}
+		scope.Status.Targets = []networkv1.TargetStatus{{Account: exportAccount, Region: exportRegion, LastSyncTime: &synced}}
 		Expect(k8sClient.Status().Update(ctx, scope)).To(Succeed())
 
 		labels := map[string]string{
-			networkv1beta1.LabelScope: scopeName, networkv1beta1.LabelAccount: exportAccount,
-			networkv1beta1.LabelRegion: exportRegion, networkv1beta1.LabelNetwork: "vpc-e1",
+			networkv1.LabelScope: scopeName, networkv1.LabelAccount: exportAccount,
+			networkv1.LabelRegion: exportRegion, networkv1.LabelNetwork: "vpc-e1",
 		}
-		vpc := &networkv1beta1.Network{
+		vpc := &networkv1.Network{
 			ObjectMeta: metav1.ObjectMeta{Name: "vpc-e1-" + exportName, Labels: labels},
-			Spec:       networkv1beta1.NetworkSpec{Provider: networkv1beta1.ProviderAWS, ID: "vpc-e1", Account: exportAccount, Region: exportRegion},
+			Spec:       networkv1.NetworkSpec{Provider: networkv1.ProviderAWS, ID: "vpc-e1", Account: exportAccount, Region: exportRegion},
 		}
 		Expect(k8sClient.Create(ctx, vpc)).To(Succeed())
 		vpc.Status.Name = "prod"
 		Expect(k8sClient.Status().Update(ctx, vpc)).To(Succeed())
 
 		for i, cidr := range []string{"10.0.2.0/24", "10.0.1.0/24"} {
-			sn := &networkv1beta1.Subnet{
+			sn := &networkv1.Subnet{
 				ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("subnet-e%d-%s", i, exportName), Labels: labels},
-				Spec: networkv1beta1.SubnetSpec{Provider: networkv1beta1.ProviderAWS, ID: fmt.Sprintf("subnet-e%d", i), NetworkID: "vpc-e1",
+				Spec: networkv1.SubnetSpec{Provider: networkv1.ProviderAWS, ID: fmt.Sprintf("subnet-e%d", i), NetworkID: "vpc-e1",
 					Account: exportAccount, Region: exportRegion},
 			}
 			Expect(k8sClient.Create(ctx, sn)).To(Succeed())
-			sn.Status = networkv1beta1.SubnetStatus{CIDRBlock: cidr, TotalIPs: ptr.To[int64](251), AvailableIPs: ptr.To[int64](51),
+			sn.Status = networkv1.SubnetStatus{CIDRBlock: cidr, TotalIPs: ptr.To[int64](251), AvailableIPs: ptr.To[int64](51),
 				UtilizationPercent: ptr.To[int32](79), Owner: "team-a", Tags: map[string]string{"cost-center": "cc-42"}}
 			Expect(k8sClient.Status().Update(ctx, sn)).To(Succeed())
 		}
@@ -139,11 +139,11 @@ var _ = Describe("SheetExport Controller", func() {
 			Data:       map[string][]byte{"credentials.json": credJSON},
 		})).To(Succeed())
 
-		Expect(k8sClient.Create(ctx, &networkv1beta1.SheetExport{
+		Expect(k8sClient.Create(ctx, &networkv1.SheetExport{
 			ObjectMeta: metav1.ObjectMeta{Name: exportName},
-			Spec: networkv1beta1.SheetExportSpec{
+			Spec: networkv1.SheetExportSpec{
 				ScopeRef: scopeName, SpreadsheetID: "sheet-1", SheetName: "Subnets",
-				CredentialsSecretRef: networkv1beta1.SecretKeyRef{Name: secretName, Namespace: "default", Key: "credentials.json"},
+				CredentialsSecretRef: networkv1.SecretKeyRef{Name: secretName, Namespace: "default", Key: "credentials.json"},
 				ExtraTagColumns:      []string{"cost-center"},
 				RefreshInterval:      &metav1.Duration{Duration: 5 * time.Minute},
 			},
@@ -151,10 +151,10 @@ var _ = Describe("SheetExport Controller", func() {
 	})
 
 	AfterEach(func() {
-		Expect(k8sClient.DeleteAllOf(ctx, &networkv1beta1.Subnet{}, client.MatchingLabels{networkv1beta1.LabelScope: scopeName})).To(Succeed())
-		Expect(k8sClient.DeleteAllOf(ctx, &networkv1beta1.Network{}, client.MatchingLabels{networkv1beta1.LabelScope: scopeName})).To(Succeed())
-		Expect(k8sClient.Delete(ctx, &networkv1beta1.SheetExport{ObjectMeta: metav1.ObjectMeta{Name: exportName}})).To(Succeed())
-		Expect(k8sClient.Delete(ctx, &networkv1beta1.NetworkScope{ObjectMeta: metav1.ObjectMeta{Name: scopeName}})).To(Succeed())
+		Expect(k8sClient.DeleteAllOf(ctx, &networkv1.Subnet{}, client.MatchingLabels{networkv1.LabelScope: scopeName})).To(Succeed())
+		Expect(k8sClient.DeleteAllOf(ctx, &networkv1.Network{}, client.MatchingLabels{networkv1.LabelScope: scopeName})).To(Succeed())
+		Expect(k8sClient.Delete(ctx, &networkv1.SheetExport{ObjectMeta: metav1.ObjectMeta{Name: exportName}})).To(Succeed())
+		Expect(k8sClient.Delete(ctx, &networkv1.NetworkScope{ObjectMeta: metav1.ObjectMeta{Name: scopeName}})).To(Succeed())
 		Expect(k8sClient.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: "default"}})).To(Succeed())
 	})
 

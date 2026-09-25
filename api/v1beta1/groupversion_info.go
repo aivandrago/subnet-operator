@@ -15,7 +15,11 @@ limitations under the License.
 */
 
 // Package v1beta1 contains API Schema definitions for the network.hypersurgery.dev v1beta1 API
-// group: the cloud-neutral API that replaces aws.hypersurgery/v1alpha1 (ADR 0002).
+// group: the cloud-neutral API that replaced aws.hypersurgery/v1alpha1 in 0.8 (ADR 0002).
+//
+// Deprecated since 1.0: use package v1, which has the same fields. The API server still serves
+// v1beta1, converting through the operator's conversion webhook, until at least 1.2 and six
+// months after 1.0 (docs/api-compatibility.md). The operator itself reads and writes v1 only.
 //
 // Every kind that talks about the cloud names its provider, directly (NetworkScope, Network,
 // Subnet) or through the scope it refers to (SubnetClaim, ResourceImport). Provider is an open

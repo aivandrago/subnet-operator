@@ -31,7 +31,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
+	networkv1 "hypersurgery.dev/subnet-operator/api/v1"
 	"hypersurgery.dev/subnet-operator/internal/sheets"
 )
 
@@ -59,7 +59,7 @@ type SheetExportReconciler struct {
 
 // Reconcile writes the current inventory into the sheet and schedules the next refresh.
 func (r *SheetExportReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	export := &networkv1beta1.SheetExport{}
+	export := &networkv1.SheetExport{}
 	if err := r.Get(ctx, req.NamespacedName, export); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
@@ -81,8 +81,8 @@ func (r *SheetExportReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	return ctrl.Result{RequeueAfter: refreshInterval(export)}, nil
 }
 
-func (r *SheetExportReconciler) export(ctx context.Context, export *networkv1beta1.SheetExport) (int, error) {
-	scope := &networkv1beta1.NetworkScope{}
+func (r *SheetExportReconciler) export(ctx context.Context, export *networkv1.SheetExport) (int, error) {
+	scope := &networkv1.NetworkScope{}
 	if err := r.Get(ctx, types.NamespacedName{Name: export.Spec.ScopeRef}, scope); err != nil {
 		if apierrors.IsNotFound(err) {
 			return 0, fmt.Errorf("NetworkScope %q not found", export.Spec.ScopeRef)
@@ -95,12 +95,12 @@ func (r *SheetExportReconciler) export(ctx context.Context, export *networkv1bet
 		return 0, err
 	}
 
-	subnets := &networkv1beta1.SubnetList{}
-	if err := r.List(ctx, subnets, client.MatchingLabels{networkv1beta1.LabelScope: scope.Name}); err != nil {
+	subnets := &networkv1.SubnetList{}
+	if err := r.List(ctx, subnets, client.MatchingLabels{networkv1.LabelScope: scope.Name}); err != nil {
 		return 0, err
 	}
-	networks := &networkv1beta1.NetworkList{}
-	if err := r.List(ctx, networks, client.MatchingLabels{networkv1beta1.LabelScope: scope.Name}); err != nil {
+	networks := &networkv1.NetworkList{}
+	if err := r.List(ctx, networks, client.MatchingLabels{networkv1.LabelScope: scope.Name}); err != nil {
 		return 0, err
 	}
 	networkNames := make(map[string]string, len(networks.Items))
@@ -123,7 +123,7 @@ func (r *SheetExportReconciler) export(ctx context.Context, export *networkv1bet
 	return len(table.Rows), nil
 }
 
-func (r *SheetExportReconciler) credentials(ctx context.Context, ref networkv1beta1.SecretKeyRef) ([]byte, error) {
+func (r *SheetExportReconciler) credentials(ctx context.Context, ref networkv1.SecretKeyRef) ([]byte, error) {
 	reader := client.Reader(r.Client)
 	if r.APIReader != nil {
 		reader = r.APIReader
@@ -143,24 +143,24 @@ func (r *SheetExportReconciler) credentials(ctx context.Context, ref networkv1be
 	return credentials, nil
 }
 
-func sheetName(export *networkv1beta1.SheetExport) string {
+func sheetName(export *networkv1.SheetExport) string {
 	if export.Spec.SheetName == "" {
 		return "Subnets"
 	}
 	return export.Spec.SheetName
 }
 
-func refreshInterval(export *networkv1beta1.SheetExport) time.Duration {
+func refreshInterval(export *networkv1.SheetExport) time.Duration {
 	if export.Spec.RefreshInterval == nil {
 		return defaultRefreshInterval
 	}
 	return max(export.Spec.RefreshInterval.Duration, minRefreshInterval)
 }
 
-func (r *SheetExportReconciler) updateStatus(ctx context.Context, export *networkv1beta1.SheetExport,
+func (r *SheetExportReconciler) updateStatus(ctx context.Context, export *networkv1.SheetExport,
 	rows int, exportErr error) error {
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		latest := &networkv1beta1.SheetExport{}
+		latest := &networkv1.SheetExport{}
 		if err := r.Get(ctx, client.ObjectKeyFromObject(export), latest); err != nil {
 			return client.IgnoreNotFound(err)
 		}
@@ -188,7 +188,7 @@ func (r *SheetExportReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		}
 	}
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&networkv1beta1.SheetExport{}).
+		For(&networkv1.SheetExport{}).
 		Named("sheetexport").
 		Complete(r)
 }

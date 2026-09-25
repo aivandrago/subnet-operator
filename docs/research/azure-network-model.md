@@ -1,5 +1,9 @@
 # Azure network model: metadata, IP usage, discovery, auth, events
 
+> **Research note, not documentation of the operator.** The operator has no Azure provider
+> yet (1.0 ships AWS only); this page records what the design of the v1 API was based on
+> ([ADR 0002](../adr/0002-multi-cloud-model.md)). It is not kept current with the cloud's APIs.
+
 Research for issue #41 (input to ADR #39 and issues #52–#56). Sources are Microsoft Learn
 pages, Azure REST API reference (Virtual Networks api-version `2025-09-01`, Resources
 `2021-04-01`) and the official Azure SDK for Go docs on pkg.go.dev. I checked the pages on

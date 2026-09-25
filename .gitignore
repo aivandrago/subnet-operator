@@ -35,3 +35,9 @@ charts/*.tgz
 
 # Claude Code agent worktrees
 .claude/
+
+# The OLM bundle and catalog are generated (make bundle, make catalog), not committed
+/bundle/
+/bundle.Dockerfile
+/catalog/
+/catalog.Dockerfile

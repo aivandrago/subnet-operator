@@ -13,6 +13,34 @@ rules:
   - list
   - watch
 - apiGroups:
+  - apiextensions.k8s.io
+  resourceNames:
+  - networks.network.hypersurgery.dev
+  - networkscopes.network.hypersurgery.dev
+  - resourceimports.network.hypersurgery.dev
+  - sheetexports.network.hypersurgery.dev
+  - subnetclaims.network.hypersurgery.dev
+  - subnets.network.hypersurgery.dev
+  resources:
+  - customresourcedefinitions
+  verbs:
+  - get
+  - patch
+- apiGroups:
+  - apiextensions.k8s.io
+  resourceNames:
+  - networks.network.hypersurgery.dev
+  - networkscopes.network.hypersurgery.dev
+  - resourceimports.network.hypersurgery.dev
+  - sheetexports.network.hypersurgery.dev
+  - subnetclaims.network.hypersurgery.dev
+  - subnets.network.hypersurgery.dev
+  resources:
+  - customresourcedefinitions/status
+  verbs:
+  - get
+  - update
+- apiGroups:
   - aws.hypersurgery
   resources:
   - networkscopes

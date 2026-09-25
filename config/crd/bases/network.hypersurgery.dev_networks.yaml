@@ -51,7 +51,7 @@ spec:
       name: Overlaps
       priority: 1
       type: string
-    name: v1beta1
+    name: v1
     schema:
       openAPIV3Schema:
         description: |-
@@ -169,5 +169,162 @@ spec:
         type: object
     served: true
     storage: true
+    subresources:
+      status: {}
+  - additionalPrinterColumns:
+    - jsonPath: .spec.provider
+      name: Provider
+      type: string
+    - jsonPath: .spec.account
+      name: Account
+      type: string
+    - jsonPath: .spec.region
+      name: Region
+      type: string
+    - jsonPath: .status.name
+      name: Name
+      type: string
+    - jsonPath: .status.cidrBlocks[0]
+      name: CIDR
+      type: string
+    - jsonPath: .status.owner
+      name: Owner
+      type: string
+    - jsonPath: .status.subnets
+      name: Subnets
+      type: integer
+    - jsonPath: .status.availableIPs
+      name: Free IPs
+      type: integer
+    - jsonPath: .status.env
+      name: Env
+      priority: 1
+      type: string
+    - jsonPath: .status.overlapsWith
+      name: Overlaps
+      priority: 1
+      type: string
+    deprecated: true
+    deprecationWarning: 'network.hypersurgery.dev/v1beta1 is deprecated: use network.hypersurgery.dev/v1,
+      which has the same fields. v1beta1 is served until at least 1.2 and six months
+      after 1.0'
+    name: v1beta1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          Network is a network discovered by a NetworkScope: an AWS VPC. It is read-only for users.
+          On AWS the object is named after the VPC ID.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: spec identifies the network
+            properties:
+              account:
+                description: account is the account that owns the network.
+                type: string
+              id:
+                description: id is the provider's ID of the network; for AWS the VPC
+                  ID.
+                type: string
+              provider:
+                description: provider is the provider of the scope that discovered
+                  the network.
+                enum:
+                - AWS
+                type: string
+              region:
+                description: region of the network. Empty for providers whose networks
+                  are global.
+                type: string
+            required:
+            - account
+            - id
+            - provider
+            type: object
+          status:
+            description: status is the observed state of the network
+            properties:
+              availableIPs:
+                description: |-
+                  availableIPs is the sum of free IPv4 addresses in all subnets. Unset when the free
+                  addresses of any subnet are unknown.
+                format: int64
+                type: integer
+              aws:
+                description: aws holds what only an AWS VPC has.
+                properties:
+                  isDefault:
+                    description: isDefault is true for the default VPC of the region.
+                    type: boolean
+                type: object
+              cidrBlocks:
+                description: cidrBlocks are the associated IPv4 CIDR blocks, primary
+                  first.
+                items:
+                  type: string
+                type: array
+                x-kubernetes-list-type: atomic
+              env:
+                description: env is read from the env tag configured in the NetworkScope.
+                type: string
+              ipv6CIDRBlocks:
+                description: ipv6CIDRBlocks are the associated IPv6 CIDR blocks.
+                items:
+                  type: string
+                type: array
+                x-kubernetes-list-type: atomic
+              name:
+                description: name is the value of the Name tag.
+                type: string
+              overlapsWith:
+                description: |-
+                  overlapsWith lists networks in the same NetworkScope whose CIDRs overlap this one, as
+                  "<account>/<region>/<id>". Overlaps break peering and transit routing.
+                items:
+                  type: string
+                type: array
+                x-kubernetes-list-type: atomic
+              owner:
+                description: owner is read from the owner tag configured in the NetworkScope.
+                type: string
+              state:
+                description: state is the provider's state of the network.
+                type: string
+              subnets:
+                description: subnets is the number of discovered subnets.
+                format: int32
+                type: integer
+              tags:
+                additionalProperties:
+                  type: string
+                description: tags are the network's tags at the provider.
+                type: object
+              totalIPs:
+                description: totalIPs is the sum of usable IPv4 addresses in all subnets.
+                  Unset when unknown.
+                format: int64
+                type: integer
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: false
     subresources:
       status: {}

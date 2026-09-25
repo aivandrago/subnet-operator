@@ -1,0 +1,8 @@
+# crd-ref-docs configuration for docs/reference/api.md (`make api-docs`).
+processor:
+  ignoreFields:
+    - "TypeMeta$"
+render:
+  # The oldest Kubernetes version the operator supports (docs/policy.md#kubernetes-versions):
+  # links to metav1 types point at its API reference.
+  kubernetesVersion: "1.34"

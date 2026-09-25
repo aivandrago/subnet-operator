@@ -29,7 +29,7 @@ import (
 	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
+	networkv1 "hypersurgery.dev/subnet-operator/api/v1"
 	"hypersurgery.dev/subnet-operator/internal/inventory"
 	"hypersurgery.dev/subnet-operator/internal/metrics"
 )
@@ -71,14 +71,14 @@ var _ = Describe("Auto-import policy", func() {
 		_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: scopeName}})
 		Expect(err).NotTo(HaveOccurred())
 	}
-	imports := func() []networkv1beta1.ResourceImport {
+	imports := func() []networkv1.ResourceImport {
 		GinkgoHelper()
-		list := &networkv1beta1.ResourceImportList{}
+		list := &networkv1.ResourceImportList{}
 		Expect(k8sClient.List(ctx, list, client.InNamespace("default"),
-			client.MatchingLabels{networkv1beta1.LabelScope: scopeName})).To(Succeed())
+			client.MatchingLabels{networkv1.LabelScope: scopeName})).To(Succeed())
 		return list.Items
 	}
-	importFor := func(resourceID string) *networkv1beta1.ResourceImport {
+	importFor := func(resourceID string) *networkv1.ResourceImport {
 		GinkgoHelper()
 		for _, imp := range imports() {
 			if imp.Spec.ResourceID == resourceID {
@@ -87,29 +87,29 @@ var _ = Describe("Auto-import policy", func() {
 		}
 		return nil
 	}
-	createScope := func(policy *networkv1beta1.AutoImportPolicy) {
+	createScope := func(policy *networkv1.AutoImportPolicy) {
 		GinkgoHelper()
-		Expect(k8sClient.Create(ctx, &networkv1beta1.NetworkScope{
+		Expect(k8sClient.Create(ctx, &networkv1.NetworkScope{
 			ObjectMeta: metav1.ObjectMeta{Name: scopeName},
-			Spec: networkv1beta1.NetworkScopeSpec{
-				Provider:          networkv1beta1.ProviderAWS,
+			Spec: networkv1.NetworkScopeSpec{
+				Provider:          networkv1.ProviderAWS,
 				NamespaceSelector: &metav1.LabelSelector{},
-				Accounts:          []networkv1beta1.Account{{ID: autoAccount}},
+				Accounts:          []networkv1.Account{{ID: autoAccount}},
 				Regions:           []string{autoRegion},
-				NetworkSelector:   &networkv1beta1.NetworkSelector{MatchTags: map[string]string{"hs/managed": "true"}},
+				NetworkSelector:   &networkv1.NetworkSelector{MatchTags: map[string]string{"hs/managed": "true"}},
 				AutoImport:        policy,
 			},
 		})).To(Succeed())
 	}
-	policy := func(mode networkv1beta1.AutoImportMode) *networkv1beta1.AutoImportPolicy {
-		return &networkv1beta1.AutoImportPolicy{
+	policy := func(mode networkv1.AutoImportMode) *networkv1.AutoImportPolicy {
+		return &networkv1.AutoImportPolicy{
 			Mode: mode,
-			FromCreator: []networkv1beta1.CreatorRule{
+			FromCreator: []networkv1.CreatorRule{
 				{PrincipalPrefix: "arn:aws:sts::111111111111:assumed-role/payments-",
 					Tags: map[string]string{"hs/owner": "team-payments"}},
 			},
 			InheritFromNetwork: []string{"hs/owner", "hs/env"},
-			Skip:               []networkv1beta1.SkipRule{{PrincipalPrefix: "arn:aws:sts::111111111111:assumed-role/terraform-"}},
+			Skip:               []networkv1.SkipRule{{PrincipalPrefix: "arn:aws:sts::111111111111:assumed-role/terraform-"}},
 		}
 	}
 
@@ -130,9 +130,9 @@ var _ = Describe("Auto-import policy", func() {
 		for _, imp := range imports() {
 			Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &imp))).To(Succeed())
 		}
-		Expect(k8sClient.DeleteAllOf(ctx, &networkv1beta1.Subnet{}, client.MatchingLabels{networkv1beta1.LabelScope: scopeName})).To(Succeed())
-		Expect(k8sClient.DeleteAllOf(ctx, &networkv1beta1.Network{}, client.MatchingLabels{networkv1beta1.LabelScope: scopeName})).To(Succeed())
-		Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &networkv1beta1.NetworkScope{
+		Expect(k8sClient.DeleteAllOf(ctx, &networkv1.Subnet{}, client.MatchingLabels{networkv1.LabelScope: scopeName})).To(Succeed())
+		Expect(k8sClient.DeleteAllOf(ctx, &networkv1.Network{}, client.MatchingLabels{networkv1.LabelScope: scopeName})).To(Succeed())
+		Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &networkv1.NetworkScope{
 			ObjectMeta: metav1.ObjectMeta{Name: scopeName}}))).To(Succeed())
 	})
 
@@ -142,7 +142,7 @@ var _ = Describe("Auto-import policy", func() {
 	// wrong reason.
 	dueForResync := func() {
 		GinkgoHelper()
-		scope := &networkv1beta1.NetworkScope{}
+		scope := &networkv1.NetworkScope{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: scopeName}, scope)).To(Succeed())
 		past := metav1.NewTime(time.Now().Add(-2 * time.Hour))
 		scope.Status.LastSyncTime = &past
@@ -179,7 +179,7 @@ var _ = Describe("Auto-import policy", func() {
 		reconcileScope()
 		Expect(newlyUnmanaged()).To(Equal(3.0), "a first discovery: all three are new")
 
-		scope := &networkv1beta1.NetworkScope{}
+		scope := &networkv1.NetworkScope{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: scopeName}, scope)).To(Succeed())
 		Expect(scope.Status.Targets[0].UnmanagedIDs).To(
 			ConsistOf("vpc-0fee1dead", "subnet-0abc1111", "subnet-0def2222"))
@@ -209,7 +209,7 @@ var _ = Describe("Auto-import policy", func() {
 		createScope(nil)
 		reconcileScope()
 
-		scope := &networkv1beta1.NetworkScope{}
+		scope := &networkv1.NetworkScope{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: scopeName}, scope)).To(Succeed())
 		Expect(scope.Status.Unmanaged).To(Equal(int32(3)), "one VPC and two subnets")
 		Expect(scope.Status.Targets[0].UnmanagedNetworks).To(Equal(int32(1)))
@@ -217,8 +217,8 @@ var _ = Describe("Auto-import policy", func() {
 		Expect(imports()).To(BeEmpty())
 
 		By("and the unmanaged resources are not mirrored as objects")
-		subnets := &networkv1beta1.SubnetList{}
-		Expect(k8sClient.List(ctx, subnets, client.MatchingLabels{networkv1beta1.LabelScope: scopeName})).To(Succeed())
+		subnets := &networkv1.SubnetList{}
+		Expect(k8sClient.List(ctx, subnets, client.MatchingLabels{networkv1.LabelScope: scopeName})).To(Succeed())
 		for _, s := range subnets.Items {
 			Expect(s.Spec.ID).NotTo(Equal("subnet-0def2222"))
 		}
@@ -229,7 +229,7 @@ var _ = Describe("Auto-import policy", func() {
 			Target:     inventory.TargetKey{Account: autoAccount, Region: autoRegion},
 			ResourceID: "vpc-0fee1dead", Principal: paymentsRole, EventName: "CreateVpc",
 		}})
-		createScope(policy(networkv1beta1.AutoImportApply))
+		createScope(policy(networkv1.AutoImportApply))
 		reconcileScope()
 
 		By("the VPC gets the creator's owner")
@@ -237,9 +237,9 @@ var _ = Describe("Auto-import policy", func() {
 		Expect(vpcImport).NotTo(BeNil())
 		Expect(vpcImport.Spec.Tags).To(Equal(map[string]string{"hs/owner": "team-payments", "hs/managed": "true"}))
 		Expect(vpcImport.Spec.DryRun).To(BeFalse())
-		Expect(vpcImport.Spec.RequestedBy).To(ContainSubstring(networkv1beta1.RequestedByPolicy))
+		Expect(vpcImport.Spec.RequestedBy).To(ContainSubstring(networkv1.RequestedByPolicy))
 		Expect(vpcImport.Spec.RequestedBy).To(ContainSubstring("maria.k"), "the person is worth recording")
-		Expect(vpcImport.Labels).To(HaveKeyWithValue(networkv1beta1.LabelResource, "vpc-0fee1dead"))
+		Expect(vpcImport.Labels).To(HaveKeyWithValue(networkv1.LabelResource, "vpc-0fee1dead"))
 
 		By("the subnet in the managed VPC inherits from it")
 		inherited := importFor("subnet-0abc1111")
@@ -260,7 +260,7 @@ var _ = Describe("Auto-import policy", func() {
 		creators.Record(context.Background(), []inventory.Creation{{
 			ResourceID: "vpc-0fee1dead", Principal: paymentsRole, EventName: "CreateVpc",
 		}})
-		createScope(policy(networkv1beta1.AutoImportDryRun))
+		createScope(policy(networkv1.AutoImportDryRun))
 		reconcileScope()
 
 		imp := importFor("vpc-0fee1dead")
@@ -272,7 +272,7 @@ var _ = Describe("Auto-import policy", func() {
 		creators.Record(context.Background(), []inventory.Creation{{
 			ResourceID: "vpc-0fee1dead", Principal: terraformCI, EventName: "CreateVpc",
 		}})
-		createScope(policy(networkv1beta1.AutoImportApply))
+		createScope(policy(networkv1.AutoImportApply))
 		reconcileScope()
 
 		Expect(importFor("vpc-0fee1dead")).To(BeNil(), "Terraform owns it; tagging it would fight the next plan")
@@ -308,7 +308,7 @@ var _ = Describe("Auto-import policy", func() {
 	// as Prometheus can tell, so before this the first import after a restart never made it.
 	It("exports every auto-import result at zero before the policy decides anything", func() {
 		discoverer.snapshots[autoAccount+"/"+autoRegion] = &inventory.Snapshot{}
-		createScope(policy(networkv1beta1.AutoImportApply))
+		createScope(policy(networkv1.AutoImportApply))
 		reconcileScope()
 		Expect(autoImportSeries()).To(Equal(map[string]float64{
 			"applied": 0, "dryrun": 0, "skipped": 0, "no_owner": 0}))

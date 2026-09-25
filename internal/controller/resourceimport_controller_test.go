@@ -31,7 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
+	networkv1 "hypersurgery.dev/subnet-operator/api/v1"
 	"hypersurgery.dev/subnet-operator/internal/inventory"
 	"hypersurgery.dev/subnet-operator/internal/provider"
 )
@@ -81,18 +81,18 @@ var _ = Describe("ResourceImport Controller", func() {
 			NamespacedName: types.NamespacedName{Name: importName, Namespace: "default"}})
 		return err
 	}
-	getImport := func() *networkv1beta1.ResourceImport {
+	getImport := func() *networkv1.ResourceImport {
 		GinkgoHelper()
-		imp := &networkv1beta1.ResourceImport{}
+		imp := &networkv1.ResourceImport{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: importName, Namespace: "default"}, imp)).To(Succeed())
 		return imp
 	}
-	createImport := func(mutate func(*networkv1beta1.ResourceImport)) {
+	createImport := func(mutate func(*networkv1.ResourceImport)) {
 		GinkgoHelper()
-		imp := &networkv1beta1.ResourceImport{
+		imp := &networkv1.ResourceImport{
 			ObjectMeta: metav1.ObjectMeta{Name: importName, Namespace: "default",
-				Labels: map[string]string{networkv1beta1.LabelResource: resourceID}},
-			Spec: networkv1beta1.ResourceImportSpec{
+				Labels: map[string]string{networkv1.LabelResource: resourceID}},
+			Spec: networkv1.ResourceImportSpec{
 				ScopeRef: scopeName, Account: hubAccount, Region: importRegion, ResourceID: resourceID,
 				Tags:        map[string]string{"hs/managed": "true", "hs/owner": "team-data"},
 				RequestedBy: "anton",
@@ -103,7 +103,7 @@ var _ = Describe("ResourceImport Controller", func() {
 		}
 		Expect(k8sClient.Create(ctx, imp)).To(Succeed())
 	}
-	readyCond := func(imp *networkv1beta1.ResourceImport) *metav1.Condition {
+	readyCond := func(imp *networkv1.ResourceImport) *metav1.Condition {
 		return meta.FindStatusCondition(imp.Status.Conditions, ConditionReady)
 	}
 
@@ -121,14 +121,14 @@ var _ = Describe("ResourceImport Controller", func() {
 			},
 		}
 
-		Expect(k8sClient.Create(ctx, &networkv1beta1.NetworkScope{
+		Expect(k8sClient.Create(ctx, &networkv1.NetworkScope{
 			ObjectMeta: metav1.ObjectMeta{Name: scopeName},
-			Spec: networkv1beta1.NetworkScopeSpec{
-				Provider:          networkv1beta1.ProviderAWS,
+			Spec: networkv1.NetworkScopeSpec{
+				Provider:          networkv1.ProviderAWS,
 				NamespaceSelector: &metav1.LabelSelector{},
-				Accounts: []networkv1beta1.Account{
+				Accounts: []networkv1.Account{
 					{ID: hubAccount},
-					{ID: spokeAccount, AWS: &networkv1beta1.AWSAccount{RoleARN: "arn:aws:iam::" + spokeAccount + ":role/aws-subnet-operator-readonly"}},
+					{ID: spokeAccount, AWS: &networkv1.AWSAccount{RoleARN: "arn:aws:iam::" + spokeAccount + ":role/aws-subnet-operator-readonly"}},
 				},
 				Regions: []string{importRegion},
 			},
@@ -136,9 +136,9 @@ var _ = Describe("ResourceImport Controller", func() {
 	})
 
 	AfterEach(func() {
-		Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &networkv1beta1.ResourceImport{
+		Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &networkv1.ResourceImport{
 			ObjectMeta: metav1.ObjectMeta{Name: importName, Namespace: "default"}}))).To(Succeed())
-		Expect(k8sClient.Delete(ctx, &networkv1beta1.NetworkScope{ObjectMeta: metav1.ObjectMeta{Name: scopeName}})).To(Succeed())
+		Expect(k8sClient.Delete(ctx, &networkv1.NetworkScope{ObjectMeta: metav1.ObjectMeta{Name: scopeName}})).To(Succeed())
 	})
 
 	It("applies the tags and asks for a resync", func() {
@@ -152,7 +152,7 @@ var _ = Describe("ResourceImport Controller", func() {
 		Expect(notified).To(Equal([]inventory.TargetKey{{Account: hubAccount, Region: importRegion}}))
 
 		imp := getImport()
-		Expect(imp.Status.State).To(Equal(networkv1beta1.ImportApplied))
+		Expect(imp.Status.State).To(Equal(networkv1.ImportApplied))
 		Expect(imp.Status.AppliedTags).To(Equal(imp.Spec.Tags))
 		Expect(imp.Status.AppliedTime).NotTo(BeNil())
 		Expect(readyCond(imp).Status).To(Equal(metav1.ConditionTrue))
@@ -177,12 +177,12 @@ var _ = Describe("ResourceImport Controller", func() {
 	})
 
 	It("changes nothing in a dry run", func() {
-		createImport(func(i *networkv1beta1.ResourceImport) { i.Spec.DryRun = true })
+		createImport(func(i *networkv1.ResourceImport) { i.Spec.DryRun = true })
 		Expect(reconcileImport()).To(Succeed())
 
 		Expect(writer.calls).To(BeEmpty())
 		imp := getImport()
-		Expect(imp.Status.State).To(Equal(networkv1beta1.ImportSkipped))
+		Expect(imp.Status.State).To(Equal(networkv1.ImportSkipped))
 		Expect(readyCond(imp).Status).To(Equal(metav1.ConditionTrue))
 		Expect(readyCond(imp).Reason).To(Equal("DryRun"))
 		Expect(readyCond(imp).Message).To(ContainSubstring("hs/owner=team-data"))
@@ -196,7 +196,7 @@ var _ = Describe("ResourceImport Controller", func() {
 
 		Expect(writer.calls).To(BeEmpty())
 		imp := getImport()
-		Expect(imp.Status.State).To(Equal(networkv1beta1.ImportPending))
+		Expect(imp.Status.State).To(Equal(networkv1.ImportPending))
 		Expect(readyCond(imp).Reason).To(Equal("WritesDisabled"))
 
 		By("and an import that cannot happen is visible to Prometheus, with its state and reason")
@@ -205,7 +205,7 @@ var _ = Describe("ResourceImport Controller", func() {
 	})
 
 	It("reports a spoke account without a write role", func() {
-		createImport(func(i *networkv1beta1.ResourceImport) { i.Spec.Account = spokeAccount })
+		createImport(func(i *networkv1.ResourceImport) { i.Spec.Account = spokeAccount })
 		Expect(reconcileImport()).To(Succeed())
 
 		Expect(writer.calls).To(BeEmpty())
@@ -223,7 +223,7 @@ var _ = Describe("ResourceImport Controller", func() {
 	})
 
 	It("reports a scope that does not cover the account", func() {
-		createImport(func(i *networkv1beta1.ResourceImport) { i.Spec.Account = "999999999999" })
+		createImport(func(i *networkv1.ResourceImport) { i.Spec.Account = "999999999999" })
 		Expect(reconcileImport()).To(Succeed())
 		Expect(readyCond(getImport()).Reason).To(Equal("AccountNotInScope"))
 
@@ -246,14 +246,14 @@ var _ = Describe("ResourceImport Controller", func() {
 		Expect(reconcileImport()).To(Succeed())
 
 		imp := getImport()
-		Expect(imp.Status.State).To(Equal(networkv1beta1.ImportFailed))
+		Expect(imp.Status.State).To(Equal(networkv1.ImportFailed))
 		Expect(imp.Status.Error).To(ContainSubstring("UnauthorizedOperation"))
 		Expect(readyCond(imp).Status).To(Equal(metav1.ConditionFalse))
 
 		By("succeeding once the permission is there")
 		writer.failErr = nil
 		Expect(reconcileImport()).To(Succeed())
-		Expect(getImport().Status.State).To(Equal(networkv1beta1.ImportApplied))
+		Expect(getImport().Status.State).To(Equal(networkv1.ImportApplied))
 		Expect(writer.calls).To(HaveLen(1))
 	})
 })

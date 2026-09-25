@@ -1,7 +1,7 @@
 ## Append samples of your project ##
 resources:
-- network_v1beta1_networkscope.yaml
-- network_v1beta1_sheetexport.yaml
-- network_v1beta1_subnetclaim.yaml
-- network_v1beta1_resourceimport.yaml
+- network_v1_networkscope.yaml
+- network_v1_sheetexport.yaml
+- network_v1_subnetclaim.yaml
+- network_v1_resourceimport.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

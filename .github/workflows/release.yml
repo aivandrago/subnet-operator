@@ -25,6 +25,9 @@ jobs:
       packages: write     # push to ghcr.io
       id-token: write     # cosign keyless: the workflow's own OIDC identity signs
       attestations: write
+    # The OLM bundle pins the image by the digest this job pushed.
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -273,3 +276,148 @@ jobs:
             sleep 20
           done
           gh release upload "$TAG" "$PKG" --clobber --repo "${{ github.repository }}"
+
+  # The OLM bundle for OperatorHub (docs/olm.md): generated for this version with the image
+  # pinned by the digest the image job pushed, validated as OperatorHub validates it, pushed and
+  # signed like the image. The bundle directory is attached to the release: it is what the
+  # per-release pull request to community-operators contains.
+  bundle:
+    name: Build, push and sign the OLM bundle
+    needs: image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write     # attach the bundle directory to the release
+      packages: write     # push to ghcr.io
+      id-token: write     # cosign keyless: the workflow's own OIDC identity signs
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          # Every tag, to find the release this bundle upgrades from.
+          fetch-depth: 0
+
+      - id: meta
+        env:
+          DIGEST: ${{ needs.image.outputs.digest }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          DRY_RUN: ${{ github.event.inputs.dry_run }}
+        run: |
+          tag="$TAG"
+          bare="${tag#v}"
+          image="ghcr.io/${{ github.repository_owner }}/subnet-operator"
+          # A dry run pushes no image, so there is no digest to pin.
+          if [ -n "$DIGEST" ] && [ "$DRY_RUN" != "true" ]; then
+            operator="$image@$DIGEST"
+          else
+            operator="$image:$bare"
+          fi
+          # Pre-releases and 0.x go to alpha; from 1.0 the bundle is published to stable.
+          case "$bare" in 0.*|*-*) channels=alpha ;; *) channels=stable ;; esac
+          {
+            echo "tag=$tag"
+            echo "bare=$bare"
+            echo "operator=$operator"
+            echo "channels=$channels"
+            echo "bundle=ghcr.io/${{ github.repository_owner }}/subnet-operator-bundle"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        if: github.event.inputs.dry_run != 'true'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The bundle replaces the newest earlier release that has a published bundle, so OLM's
+      # upgrade graph stays one chain. The first bundle replaces nothing.
+      - id: replaces
+        name: Find the bundle this one replaces
+        env:
+          BARE: ${{ steps.meta.outputs.bare }}
+          BUNDLE: ${{ steps.meta.outputs.bundle }}
+        run: |
+          replaces=""
+          for t in $(git tag -l 'v*' --sort=-v:refname); do
+            v="${t#v}"
+            case "$v" in *-*) continue ;; esac
+            [ "$v" = "$BARE" ] && continue
+            # Only versions older than this one.
+            [ "$(printf '%s\n%s\n' "$v" "$BARE" | sort -V | tail -1)" = "$BARE" ] || continue
+            if docker manifest inspect "$BUNDLE:v$v" >/dev/null 2>&1; then
+              replaces="$v"
+              break
+            fi
+          done
+          echo "replaces=${replaces:-(none)}"
+          echo "replaces=$replaces" >> "$GITHUB_OUTPUT"
+
+      - name: Generate and validate the bundle
+        env:
+          BARE: ${{ steps.meta.outputs.bare }}
+          OPERATOR: ${{ steps.meta.outputs.operator }}
+          CHANNELS: ${{ steps.meta.outputs.channels }}
+          REPLACES: ${{ steps.replaces.outputs.replaces }}
+        run: |
+          make bundle-validate VERSION="$BARE" BUNDLE_OPERATOR_IMG="$OPERATOR" \
+            CHANNELS="$CHANNELS" BUNDLE_REPLACES="$REPLACES"
+          sed -n '/^  relatedImages:/,/^  [a-z]/p;/^  replaces:/p;/olm.skipRange/p' \
+            bundle/manifests/subnet-operator.clusterserviceversion.yaml
+
+      - name: Build the bundle image
+        env:
+          IMG: ${{ steps.meta.outputs.bundle }}:${{ steps.meta.outputs.tag }}
+        run: make bundle-build BUNDLE_IMG="$IMG"
+
+      - id: push
+        name: Push the bundle image
+        if: github.event.inputs.dry_run != 'true'
+        env:
+          IMG: ${{ steps.meta.outputs.bundle }}:${{ steps.meta.outputs.tag }}
+        run: |
+          make bundle-push BUNDLE_IMG="$IMG"
+          digest="$(docker inspect --format '{{index .RepoDigests 0}}' "$IMG")"
+          digest="${digest##*@}"
+          case "$digest" in sha256:*) ;; *) echo "::error::no digest for $IMG"; exit 1 ;; esac
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
+        if: github.event.inputs.dry_run != 'true'
+      - name: Sign the bundle image
+        if: github.event.inputs.dry_run != 'true'
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+          BUNDLE: ${{ steps.meta.outputs.bundle }}
+        run: cosign sign --yes "${BUNDLE}@${DIGEST}"
+
+      - name: Verify the signature the way a user would
+        if: github.event.inputs.dry_run != 'true'
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+          BUNDLE: ${{ steps.meta.outputs.bundle }}
+        run: |
+          cosign verify "${BUNDLE}@${DIGEST}" \
+            --certificate-identity-regexp "^https://github.com/${{ github.repository }}/\.github/workflows/release\.yml@" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            -o text | tail -5
+
+      # The release is created by the publishing script just after it pushes the tag, so this
+      # waits for it, as the chart job does.
+      - name: Attach the bundle directory to the release
+        if: startsWith(github.ref, 'refs/tags/') && github.event.inputs.dry_run != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BARE: ${{ steps.meta.outputs.bare }}
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          pkg="subnet-operator-olm-bundle-$BARE.tar.gz"
+          tar -czf "$pkg" bundle bundle.Dockerfile
+          for _ in $(seq 30); do
+            gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1 && break
+            sleep 20
+          done
+          gh release upload "$TAG" "$pkg" --clobber --repo "${{ github.repository }}"

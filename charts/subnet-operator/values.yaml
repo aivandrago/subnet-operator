@@ -68,22 +68,15 @@ providers:
       # cidr: 169.254.170.23/32
       # port: 80
 
-# Deprecated, removed in 0.10: the 0.8 names of providers.aws.events.queueUrl / .debounce and
-# providers.aws.region / .endpointURL. They still work; the providers.aws value wins when set.
-# (networkPolicy.egress.podIdentity, the 0.8 name of providers.aws.podIdentity, is the same.)
-events:
-  queueUrl: ""
-  debounce: ""
+# The 0.8 names of providers.aws.events.queueUrl / .debounce and providers.aws.region /
+# .endpointURL (events.*, aws.*), deprecated in 0.9, were removed in 1.0: the chart refuses them,
+# naming the replacement. So is networkPolicy.egress.podIdentity (now providers.aws.podIdentity).
 
 # Audit trail. "stdout" writes one JSON line per import, allocation and policy decision to
 # stdout, apart from the operational log on stderr, so it can be shipped to a SIEM on its own.
 # "off" writes none. The fields are documented in docs/audit.md.
 audit:
   sink: stdout
-
-aws:
-  region: ""
-  endpointURL: ""
 
 # SubnetClaims and ResourceImports. Allocation always works; creating subnets and writing
 # ownership needs this switch and, per account, the provider's write identity (on AWS
@@ -143,6 +136,15 @@ webhook:
       # kind: ClusterIssuer
     duration: 8760h
     renewBefore: 720h
+  # Conversion between the API versions the CRDs serve (v1, stored, and the deprecated v1beta1).
+  # With true, the operator points its CRDs' conversion at this webhook, with the CA of the
+  # certificate above (ca.crt in its Secret), once nothing is stored at v1beta1 any more, and
+  # keeps it there as the certificate is renewed. With false, or with the webhook off, the API
+  # server converts on its own (strategy None), which is exact while the two versions have the
+  # same fields, as they do in 1.0. Either way the operator may read and patch its own six
+  # CRDs, and nothing else of that API.
+  conversion:
+    enabled: true
 
 metrics:
   # Serve metrics over HTTPS with authn/authz (recommended). Set false for plain HTTP.
@@ -202,9 +204,8 @@ networkPolicy:
     # cidrs to the API server endpoint and your VPC endpoints where you know them.
     cidrs: [0.0.0.0/0]
     ports: [443, 6443]
-    # Egress to the EKS Pod Identity agent is providers.aws.podIdentity. Deprecated, removed in
-    # 0.10: its 0.8 name here, podIdentity: {enabled, cidr, port}, which still works; a key set
-    # under providers.aws.podIdentity wins.
+    # Egress to the EKS Pod Identity agent is providers.aws.podIdentity. Its 0.8 name here,
+    # podIdentity, was removed in 1.0 and is refused.
     dns:
       enabled: true
       # Namespace CoreDNS runs in, matched by the kubernetes.io/metadata.name label.

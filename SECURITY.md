@@ -16,7 +16,7 @@ Worth knowing when judging an issue's severity:
 - **Read paths never write.** Discovery calls `ec2:DescribeVpcs`, `ec2:DescribeSubnets` and
   `ec2:DescribeRouteTables`, nothing else, through a read-only role per account.
 - **Writes are off unless asked for twice**: the manager needs `--enable-writes`, and the
-  account needs a `writeRoleARN` separate from the discovery role. Tagging an existing resource
+  account needs a write role (`spec.accounts[].aws.writeRoleARN`) separate from the discovery role. Tagging an existing resource
   needs only `ec2:CreateTags`; creating subnets needs `ec2:CreateSubnet` and friends. The
   shipped write role allows these on VPCs, subnets and route tables only.
 - **Nothing is ever deleted.** There is no code path that deletes a VPC, a subnet or a tag in a
@@ -40,6 +40,7 @@ residual risks, and a brief for an external reviewer — is in the
 
 ## Supported versions
 
-Pre-1.0: fixes land on `master` and in the next tagged release. There are no backports yet.
-What changes at 1.0, and which Kubernetes versions are supported, is in
-[docs/policy.md](docs/policy.md#security-fixes).
+From 1.0, the latest minor release gets every security fix as a patch release, and the minor
+release before it gets fixes for vulnerabilities rated high or critical for three months after
+its successor is released. Releases before 1.0 get no fixes: upgrade. The details, and which
+Kubernetes versions are supported, are in [docs/policy.md](docs/policy.md#security-fixes).

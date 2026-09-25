@@ -27,7 +27,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 
-	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
+	networkv1 "hypersurgery.dev/subnet-operator/api/v1"
 	"hypersurgery.dev/subnet-operator/internal/inventory"
 )
 
@@ -186,7 +186,7 @@ func describeVPCs(ctx context.Context, api EC2API, target inventory.Target, filt
 				Region:  target.Region,
 				State:   string(v.State),
 				Tags:    tagMap(v.Tags),
-				AWS:     &networkv1beta1.AWSNetworkStatus{IsDefault: aws.ToBool(v.IsDefault)},
+				AWS:     &networkv1.AWSNetworkStatus{IsDefault: aws.ToBool(v.IsDefault)},
 			}
 			// The primary CIDR first, then additional associated blocks.
 			if c := aws.ToString(v.CidrBlock); c != "" {
@@ -274,9 +274,9 @@ func describeSubnets(ctx context.Context, api EC2API, target inventory.Target, v
 				Zone:      aws.ToString(s.AvailabilityZone),
 				TotalIPs:  new(inventory.UsableIPv4(aws.ToString(s.CidrBlock), ReservedIPs)),
 				// A subnet's tags are its own on AWS: nothing is inherited from the VPC.
-				OwnershipSource: networkv1beta1.OwnershipSourceSubnet,
+				OwnershipSource: networkv1.OwnershipSourceSubnet,
 				Tags:            tagMap(s.Tags),
-				AWS:             &networkv1beta1.AWSSubnetStatus{AvailabilityZoneID: aws.ToString(s.AvailabilityZoneId)},
+				AWS:             &networkv1.AWSSubnetStatus{AvailabilityZoneID: aws.ToString(s.AvailabilityZoneId)},
 			}
 			// A count EC2 left out is unknown, not zero: zero would read as a full subnet.
 			if s.AvailableIpAddressCount != nil {

@@ -28,7 +28,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 
-	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
+	networkv1 "hypersurgery.dev/subnet-operator/api/v1"
 	"hypersurgery.dev/subnet-operator/internal/audit"
 )
 
@@ -182,7 +182,7 @@ func init() {
 
 // ProviderLabel is the value of the provider label for a provider: lowercase, like other label
 // values ("aws", later "gcp" and "azure").
-func ProviderLabel(p networkv1beta1.Provider) string {
+func ProviderLabel(p networkv1.Provider) string {
 	return strings.ToLower(string(p))
 }
 
@@ -200,8 +200,8 @@ type TargetResult struct {
 
 // SetScope replaces every inventory series of the scope with the given objects,
 // so renamed, retagged or removed subnets do not leave stale series behind.
-func SetScope(scope string, provider networkv1beta1.Provider, networks []networkv1beta1.Network,
-	subnets []networkv1beta1.Subnet, targets []TargetResult, lastSync float64) {
+func SetScope(scope string, provider networkv1.Provider, networks []networkv1.Network,
+	subnets []networkv1.Subnet, targets []TargetResult, lastSync float64) {
 	forgetSeries(scope)
 	p := ProviderLabel(provider)
 	for _, s := range subnets {
@@ -302,7 +302,7 @@ func SeedUnmanaged(scope string, known []string) {
 // Unmanaged records what one account/region holds outside the selector. kind is KindNetwork or
 // KindSubnet; ids are the resource identifiers, so a resource that was already there is not
 // counted as newly seen again.
-func Unmanaged(scope string, provider networkv1beta1.Provider, account, region, kind string, ids []string) {
+func Unmanaged(scope string, provider networkv1.Provider, account, region, kind string, ids []string) {
 	l := prometheus.Labels{labelProvider: ProviderLabel(provider), labelScope: scope, labelAccount: account,
 		labelRegion: region, labelKind: kind}
 	unmanagedCurrent.set(l, float64(len(ids)))
@@ -325,7 +325,7 @@ func Unmanaged(scope string, provider networkv1beta1.Provider, account, region, 
 }
 
 // APIThrottled counts one throttled cloud API attempt for the account/region.
-func APIThrottled(scope string, provider networkv1beta1.Provider, account, region, operation string) {
+func APIThrottled(scope string, provider networkv1.Provider, account, region, operation string) {
 	apiThrottled.inc(prometheus.Labels{
 		labelProvider: ProviderLabel(provider), labelScope: scope, labelAccount: account, labelRegion: region,
 		"operation": operation,
@@ -336,7 +336,7 @@ func APIThrottled(scope string, provider networkv1beta1.Provider, account, regio
 // policy: every result starts at 0, so the first decision after a start is a rise that
 // increase() can see. Without it the first applied import after a restart appeared at 1 and
 // the AutoImportedResources digest left it out.
-func AutoImportTarget(scope string, provider networkv1beta1.Provider, account, region string) {
+func AutoImportTarget(scope string, provider networkv1.Provider, account, region string) {
 	for _, result := range autoImportResults {
 		autoImports.touch(prometheus.Labels{
 			labelProvider: ProviderLabel(provider), labelScope: scope, labelAccount: account, labelRegion: region,
@@ -346,7 +346,7 @@ func AutoImportTarget(scope string, provider networkv1beta1.Provider, account, r
 }
 
 // AutoImport counts one decision of the auto-import policy.
-func AutoImport(scope string, provider networkv1beta1.Provider, account, region, result string) {
+func AutoImport(scope string, provider networkv1.Provider, account, region, result string) {
 	autoImports.inc(prometheus.Labels{
 		labelProvider: ProviderLabel(provider), labelScope: scope, labelAccount: account, labelRegion: region,
 		labelResult: result,
@@ -369,7 +369,7 @@ func readiness(conds []metav1.Condition) (float64, string) {
 // ClaimReady records whether a SubnetClaim is fulfilled. provider is its scope's, empty when
 // the scope does not exist. The object's previous series is dropped first, so a claim whose
 // reason or provider changed does not leave the old one behind.
-func ClaimReady(ns, name string, provider networkv1beta1.Provider, conds []metav1.Condition) {
+func ClaimReady(ns, name string, provider networkv1.Provider, conds []metav1.Condition) {
 	ForgetClaim(ns, name)
 	v, reason := readiness(conds)
 	claimReady.set(prometheus.Labels{labelProvider: ProviderLabel(provider), labelNamespace: ns,
@@ -384,7 +384,7 @@ func ForgetClaim(ns, name string) {
 // ImportReady records whether a ResourceImport has settled, with its state (Pending, Applied,
 // Skipped, Failed) beside the reason. provider is its scope's, empty when the scope does not
 // exist.
-func ImportReady(ns, name string, provider networkv1beta1.Provider, state string, conds []metav1.Condition) {
+func ImportReady(ns, name string, provider networkv1.Provider, state string, conds []metav1.Condition) {
 	ForgetImport(ns, name)
 	v, reason := readiness(conds)
 	importReady.set(prometheus.Labels{labelProvider: ProviderLabel(provider), labelNamespace: ns,

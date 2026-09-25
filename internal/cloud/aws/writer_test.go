@@ -26,7 +26,7 @@ import (
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/smithy-go"
 
-	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
+	networkv1 "hypersurgery.dev/subnet-operator/api/v1"
 	"hypersurgery.dev/subnet-operator/internal/inventory"
 )
 
@@ -64,7 +64,7 @@ func (f *fakeEC2Writer) AssociateRouteTable(_ context.Context, in *ec2.Associate
 func request() inventory.CreateSubnetRequest {
 	return inventory.CreateSubnetRequest{
 		NetworkID: "vpc-1", CIDRBlock: "10.0.5.0/24", Zone: "eu-central-1a",
-		AWS:  &networkv1beta1.AWSClaimOptions{RouteTableID: "rtb-private", MapPublicIPOnLaunch: true},
+		AWS:  &networkv1.AWSClaimOptions{RouteTableID: "rtb-private", MapPublicIPOnLaunch: true},
 		Tags: map[string]string{"hs/owner": "team-a", "Name": "claim-a", "cost-center": "cc-42"},
 	}
 }

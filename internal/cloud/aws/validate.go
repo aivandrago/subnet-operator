@@ -25,7 +25,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/util/validation/field"
 
-	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
+	networkv1 "hypersurgery.dev/subnet-operator/api/v1"
 )
 
 // What an AWS scope, claim and import must look like beyond the schema. The webhooks refuse
@@ -75,7 +75,7 @@ func validateRegion(path *field.Path, region string) *field.Error {
 // ValidateScope implements provider.Provider: region names, roles that live in the account
 // they reach, and at most one account without a role (the operator has one identity of its
 // own; every further account is reached through sts:AssumeRole).
-func (p *Provider) ValidateScope(scope *networkv1beta1.NetworkScope) ([]string, field.ErrorList) {
+func (p *Provider) ValidateScope(scope *networkv1.NetworkScope) ([]string, field.ErrorList) {
 	spec := field.NewPath("spec")
 	var errs field.ErrorList
 	var warnings []string
@@ -108,7 +108,7 @@ func (p *Provider) ValidateScope(scope *networkv1beta1.NetworkScope) ([]string, 
 // validateAccount checks one account entry: its regions, and that its roles live in the
 // account they are meant to reach. sts:AssumeRole can only assume a role of that account, so
 // a role ARN from a different one is always a copy-paste mistake.
-func validateAccount(path *field.Path, account networkv1beta1.Account) field.ErrorList {
+func validateAccount(path *field.Path, account networkv1.Account) field.ErrorList {
 	var errs field.ErrorList
 	for i, region := range account.Regions {
 		if e := validateRegion(path.Child("regions").Index(i), region); e != nil {
@@ -139,7 +139,7 @@ func validateAccount(path *field.Path, account networkv1beta1.Account) field.Err
 
 // ValidateClaim implements provider.Provider: the account and ID formats, the region, one to
 // six availability zones of that region, and a prefix length AWS accepts.
-func (p *Provider) ValidateClaim(claim *networkv1beta1.SubnetClaim) field.ErrorList {
+func (p *Provider) ValidateClaim(claim *networkv1.SubnetClaim) field.ErrorList {
 	spec := field.NewPath("spec")
 	var errs field.ErrorList
 	if !accountPattern.MatchString(claim.Spec.Account) {
@@ -172,7 +172,7 @@ func (p *Provider) ValidateClaim(claim *networkv1beta1.SubnetClaim) field.ErrorL
 }
 
 // ClaimRefusal implements provider.Provider.
-func (p *Provider) ClaimRefusal(claim *networkv1beta1.SubnetClaim) (string, string) {
+func (p *Provider) ClaimRefusal(claim *networkv1.SubnetClaim) (string, string) {
 	if len(claim.Spec.Zones) == 0 {
 		return "ZonesRequired", "AWS subnets are zonal: list one to six availability zones in spec.zones"
 	}
@@ -185,7 +185,7 @@ func (p *Provider) ClaimRefusal(claim *networkv1beta1.SubnetClaim) (string, stri
 
 // ValidateImport implements provider.Provider: the account and resource ID formats, and a
 // region, which every AWS network and subnet has.
-func (p *Provider) ValidateImport(imp *networkv1beta1.ResourceImport) field.ErrorList {
+func (p *Provider) ValidateImport(imp *networkv1.ResourceImport) field.ErrorList {
 	spec := field.NewPath("spec")
 	var errs field.ErrorList
 	if !accountPattern.MatchString(imp.Spec.Account) {
@@ -204,7 +204,7 @@ func (p *Provider) ValidateImport(imp *networkv1beta1.ResourceImport) field.Erro
 }
 
 // ImportRefusal implements provider.Provider.
-func (p *Provider) ImportRefusal(imp *networkv1beta1.ResourceImport) (string, string) {
+func (p *Provider) ImportRefusal(imp *networkv1.ResourceImport) (string, string) {
 	if imp.Spec.Region == "" {
 		return "RegionRequired", "every AWS network and subnet is regional: set spec.region"
 	}

@@ -12,6 +12,7 @@
 <meta property="og:description" content="From nothing to a live subnet inventory in four steps: IAM, the chart repository, the first NetworkScope, change events, dashboard and the Google Sheet mirror.">
 <meta property="og:image" content="https://hypersurgery.dev/dashboard/icon-512.png">
 <meta name="twitter:card" content="summary">
+<link rel="icon" href="../favicon.ico" sizes="16x16 32x32 48x48">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230b1020'/%3E%3Cg fill='none' stroke='%232dd4bf' stroke-width='2.4'%3E%3Crect x='7' y='7' width='8' height='8' rx='2'/%3E%3Crect x='17' y='17' width='8' height='8' rx='2'/%3E%3C/g%3E%3Crect x='17' y='7' width='8' height='8' rx='2' fill='%238b5cf6'/%3E%3Crect x='7' y='17' width='8' height='8' rx='2' fill='%2360a5fa'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -118,7 +119,7 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wr
       <a href="/dashboard/">Dashboard app</a>
       <a href="/article/">Article</a>
       <a href="https://github.com/aivandrago/subnet-operator">GitHub</a>
-      <span class="pill hide-sm"><span class="dot"></span>Alpha · v1beta1</span>
+      <span class="pill hide-sm"><span class="dot"></span>Stable · API v1</span>
     </div>
   </div>
 </nav>
@@ -128,7 +129,8 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wr
     <div class="kicker">Documentation</div>
     <h1>Install with Helm</h1>
     <p>From nothing to a live subnet inventory in four steps. The chart comes from
-      <code>charts.hypersurgery.dev</code> and the operator only reads your AWS accounts.</p>
+      <code>charts.hypersurgery.dev</code> (or, signed, from ghcr.io), and unless you turn writes on
+      the operator only reads your AWS accounts.</p>
   </div>
 </header>
 
@@ -163,8 +165,17 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wr
       <li>VPCs tagged so the operator can find them, <code>hs/managed=true</code> by default.</li>
     </ul>
     <div class="note">
-      <b>The operator never writes to AWS.</b> The inventory uses three <code>Describe</code> calls.
-      Creating subnets from a <code>SubnetClaim</code> is a separate, opt-in switch with its own IAM role.
+      <b>Out of the box the operator never writes to AWS.</b> The inventory uses three <code>Describe</code>
+      calls. Creating subnets from a <code>SubnetClaim</code> and tagging resources from a
+      <code>ResourceImport</code> are a separate, opt-in switch with an IAM role of their own, and nothing
+      the operator does ever deletes a cloud resource.
+    </div>
+    <div class="note">
+      <b>What "stable" means here.</b> The <code>network.hypersurgery.dev/v1</code> API comes with a written
+      <a href="https://github.com/aivandrago/subnet-operator/blob/main/docs/api-compatibility.md">compatibility promise</a>,
+      and every change is tested in Kind against <a href="https://github.com/getmoto/moto">Moto</a>, an AWS
+      emulator, and as an upgrade from the latest release. It has not yet been run against a real AWS
+      organization: if you run it in one, starting with the read-only core, please tell us how it went.
     </div>
 
     <h2 id="quickstart">Quick start</h2>
@@ -203,7 +214,7 @@ aws eks create-pod-identity-association \
         <h3>Install the chart</h3>
         <p>The image is public and signed, so there is no pull secret and nothing to log in to.
           If you would rather check what you are about to run before you run it:</p>
-<pre>cosign verify ghcr.io/aivandrago/subnet-operator:v0.9.0 \
+<pre>cosign verify ghcr.io/aivandrago/subnet-operator:v1.0.0 \
   --certificate-identity-regexp <span class="s">'^https://github.com/aivandrago/subnet-operator/\.github/workflows/release\.yml@'</span> \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com</pre>
         <p>The signature names the workflow file and the tag that built the image, so it says
@@ -212,11 +223,12 @@ aws eks create-pod-identity-association \
   --namespace subnet-operator-system --create-namespace \
   --set providers.aws.region=<span class="s">eu-central-1</span> \
   --set providers.aws.irsaRoleARN=<span class="s">arn:aws:iam::111111111111:role/aws-subnet-operator</span></pre>
-        <p>The chart installs the CRDs, RBAC, the manager and a metrics service. Drop the
-          <code>serviceAccount.annotations</code> line if you use Pod Identity.</p>
-        <p>Since v0.6.0 releases also publish the chart to ghcr.io as an OCI artifact, signed
-          keyless by the same release workflow as the image. With it you can skip step 1,
-          check the chart the same way and install it straight from the registry:</p>
+        <p>The chart installs the CRDs, RBAC, two replicas of the manager with its admission and
+          conversion webhooks, and a metrics service. Drop the <code>providers.aws.irsaRoleARN</code>
+          line if you use Pod Identity.</p>
+        <p>Every release also publishes the chart to ghcr.io as an OCI artifact, signed keyless by
+          the same release workflow as the image. With it you can skip step 1, check the chart the
+          same way and install it straight from the registry:</p>
 <pre>cosign verify ghcr.io/aivandrago/charts/subnet-operator:<span class="n">&lt;version&gt;</span> \
   --certificate-identity-regexp <span class="s">'^https://github.com/aivandrago/subnet-operator/\.github/workflows/release\.yml@'</span> \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
@@ -225,6 +237,13 @@ helm install subnet-operator oci://ghcr.io/aivandrago/charts/subnet-operator \
   --namespace subnet-operator-system --create-namespace \
   --set providers.aws.region=<span class="s">eu-central-1</span> \
   --set providers.aws.irsaRoleARN=<span class="s">arn:aws:iam::111111111111:role/aws-subnet-operator</span></pre>
+        <p>Installing through OLM instead (OpenShift, or any cluster with the Operator Lifecycle
+          Manager)? From 1.0 every release also publishes a signed bundle image,
+          <code>ghcr.io/aivandrago/subnet-operator-bundle</code>, and attaches the bundle to the GitHub
+          release; a listing on OperatorHub.io follows once it has been accepted there. The
+          <a href="https://github.com/aivandrago/subnet-operator/blob/main/docs/olm.md">OLM guide</a>
+          covers installing the bundle and how it differs from the chart.</p>
+        <!-- RELEASE: once the OperatorHub.io pull request is merged, replace "follows once it has been accepted there" with the install instructions (docs/release.md, After publishing). -->
       </div>
     </div>
 
@@ -233,7 +252,7 @@ helm install subnet-operator oci://ghcr.io/aivandrago/charts/subnet-operator \
       <div>
         <h3>Tell it what to discover</h3>
 <pre>kubectl apply -f - &lt;&lt;'EOF'
-<span class="k">apiVersion</span>: <span class="s">network.hypersurgery.dev/v1beta1</span>
+<span class="k">apiVersion</span>: <span class="s">network.hypersurgery.dev/v1</span>
 <span class="k">kind</span>: <span class="s">NetworkScope</span>
 <span class="k">metadata</span>:
   <span class="k">name</span>: <span class="s">organization</span>
@@ -258,8 +277,8 @@ EOF</pre>
 
     <h2 id="verify">Verify</h2>
 <pre>kubectl get nscope
-<span class="c">NAME           PROVIDER   NETWORKS   SUBNETS   READY   LAST SYNC</span>
-organization   AWS        42         318       True    12s
+<span class="c">NAME           PROVIDER   NETWORKS   SUBNETS   UNMANAGED   READY   LAST SYNC</span>
+organization   AWS        42         318       7           True    12s
 
 kubectl get hssubnet -o wide
 kubectl get hsnet -o wide
@@ -294,10 +313,12 @@ kubectl get hypersurgery                 <span class="c"># everything the operat
   --set grafanaDashboard.enabled=true</pre>
     <p>The dashboard ConfigMap is labelled <code>grafana_dashboard: "1"</code>, which the Grafana sidecar
       imports on its own. You get headline counts, utilization by environment, free addresses per account,
-      the fullest subnets, tag compliance, target health and the age of the last full sync — the same panels
-      as the <a href="/#dashboard">live demo</a>.</p>
-    <p>The alerts are: a subnet at 85% or more, a subnet with no free addresses, an account that
-      cannot be discovered, overlapping VPC CIDRs, and an inventory that has not fully resynced for an hour.</p>
+      the fullest subnets, tag compliance, what is still unmanaged, what the auto-import policy decided,
+      target health and the age of the last full sync — the same panels as the
+      <a href="/dashboard/">live demo</a>.</p>
+    <p>The alerts, each with an entry in the
+      <a href="https://github.com/aivandrago/subnet-operator/blob/main/docs/operations/runbook.md">runbook</a>,
+      are listed <a href="#alerts">below</a>.</p>
 
     <h2 id="sheet">Google Sheet mirror (optional)</h2>
     <p>For people who still want a table. The operator writes the sheet and never reads it back.</p>
@@ -306,7 +327,7 @@ kubectl create secret generic google-sheets -n subnet-operator-system \
   --from-file=credentials.json=./service-account.json
 
 kubectl apply -f - &lt;&lt;'EOF'
-<span class="k">apiVersion</span>: <span class="s">network.hypersurgery.dev/v1beta1</span>
+<span class="k">apiVersion</span>: <span class="s">network.hypersurgery.dev/v1</span>
 <span class="k">kind</span>: <span class="s">SheetExport</span>
 <span class="k">metadata</span>:
   <span class="k">name</span>: <span class="s">organization</span>
@@ -324,7 +345,8 @@ EOF</pre>
     <h2 id="claims">Subnets on demand (optional)</h2>
     <p>A <code>SubnetClaim</code> asks for one subnet per availability zone. The operator reserves free
       CIDRs in the VPC, skipping existing subnets and other claims, and creates the subnets with your
-      tags. This is the only thing the operator ever writes to AWS, and it is off until you turn it on.</p>
+      tags. Together with the tags a <code>ResourceImport</code> applies, it is the only thing the operator
+      ever writes to AWS, and it is off until you turn it on.</p>
     <ol>
       <li>Deploy <code>deploy/iam/spoke-write-role.cfn.yaml</code> to the accounts that may get new
         subnets. It is a separate role from discovery and cannot delete anything.</li>
@@ -337,7 +359,7 @@ EOF</pre>
   --namespace subnet-operator-system --reuse-values \
   --set writes.enabled=true</pre>
 <pre>kubectl apply -f - &lt;&lt;'EOF'
-<span class="k">apiVersion</span>: <span class="s">network.hypersurgery.dev/v1beta1</span>
+<span class="k">apiVersion</span>: <span class="s">network.hypersurgery.dev/v1</span>
 <span class="k">kind</span>: <span class="s">SubnetClaim</span>
 <span class="k">metadata</span>:
   <span class="k">name</span>: <span class="s">payments</span>
@@ -360,7 +382,8 @@ kubectl get subnetclaims.network.hypersurgery.dev payments -o jsonpath='{.status
     <div class="note">
       <b>Nothing is ever deleted.</b> Deleting a claim leaves its subnets in AWS. Terraform-first teams
       set <code>mode: Allocate</code>: the operator only reserves CIDRs and Terraform creates the subnets
-      from <code>status.allocations</code>.
+      from <code>status.allocations</code>. The <code>Allocated</code> and <code>Ready</code> conditions say how
+      far a claim got; <code>Ready</code> says <code>WritesDisabled</code> while writes are off.
     </div>
 
     <h2 id="import">Taking resources under management</h2>
@@ -378,7 +401,7 @@ kubectl get nscope organization -o jsonpath='{.status.targets}' | jq</pre>
       <code>ec2:CreateTags</code> and does nothing else: the resource keeps its configuration and every tag
       the import does not name, and running the same import twice changes nothing.</p>
 <pre>kubectl apply -f - &lt;&lt;'EOF'
-<span class="k">apiVersion</span>: <span class="s">network.hypersurgery.dev/v1beta1</span>
+<span class="k">apiVersion</span>: <span class="s">network.hypersurgery.dev/v1</span>
 <span class="k">kind</span>: <span class="s">ResourceImport</span>
 <span class="k">metadata</span>:
   <span class="k">name</span>: <span class="s">subnet-04d1c2b3a4e5f607-import</span>
@@ -424,19 +447,22 @@ kubectl get resourceimports.network.hypersurgery.dev -A</pre>
       same path and leave the same audit trail; <code>spec.requestedBy</code> names the creator the tags
       came from. The <a href="/dashboard/">demo dashboard</a> shows the same decisions as a review queue.</p>
     <div class="note">
-      <b>Four rules keep it from being a surprise.</b> Start in <code>DryRun</code> and read a day of
+      <b>Five rules keep it from being a surprise.</b> Start in <code>DryRun</code> and read a day of
       decisions before anything changes. Nothing whose owner no rule can name is ever tagged — it stays
       unmanaged and the alert asks a human. Terraform is left alone, by tag or by the principal that created
-      the resource. And without <code>writes.enabled</code> the imports are created but stay
+      the resource. Tags the resource already has win over inferred ones, so the policy only adds what is
+      missing. And without <code>writes.enabled</code> the imports are created but stay
       <code>Pending</code>, saying why.
     </div>
 
     <h2 id="alerts">Alerts</h2>
     <p>With <code>prometheusRule.enabled=true</code> the chart ships these rules. They carry the provider,
       account, region and resource labels (<code>network_id</code>, <code>subnet_id</code>, <code>zone</code>), so
-      routing them per team in Alertmanager is a matter of matchers. They read the <code>hs_*</code> metrics;
-      0.9 no longer exports the <code>hs_aws_</code> names of 0.8, and renamed <code>VPCCIDROverlap</code> to
-      <code>NetworkCIDROverlap</code> (the <a href="https://github.com/aivandrago/subnet-operator/blob/main/docs/operations/upgrades.md#upgrading-from-08-to-09">upgrade notes</a> have the mapping).</p>
+      routing them per team in Alertmanager is a matter of matchers. Every alert has an entry in the
+      <a href="https://github.com/aivandrago/subnet-operator/blob/main/docs/operations/runbook.md">runbook</a>:
+      what it means, how to confirm it, what to do and when to ignore it. Coming from 0.8, whose rules
+      read <code>hs_aws_</code> metrics: the <a href="https://github.com/aivandrago/subnet-operator/blob/main/docs/operations/upgrades.md#upgrading-from-08-to-09">upgrade notes</a>
+      have the mapping.</p>
     <table>
       <thead><tr><th>Alert</th><th>Fires when</th><th>Severity</th></tr></thead>
       <tbody>
@@ -447,9 +473,9 @@ kubectl get resourceimports.network.hypersurgery.dev -A</pre>
         <tr><td><code>SubnetFull</code></td><td>a subnet has no free IPv4 address for 15 minutes</td><td>critical</td></tr>
         <tr><td><code>SubnetInventoryTargetDown</code></td><td>an account/region cannot be discovered for 15 minutes, for a reason other than throttling</td><td>warning</td></tr>
         <tr><td><code>SubnetInventoryTargetThrottled</code></td><td>the cloud provider has throttled an account/region for <code>prometheusRule.thresholds.throttledFor</code> (30 minutes). The operator backs the target off and retries it on its own; the target stays reachable, so <code>SubnetInventoryTargetDown</code> does not fire for it</td><td>warning</td></tr>
-        <tr><td><code>NetworkCIDROverlap</code></td><td>two networks (VPCs on AWS) in the scope overlap for 30 minutes. Called <code>VPCCIDROverlap</code> up to 0.8</td><td>warning</td></tr>
+        <tr><td><code>NetworkCIDROverlap</code></td><td>two networks (VPCs on AWS) in the scope overlap for 30 minutes</td><td>warning</td></tr>
         <tr><td><code>SubnetInventoryStale</code></td><td>no full resync for <code>prometheusRule.thresholds.staleSyncSeconds</code> (1 hour)</td><td>warning</td></tr>
-        <tr><td><code>UnmanagedNetworkResource</code></td><td>a network or subnet without the <code>hs/managed</code> tag is seen for the first time</td><td>warning</td></tr>
+        <tr id="unmanaged"><td><code>UnmanagedNetworkResource</code></td><td>a network or subnet without the <code>hs/managed</code> tag is seen for the first time</td><td>warning</td></tr>
         <tr><td><code>AutoImportedResources</code></td><td>the auto-import policy applied imports in the last 24 hours, as a record of what changed. Its counter exists at 0 for every target of a scope that runs the policy, so the first import after a restart is in the digest too</td><td>info</td></tr>
       </tbody>
     </table>
@@ -467,7 +493,8 @@ kubectl get resourceimports.network.hypersurgery.dev -A</pre>
       readable message instead of being accepted and failing in a reconcile loop later. A
       <code>SubnetClaim</code> is rejected when the prefix does not fit the VPC, when the availability
       zone belongs to another region, when the scope does not cover the account, when there is no free
-      space for it, or when <code>mode: Create</code> is asked for without a write role. Anything that
+      space for it, when its namespace may not use the scope, or when <code>mode: Create</code> is asked
+      for without a write role. Anything that
       depends on discovery having run — a VPC the operator has not seen yet — is a warning, not an
       error, so the order in which your manifests are applied does not matter.</p>
     <p>The webhooks need a serving certificate. The chart uses cert-manager when its API is installed
@@ -492,8 +519,8 @@ kubectl get resourceimports.network.hypersurgery.dev -A</pre>
       <code>create</code> on <code>subnetclaims</code> and <code>resourceimports</code> only in their own
       namespaces.</p>
 <pre>$ kubectl apply -f claim.yaml
-Error from server (Forbidden): admission webhook "vsubnetclaim.kb.io" denied the request:
-  spec.prefixLength: /24 does not fit the largest free block in vpc-0aa11bb2cc33dd44e (/26)</pre>
+The SubnetClaim "payments" is invalid: spec.prefixLength: Invalid value: 24: network
+  vpc-0aa11bb2cc33dd44e has no room for 2 more /24: no free block of the requested size</pre>
     <p>To install without them — for example in a cluster where you cannot run a webhook —
       set <code>webhook.enabled=false</code>. The same rules still run in the controller; you find out
       from <code>status</code> instead of from <code>kubectl</code>.</p>
@@ -527,10 +554,10 @@ Error from server (Forbidden): admission webhook "vsubnetclaim.kb.io" denied the
       <thead><tr><th>Value</th><th>Default</th><th>What it does</th></tr></thead>
       <tbody>
         <tr><td><code>image.repository</code></td><td><code>ghcr.io/aivandrago/subnet-operator</code></td><td>Manager image. Public and signed; point it at your own registry if you mirror it.</td></tr>
-        <tr><td><code>providers.aws.region</code></td><td>empty</td><td>Region for the operator's own calls. (<code>aws.region</code> in 0.8, still accepted until 0.10.)</td></tr>
+        <tr><td><code>providers.aws.region</code></td><td>empty</td><td>Region for the operator's own calls.</td></tr>
         <tr><td><code>providers.aws.irsaRoleARN</code></td><td>empty</td><td>The operator's role with IRSA; EKS Pod Identity needs nothing.</td></tr>
         <tr><td><code>discovery.concurrency</code></td><td><code>4</code></td><td>Account/region pairs discovered in parallel.</td></tr>
-        <tr><td><code>providers.aws.events.queueUrl</code></td><td>empty</td><td>SQS queue with EC2 change events. (<code>events.queueUrl</code> in 0.8, still accepted until 0.10.)</td></tr>
+        <tr><td><code>providers.aws.events.queueUrl</code></td><td>empty</td><td>SQS queue with EC2 change events (the <code>QueueUrl</code> output of the hub stack).</td></tr>
         <tr><td><code>metrics.secure</code></td><td><code>true</code></td><td>HTTPS with authn/authz on the metrics endpoint.</td></tr>
         <tr><td><code>metrics.serviceMonitor.enabled</code></td><td><code>false</code></td><td>ServiceMonitor for the Prometheus operator.</td></tr>
         <tr><td><code>prometheusRule.enabled</code></td><td><code>false</code></td><td>Alerting rules.</td></tr>
@@ -554,46 +581,42 @@ Error from server (Forbidden): admission webhook "vsubnetclaim.kb.io" denied the
     <p>Everything else: <code>helm show values hypersurgery/subnet-operator</code>.</p>
 
     <h2 id="upgrade">Upgrade and uninstall</h2>
+    <p>Helm never upgrades CRDs, so apply the new release's CRDs first, then upgrade the release:</p>
 <pre>helm repo update hypersurgery
+helm pull hypersurgery/subnet-operator --untar &amp;&amp; kubectl apply -f subnet-operator/crds/
 helm upgrade subnet-operator hypersurgery/subnet-operator \
   --namespace subnet-operator-system --reuse-values</pre>
     <div class="warn">
-      <b>From 0.7 to 0.8 the chart and the API are renamed.</b> The chart is <code>subnet-operator</code>
-      (it was <code>aws-subnet-operator</code>) and the API <code>network.hypersurgery.dev/v1beta1</code>
-      (it was <code>aws.hypersurgery/v1alpha1</code>, which 0.8 still serves and 0.9 removes). Apply the
-      new CRDs, then upgrade the existing release, in its namespace, to the new chart; the operator
-      copies every old object into the new group, status included. The service account's name changes
-      with the release's objects, so update a Pod Identity association or IRSA trust policy first, or
-      pin <code>serviceAccount.name</code>. Manifests in git convert with
-      <code>docker run --rm -i ghcr.io/aivandrago/subnet-operator:0.8.0 migrate-manifests &lt; old.yaml</code>.
-      Step by step:
-      <a href="https://github.com/aivandrago/subnet-operator/blob/main/docs/operations/upgrades.md#upgrading-from-07-to-08">the upgrade guide</a>.
+      <b>From 0.9 to 1.0 the API becomes <code>network.hypersurgery.dev/v1</code>.</b> It has the same
+      fields as <code>v1beta1</code>, which stays served, deprecated, until at least 1.2 and at least six
+      months after 1.0. After the upgrade the operator rewrites what 0.9 stored at v1, trims the CRDs'
+      <code>status.storedVersions</code> to <code>[v1]</code> and converts between the versions with its
+      webhook. The values and flags 0.9 deprecated (<code>events.*</code>, <code>aws.*</code>,
+      <code>networkPolicy.egress.podIdentity</code>, <code>--events-queue-url</code>,
+      <code>--events-debounce</code>, <code>EVENTS_QUEUE_URL</code>) are removed: move them under
+      <code>providers.aws</code> before upgrading, since the 1.0 chart refuses to render with them and the
+      operator refuses to start. Manifests in git only need their <code>apiVersion</code> changed.
+      Step by step: <a href="https://github.com/aivandrago/subnet-operator/blob/main/docs/operations/upgrades.md#upgrading-from-09-to-10">the upgrade guide</a>
+      (<a href="https://github.com/aivandrago/subnet-operator/blob/main/docs/operations/upgrades.md#values-and-flags-removed-in-10">the removed values and flags</a>), and what
+      v1 promises: <a href="https://github.com/aivandrago/subnet-operator/blob/main/docs/api-compatibility.md">API compatibility</a>.
       <br><br>
-      <b>From 0.8 to 0.9 the old API group is gone.</b> Upgrade from 0.8 only once it has migrated
-      every object (<code>hs_migration_pending_objects</code> is 0); from 0.7, go through 0.8. A 0.9 pod
-      that finds an <code>aws.hypersurgery/v1alpha1</code> object 0.8 never migrated runs no controllers,
-      stays not ready and names the object, so the rollout stops with the 0.8 pods still running. The old
-      CRDs stay in the cluster until you delete them. The AWS values move under <code>providers.aws</code>,
-      and the metrics are renamed from <code>hs_aws_*</code> to <code>hs_*</code>:
-      <a href="https://github.com/aivandrago/subnet-operator/blob/main/docs/operations/upgrades.md#upgrading-from-08-to-09">the upgrade guide</a>.
-      <br><br>
-      <b>Upgrading adds CRDs.</b> v0.2.0 brought <code>SubnetClaim</code> and v0.3.0
-      <code>ResourceImport</code>. Helm never upgrades CRDs, so apply them before the upgrade:
-      <code>helm pull hypersurgery/subnet-operator --untar &amp;&amp; kubectl apply -f subnet-operator/crds/</code>
-      <br><br>
-      <b>v0.4.0 changes two things for an existing install.</b> The operator now reads credential
-      Secrets through a namespaced Role instead of a cluster-wide permission: if your
-      <code>SheetExport</code> keeps its key in another namespace, list that namespace in
-      <code>rbac.credentialSecretNamespaces</code> or the export stops being able to read it. And the
-      admission webhooks arrive enabled, which means the release needs a serving certificate —
-      cert-manager if you have it, a chart-signed one if you do not.
+      <b>From an older release, go one step at a time.</b> 0.7 and earlier still use the
+      <code>aws.hypersurgery</code> API and the <code>aws-subnet-operator</code> chart: upgrade to 0.8, which
+      migrates every object into the new group itself, then to 0.9, then to 1.0
+      (<a href="https://github.com/aivandrago/subnet-operator/blob/main/docs/operations/upgrades.md#upgrading-from-07-to-08">0.7 to 0.8</a>,
+      <a href="https://github.com/aivandrago/subnet-operator/blob/main/docs/operations/upgrades.md#upgrading-from-08-to-09">0.8 to 0.9</a>). The
+      <a href="https://github.com/aivandrago/subnet-operator/blob/main/docs/operations/upgrades.md">upgrade guide</a> also covers the behaviour changes of the earlier releases and
+      how to roll back.
     </div>
     <p>Which upgrades are tested, what counts as a breaking change and how long a deprecated field
       lives: the <a href="https://github.com/aivandrago/subnet-operator/blob/main/docs/policy.md">versioning,
       deprecation and support policy</a>.</p>
 <pre>helm uninstall subnet-operator -n subnet-operator-system</pre>
-    <p>Uninstalling removes the operator and, with it, the mirrored <code>Network</code> and <code>Subnet</code>
-      objects. Nothing happens to your AWS networks: they were never touched.</p>
+    <p>Uninstalling removes the operator. Helm leaves the CRDs, and with them your
+      <code>NetworkScope</code>s and the <code>Network</code> and <code>Subnet</code> objects they own, until
+      you delete them; a scope the release created with <code>networkScope.create</code> goes with the
+      release, and its objects with it. Nothing happens to your cloud networks either way: uninstalling
+      never touches them.</p>
 
     <h2 id="app">The dashboard app</h2>
     <p><a href="/dashboard/">hypersurgery.dev/dashboard/</a> is the same set of panels as an installable
@@ -621,7 +644,8 @@ kubectl proxy --www=site --www-prefix=/ui/</pre>
       whenever a watch is not possible. Only two watches, because each one holds a connection open and a
       browser allows six per server over HTTP/1.1, shared by all its tabs; a tab in the background closes
       its watches. <b>Import</b> on an unmanaged resource creates a
-      <code>ResourceImport</code>, and the operator's webhook records your user name in <code>requestedBy</code>.</p>
+      <code>ResourceImport</code>, and the operator's webhook records your user name in its
+      <code>network.hypersurgery.dev/created-by</code> annotation, and in <code>requestedBy</code> when you leave it empty.</p>
     <p>The header shows who the API server says you are. Through <code>kubectl proxy</code> that is the
       proxy's own identity — the user in your kubeconfig — because the proxy, not the browser, sends the
       credentials.</p>
@@ -697,7 +721,7 @@ rules:
 
 <footer>
   <div class="wrap">
-    <span>Subnet Operator · alpha · 2026</span>
+    <span>Subnet Operator · stable · 2026</span>
     <span><a href="/">Overview</a> · <a href="https://charts.hypersurgery.dev">Chart repository</a></span>
   </div>
 </footer>

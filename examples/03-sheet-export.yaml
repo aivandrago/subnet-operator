@@ -4,7 +4,7 @@
 #     --from-file=credentials.json=./service-account.json
 #
 # Share the spreadsheet with the service account address as an editor first.
-apiVersion: network.hypersurgery.dev/v1beta1
+apiVersion: network.hypersurgery.dev/v1
 kind: SheetExport
 metadata:
   name: organization

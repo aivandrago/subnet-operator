@@ -1,0 +1,37 @@
+# The OLM bundle's input: `make bundle` builds this and hands it to operator-sdk generate bundle,
+# which turns the Deployment, RBAC, webhook configurations and CRDs into a ClusterServiceVersion.
+#
+# It is config/default with the webhooks on, but not the way config/default turns them on: under
+# OLM, OLM issues and rotates the webhook serving certificate and injects its CA into the webhook
+# configurations and the CRDs' conversion. So neither the [CERTMANAGER] sections nor the
+# manager_webhook_patch (which mounts a cert-manager Secret) are used here. OLM mounts the
+# certificate at /tmp/k8s-webhook-server/serving-certs, where the manager looks for it when
+# --webhook-cert-path is unset, and the manager runs with --crd-conversion unset, so it leaves
+# the CRDs' conversion to OLM.
+resources:
+- bases/subnet-operator.clusterserviceversion.yaml
+- ../default
+- ../webhook
+- ../samples
+- ../scorecard
+
+patches:
+# The conversion webhook for every CRD, the same stanza as config/crd/patches/webhook_in_*.yaml.
+# operator-sdk turns it into a ConversionWebhook webhookdefinition that lists the six CRDs, and
+# OLM rewrites the Service and CA when it installs them.
+- target:
+    group: apiextensions.k8s.io
+    kind: CustomResourceDefinition
+  patch: |-
+    - op: add
+      path: /spec/conversion
+      value:
+        strategy: Webhook
+        webhook:
+          clientConfig:
+            service:
+              namespace: system
+              name: webhook-service
+              path: /convert
+          conversionReviewVersions:
+          - v1

@@ -15,7 +15,7 @@ limitations under the License.
 */
 
 // Package migration is what is left of the move from aws.hypersurgery/v1alpha1 to
-// network.hypersurgery.dev/v1beta1 (ADR 0002 §9) once the old group is gone (0.9).
+// network.hypersurgery.dev/v1 (ADR 0002 §9) once the old group is gone (0.9).
 //
 // 0.8 served both groups and copied every object, status included, into the new one with a
 // migration controller. 0.9 serves only the new group. Two things remain:
@@ -37,7 +37,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
+	networkv1 "hypersurgery.dev/subnet-operator/api/v1"
 	awsv1alpha1 "hypersurgery.dev/subnet-operator/internal/migration/v1alpha1"
 )
 
@@ -52,7 +52,7 @@ const (
 
 // renamedKeys are the label and annotation keys whose name changes beyond the prefix.
 var renamedKeys = map[string]string{
-	awsv1alpha1.LabelVPC: networkv1beta1.LabelNetwork,
+	awsv1alpha1.LabelVPC: networkv1.LabelNetwork,
 }
 
 // The kinds the migration moves.
@@ -88,7 +88,7 @@ func convertKeys(in map[string]string) map[string]string {
 	}
 	out := make(map[string]string, len(in))
 	for k, v := range in {
-		if k == networkv1beta1.AnnotationMigratedTo || k == networkv1beta1.AnnotationMigratedFrom {
+		if k == networkv1.AnnotationMigratedTo || k == networkv1.AnnotationMigratedFrom {
 			continue
 		}
 		if k == "kubectl.kubernetes.io/last-applied-configuration" {
@@ -120,11 +120,11 @@ func convertKey(k string) string {
 // unset allowed every namespace in the old group and allows none in the new one, and a
 // migration must not lock teams out of their scope — the note says so, because {} is exactly
 // the permissive setting the new default exists to avoid.
-func NetworkScope(old *awsv1alpha1.NetworkScope) (*networkv1beta1.NetworkScope, Notes) {
+func NetworkScope(old *awsv1alpha1.NetworkScope) (*networkv1.NetworkScope, Notes) {
 	var notes Notes
 	o := old.Spec
-	spec := networkv1beta1.NetworkScopeSpec{
-		Provider:           networkv1beta1.ProviderAWS,
+	spec := networkv1.NetworkScopeSpec{
+		Provider:           networkv1.ProviderAWS,
 		Regions:            cloneSlice(o.Regions),
 		RequiredSubnetTags: cloneSlice(o.RequiredSubnetTags),
 		TagKeys:            tagKeys(o.TagKeys),
@@ -134,14 +134,14 @@ func NetworkScope(old *awsv1alpha1.NetworkScope) (*networkv1beta1.NetworkScope, 
 		NamespaceSelector:  o.NamespaceSelector.DeepCopy(),
 	}
 	for _, a := range o.Accounts {
-		account := networkv1beta1.Account{ID: a.ID, Regions: cloneSlice(a.Regions)}
+		account := networkv1.Account{ID: a.ID, Regions: cloneSlice(a.Regions)}
 		if a.RoleARN != "" || a.ExternalID != "" || a.WriteRoleARN != "" {
-			account.AWS = &networkv1beta1.AWSAccount{RoleARN: a.RoleARN, ExternalID: a.ExternalID, WriteRoleARN: a.WriteRoleARN}
+			account.AWS = &networkv1.AWSAccount{RoleARN: a.RoleARN, ExternalID: a.ExternalID, WriteRoleARN: a.WriteRoleARN}
 		}
 		spec.Accounts = append(spec.Accounts, account)
 	}
 	if len(o.VPCTagSelector) > 0 {
-		spec.NetworkSelector = &networkv1beta1.NetworkSelector{MatchTags: maps.Clone(o.VPCTagSelector)}
+		spec.NetworkSelector = &networkv1.NetworkSelector{MatchTags: maps.Clone(o.VPCTagSelector)}
 	}
 	if spec.NamespaceSelector == nil {
 		spec.NamespaceSelector = &metav1.LabelSelector{}
@@ -150,8 +150,8 @@ func NetworkScope(old *awsv1alpha1.NetworkScope) (*networkv1beta1.NetworkScope, 
 			"Replace it with a selector of the namespaces that should use the scope")
 	}
 
-	scope := &networkv1beta1.NetworkScope{
-		TypeMeta:   metav1.TypeMeta{APIVersion: networkv1beta1.GroupVersion.String(), Kind: kindNetworkScope},
+	scope := &networkv1.NetworkScope{
+		TypeMeta:   metav1.TypeMeta{APIVersion: networkv1.GroupVersion.String(), Kind: kindNetworkScope},
 		ObjectMeta: objectMeta(old.ObjectMeta),
 		Spec:       spec,
 	}
@@ -159,8 +159,8 @@ func NetworkScope(old *awsv1alpha1.NetworkScope) (*networkv1beta1.NetworkScope, 
 }
 
 // tagKeys writes out the keys the old scope used, defaults included.
-func tagKeys(k awsv1alpha1.TagKeys) networkv1beta1.TagKeys {
-	out := networkv1beta1.TagKeys{Owner: k.Owner, Env: k.Env, Tier: k.Tier}
+func tagKeys(k awsv1alpha1.TagKeys) networkv1.TagKeys {
+	out := networkv1.TagKeys{Owner: k.Owner, Env: k.Env, Tier: k.Tier}
 	if out.Owner == "" {
 		out.Owner = awsv1alpha1.DefaultOwnerTagKey
 	}
@@ -173,12 +173,12 @@ func tagKeys(k awsv1alpha1.TagKeys) networkv1beta1.TagKeys {
 	return out
 }
 
-func autoImport(p *awsv1alpha1.AutoImportPolicy) *networkv1beta1.AutoImportPolicy {
+func autoImport(p *awsv1alpha1.AutoImportPolicy) *networkv1.AutoImportPolicy {
 	if p == nil {
 		return nil
 	}
-	out := &networkv1beta1.AutoImportPolicy{
-		Mode:               networkv1beta1.AutoImportMode(p.Mode),
+	out := &networkv1.AutoImportPolicy{
+		Mode:               networkv1.AutoImportMode(p.Mode),
 		Namespace:          p.Namespace,
 		InheritFromNetwork: cloneSlice(p.InheritFromVPC),
 		RequiredTags:       cloneSlice(p.RequiredTags),
@@ -191,15 +191,15 @@ func autoImport(p *awsv1alpha1.AutoImportPolicy) *networkv1beta1.AutoImportPolic
 		out.ManagedTag = awsv1alpha1.DefaultManagedTag
 	}
 	for _, r := range p.FromCreator {
-		out.FromCreator = append(out.FromCreator, networkv1beta1.CreatorRule{
+		out.FromCreator = append(out.FromCreator, networkv1.CreatorRule{
 			PrincipalPrefix: r.PrincipalPrefix, Tags: maps.Clone(r.Tags)})
 	}
 	for _, d := range p.AccountDefaults {
-		out.AccountDefaults = append(out.AccountDefaults, networkv1beta1.AccountDefault{
+		out.AccountDefaults = append(out.AccountDefaults, networkv1.AccountDefault{
 			Account: d.Account, Tags: maps.Clone(d.Tags)})
 	}
 	for _, r := range p.Skip {
-		out.Skip = append(out.Skip, networkv1beta1.SkipRule{
+		out.Skip = append(out.Skip, networkv1.SkipRule{
 			TagKey: r.TagKey, TagValue: r.TagValue, PrincipalPrefix: r.PrincipalPrefix})
 	}
 	return out
@@ -207,19 +207,19 @@ func autoImport(p *awsv1alpha1.AutoImportPolicy) *networkv1beta1.AutoImportPolic
 
 // SubnetClaim converts a claim: vpcID becomes networkID,
 // availabilityZones becomes zones, and the AWS-only options move into aws.
-func SubnetClaim(old *awsv1alpha1.SubnetClaim) (*networkv1beta1.SubnetClaim, Notes) {
+func SubnetClaim(old *awsv1alpha1.SubnetClaim) (*networkv1.SubnetClaim, Notes) {
 	o := old.Spec
-	claim := &networkv1beta1.SubnetClaim{
-		TypeMeta:   metav1.TypeMeta{APIVersion: networkv1beta1.GroupVersion.String(), Kind: kindSubnetClaim},
+	claim := &networkv1.SubnetClaim{
+		TypeMeta:   metav1.TypeMeta{APIVersion: networkv1.GroupVersion.String(), Kind: kindSubnetClaim},
 		ObjectMeta: objectMeta(old.ObjectMeta),
-		Spec: networkv1beta1.SubnetClaimSpec{
+		Spec: networkv1.SubnetClaimSpec{
 			ScopeRef:     o.ScopeRef,
 			Account:      o.Account,
 			Region:       o.Region,
 			NetworkID:    o.VPCID,
 			PrefixLength: o.PrefixLength,
 			Zones:        cloneSlice(o.AvailabilityZones),
-			Mode:         networkv1beta1.ClaimMode(o.Mode),
+			Mode:         networkv1.ClaimMode(o.Mode),
 			Owner:        o.Owner,
 			Env:          o.Env,
 			Tier:         o.Tier,
@@ -228,7 +228,7 @@ func SubnetClaim(old *awsv1alpha1.SubnetClaim) (*networkv1beta1.SubnetClaim, Not
 		},
 	}
 	if o.RouteTableID != "" || o.MapPublicIPOnLaunch {
-		claim.Spec.AWS = &networkv1beta1.AWSClaimOptions{
+		claim.Spec.AWS = &networkv1.AWSClaimOptions{
 			RouteTableID: o.RouteTableID, MapPublicIPOnLaunch: o.MapPublicIPOnLaunch}
 	}
 
@@ -237,12 +237,12 @@ func SubnetClaim(old *awsv1alpha1.SubnetClaim) (*networkv1beta1.SubnetClaim, Not
 
 // ResourceImport converts an import. Nothing in it changes shape: resourceID
 // already was the provider's ID.
-func ResourceImport(old *awsv1alpha1.ResourceImport) (*networkv1beta1.ResourceImport, Notes) {
+func ResourceImport(old *awsv1alpha1.ResourceImport) (*networkv1.ResourceImport, Notes) {
 	o := old.Spec
-	imp := &networkv1beta1.ResourceImport{
-		TypeMeta:   metav1.TypeMeta{APIVersion: networkv1beta1.GroupVersion.String(), Kind: kindResourceImport},
+	imp := &networkv1.ResourceImport{
+		TypeMeta:   metav1.TypeMeta{APIVersion: networkv1.GroupVersion.String(), Kind: kindResourceImport},
 		ObjectMeta: objectMeta(old.ObjectMeta),
-		Spec: networkv1beta1.ResourceImportSpec{
+		Spec: networkv1.ResourceImportSpec{
 			ScopeRef:    o.ScopeRef,
 			Account:     o.Account,
 			Region:      o.Region,
@@ -256,16 +256,16 @@ func ResourceImport(old *awsv1alpha1.ResourceImport) (*networkv1beta1.ResourceIm
 }
 
 // SheetExport converts an export. It was cloud-neutral already.
-func SheetExport(old *awsv1alpha1.SheetExport) (*networkv1beta1.SheetExport, Notes) {
+func SheetExport(old *awsv1alpha1.SheetExport) (*networkv1.SheetExport, Notes) {
 	o := old.Spec
-	exp := &networkv1beta1.SheetExport{
-		TypeMeta:   metav1.TypeMeta{APIVersion: networkv1beta1.GroupVersion.String(), Kind: kindSheetExport},
+	exp := &networkv1.SheetExport{
+		TypeMeta:   metav1.TypeMeta{APIVersion: networkv1.GroupVersion.String(), Kind: kindSheetExport},
 		ObjectMeta: objectMeta(old.ObjectMeta),
-		Spec: networkv1beta1.SheetExportSpec{
+		Spec: networkv1.SheetExportSpec{
 			ScopeRef:      o.ScopeRef,
 			SpreadsheetID: o.SpreadsheetID,
 			SheetName:     o.SheetName,
-			CredentialsSecretRef: networkv1beta1.SecretKeyRef{
+			CredentialsSecretRef: networkv1.SecretKeyRef{
 				Name: o.CredentialsSecretRef.Name, Namespace: o.CredentialsSecretRef.Namespace, Key: o.CredentialsSecretRef.Key},
 			ExtraTagColumns: cloneSlice(o.ExtraTagColumns),
 			RefreshInterval: cloneDuration(o.RefreshInterval),

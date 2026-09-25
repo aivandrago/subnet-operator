@@ -38,7 +38,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 
-	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
+	networkv1 "hypersurgery.dev/subnet-operator/api/v1"
 )
 
 // UpgradeGuide is where a person blocked by the guard finds what to do.
@@ -130,7 +130,7 @@ func FindUnmigrated(ctx context.Context, c client.Reader) (Scan, error) {
 			if !o.DeletionTimestamp.IsZero() {
 				continue
 			}
-			if _, done := o.Annotations[networkv1beta1.AnnotationMigratedTo]; done {
+			if _, done := o.Annotations[networkv1.AnnotationMigratedTo]; done {
 				continue
 			}
 			report.Objects = append(report.Objects, Unmigrated{Kind: kind, Namespace: o.Namespace, Name: o.Name, UID: o.UID})
@@ -171,13 +171,13 @@ func Message(r Scan) string {
 		"their reservations and history would be ignored. Roll back to 0.8.x (helm rollback), wait until "+
 		"hs_migration_pending_objects is 0 or every old object carries %s, then upgrade again; "+
 		"or delete the objects you do not need. See %s",
-		len(r.Objects), r.Summary(), networkv1beta1.AnnotationMigratedTo, UpgradeGuide)
+		len(r.Objects), r.Summary(), networkv1.AnnotationMigratedTo, UpgradeGuide)
 }
 
 // eventNote is the Event on each unmigrated object.
 const eventNote = "Never migrated to network.hypersurgery.dev: this release no longer migrates aws.hypersurgery/v1alpha1 " +
 	"objects, and ignores this one. Let 0.8.x migrate it (roll back and wait until it carries " +
-	networkv1beta1.AnnotationMigratedTo + "), or convert its manifest with `manager migrate-manifests`, apply the " +
+	networkv1.AnnotationMigratedTo + "), or convert its manifest with `manager migrate-manifests`, apply the " +
 	"result and delete this object. See " + UpgradeGuide
 
 // maxEvents bounds the Events one check records, so a cluster full of old objects does not

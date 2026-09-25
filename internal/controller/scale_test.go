@@ -52,7 +52,7 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
+	networkv1 "hypersurgery.dev/subnet-operator/api/v1"
 	"hypersurgery.dev/subnet-operator/internal/inventory"
 )
 
@@ -169,15 +169,15 @@ func scaleInventory(c scaleConfig) (targets []inventory.TargetKey, snapshots map
 					CIDRBlock: fmt.Sprintf("%s.%s.%d.0/24", prefix[0], prefix[1], third+s/nVPCs),
 					Zone:      region + string(rune('a'+s%3)),
 					TotalIPs:  new(int64(251)), AvailableIPs: new(int64(100 + s)),
-					OwnershipSource: networkv1beta1.OwnershipSourceSubnet,
-					AWS: &networkv1beta1.AWSSubnetStatus{AvailabilityZoneID: fmt.Sprintf("az%d", s%3+1), Public: s%3 == 0,
+					OwnershipSource: networkv1.OwnershipSourceSubnet,
+					AWS: &networkv1.AWSSubnetStatus{AvailabilityZoneID: fmt.Sprintf("az%d", s%3+1), Public: s%3 == 0,
 						RouteTableID: fmt.Sprintf("rtb-%s%s%02d", account[6:], regionCode(region), s%nVPCs)},
 					Tags: tags,
 				})
 			}
 			def := inventory.Network{ID: fmt.Sprintf("vpc-%s%sdf", account[6:], regionCode(region)), Account: account,
 				Region: region, State: "available", CIDRBlocks: []string{"172.31.0.0/16"},
-				AWS: &networkv1beta1.AWSNetworkStatus{IsDefault: true}}
+				AWS: &networkv1.AWSNetworkStatus{IsDefault: true}}
 			snap.UnmanagedNetworks = []inventory.Network{def}
 			for z := range 3 {
 				snap.UnmanagedSubnets = append(snap.UnmanagedSubnets, inventory.Subnet{
@@ -485,9 +485,9 @@ var _ = Describe("NetworkScope at the documented capacity", Label("scale"), Orde
 		return p
 	}
 
-	getScope := func() *networkv1beta1.NetworkScope {
+	getScope := func() *networkv1.NetworkScope {
 		GinkgoHelper()
-		s := &networkv1beta1.NetworkScope{}
+		s := &networkv1.NetworkScope{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: scopeName}, s)).To(Succeed())
 		return s
 	}
@@ -536,23 +536,23 @@ var _ = Describe("NetworkScope at the documented capacity", Label("scale"), Orde
 		// The top of each delay, so the retry below lands exactly when the backoff says.
 		reconciler.backoff.jitter = func() float64 { return 0.999999 }
 
-		accounts := make([]networkv1beta1.Account, 0, shape.accounts)
+		accounts := make([]networkv1.Account, 0, shape.accounts)
 		regions := make([]string, 0, shape.regions)
 		for r := range shape.regions {
 			regions = append(regions, scaleRegions[r%len(scaleRegions)])
 		}
 		for a := range shape.accounts {
 			id := fmt.Sprintf("%012d", 400000000000+a)
-			accounts = append(accounts, networkv1beta1.Account{ID: id,
-				AWS: &networkv1beta1.AWSAccount{RoleARN: fmt.Sprintf("arn:aws:iam::%s:role/subnet-inventory-read", id)}})
+			accounts = append(accounts, networkv1.Account{ID: id,
+				AWS: &networkv1.AWSAccount{RoleARN: fmt.Sprintf("arn:aws:iam::%s:role/subnet-inventory-read", id)}})
 		}
-		Expect(k8sClient.Create(ctx, &networkv1beta1.NetworkScope{
+		Expect(k8sClient.Create(ctx, &networkv1.NetworkScope{
 			ObjectMeta: metav1.ObjectMeta{Name: scopeName},
-			Spec: networkv1beta1.NetworkScopeSpec{
-				Provider:          networkv1beta1.ProviderAWS,
+			Spec: networkv1.NetworkScopeSpec{
+				Provider:          networkv1.ProviderAWS,
 				NamespaceSelector: &metav1.LabelSelector{},
 				Accounts:          accounts, Regions: regions,
-				NetworkSelector:    &networkv1beta1.NetworkSelector{MatchTags: map[string]string{"hs/owner": ""}},
+				NetworkSelector:    &networkv1.NetworkSelector{MatchTags: map[string]string{"hs/owner": ""}},
 				RequiredSubnetTags: []string{"hs/owner"},
 				ResyncInterval:     &metav1.Duration{Duration: resync},
 			},
@@ -561,8 +561,8 @@ var _ = Describe("NetworkScope at the documented capacity", Label("scale"), Orde
 
 	AfterAll(func() {
 		mgrCancel()
-		Expect(k8sClient.DeleteAllOf(ctx, &networkv1beta1.Subnet{}, client.MatchingLabels{networkv1beta1.LabelScope: scopeName})).To(Succeed())
-		Expect(k8sClient.DeleteAllOf(ctx, &networkv1beta1.Network{}, client.MatchingLabels{networkv1beta1.LabelScope: scopeName})).To(Succeed())
+		Expect(k8sClient.DeleteAllOf(ctx, &networkv1.Subnet{}, client.MatchingLabels{networkv1.LabelScope: scopeName})).To(Succeed())
+		Expect(k8sClient.DeleteAllOf(ctx, &networkv1.Network{}, client.MatchingLabels{networkv1.LabelScope: scopeName})).To(Succeed())
 		Expect(k8sClient.Delete(ctx, getScope())).To(Succeed())
 		AddReportEntry("scale", strings.Join(report, "\n"))
 		_, _ = fmt.Fprintln(os.Stdout, "\n=== scale test results ===\n"+strings.Join(report, "\n"))

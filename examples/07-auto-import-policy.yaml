@@ -8,7 +8,7 @@
 # Read a day of them (kubectl get resourceimports -A) and switch to Apply when the rules look
 # right. A resource whose owner no rule can name is never tagged; it stays unmanaged and the
 # UnmanagedNetworkResource alert asks a human to decide.
-apiVersion: network.hypersurgery.dev/v1beta1
+apiVersion: network.hypersurgery.dev/v1
 kind: NetworkScope
 metadata:
   name: organization

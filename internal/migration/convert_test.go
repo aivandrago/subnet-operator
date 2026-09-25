@@ -24,7 +24,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
+	networkv1 "hypersurgery.dev/subnet-operator/api/v1"
 	awsv1alpha1 "hypersurgery.dev/subnet-operator/internal/migration/v1alpha1"
 )
 
@@ -63,13 +63,13 @@ func TestNetworkScope(t *testing.T) {
 	scope, notes := NetworkScope(oldScope())
 	s := scope.Spec
 
-	if s.Provider != networkv1beta1.ProviderAWS {
+	if s.Provider != networkv1.ProviderAWS {
 		t.Errorf("provider = %q, want AWS", s.Provider)
 	}
 	if s.Accounts[0].AWS != nil {
 		t.Errorf("an account reached with the operator's own identity gets no aws member, got %+v", s.Accounts[0].AWS)
 	}
-	wantAWS := networkv1beta1.AWSAccount{RoleARN: "arn:aws:iam::222222222222:role/read", ExternalID: "x",
+	wantAWS := networkv1.AWSAccount{RoleARN: "arn:aws:iam::222222222222:role/read", ExternalID: "x",
 		WriteRoleARN: "arn:aws:iam::222222222222:role/write"}
 	if got := s.Accounts[1].AWS; got == nil || *got != wantAWS {
 		t.Errorf("aws = %+v, want %+v", got, wantAWS)
@@ -81,14 +81,14 @@ func TestNetworkScope(t *testing.T) {
 		t.Errorf("vpcTagSelector did not become networkSelector.matchTags: %+v", s.NetworkSelector)
 	}
 	// Written out in full: the defaults of the old group, whatever the new one defaults to.
-	if want := (networkv1beta1.TagKeys{Owner: "team", Env: "hs/env", Tier: "hs/tier"}); s.TagKeys != want {
+	if want := (networkv1.TagKeys{Owner: "team", Env: "hs/env", Tier: "hs/tier"}); s.TagKeys != want {
 		t.Errorf("tagKeys = %+v, want %+v", s.TagKeys, want)
 	}
 	if s.ResyncInterval.Duration != 5*time.Minute || s.DiscoverUnmanaged == nil || *s.DiscoverUnmanaged {
 		t.Errorf("resyncInterval %v, discoverUnmanaged %v", s.ResyncInterval, s.DiscoverUnmanaged)
 	}
 	p := s.AutoImport
-	if p.Mode != networkv1beta1.AutoImportDryRun || p.Namespace != "platform" ||
+	if p.Mode != networkv1.AutoImportDryRun || p.Namespace != "platform" ||
 		!reflect.DeepEqual(p.InheritFromNetwork, []string{"hs/owner"}) || p.ManagedTag != "hs/managed" ||
 		len(p.AccountDefaults) != 1 || len(p.FromCreator) != 1 || len(p.Skip) != 1 {
 		t.Errorf("autoImport = %+v", p)
@@ -108,7 +108,7 @@ func TestNetworkScope(t *testing.T) {
 // export has one) is not converted, since apply ignores it and 0.9 has nothing to copy it into.
 func TestNetworkScopeLeavesStatusOut(t *testing.T) {
 	scope, _ := NetworkScope(oldScope())
-	if !reflect.DeepEqual(scope.Status, networkv1beta1.NetworkScopeStatus{}) {
+	if !reflect.DeepEqual(scope.Status, networkv1.NetworkScopeStatus{}) {
 		t.Errorf("status = %+v, want none", scope.Status)
 	}
 }
@@ -151,7 +151,7 @@ func TestSubnetClaim(t *testing.T) {
 	claim, _ := SubnetClaim(old)
 	s := claim.Spec
 	if s.NetworkID != "vpc-0abc" || !reflect.DeepEqual(s.Zones, old.Spec.AvailabilityZones) ||
-		s.Mode != networkv1beta1.ClaimModeCreate || s.NamePrefix != "payments-db" || s.Tags["cost-center"] != "42" {
+		s.Mode != networkv1.ClaimModeCreate || s.NamePrefix != "payments-db" || s.Tags["cost-center"] != "42" {
 		t.Errorf("spec = %+v", s)
 	}
 	if s.AWS == nil || s.AWS.RouteTableID != "rtb-0abc" || !s.AWS.MapPublicIPOnLaunch {
@@ -208,7 +208,7 @@ func TestMetadata(t *testing.T) {
 			"aws.hypersurgery/reason":                          "tags from creator rule",
 			"kubectl.kubernetes.io/last-applied-configuration": "{}",
 			"argocd.argoproj.io/tracking-id":                   "app:group/kind:ns/name",
-			networkv1beta1.AnnotationMigratedTo:                "payments",
+			networkv1.AnnotationMigratedTo:                     "payments",
 			"note":                                             "kept",
 		},
 	}
@@ -218,8 +218,8 @@ func TestMetadata(t *testing.T) {
 	// GitOps tool, whose own name is the creator.
 	manifest := objectMeta(old)
 	wantLabels := map[string]string{
-		networkv1beta1.LabelScope:    "org",
-		networkv1beta1.LabelNetwork:  "vpc-1",
+		networkv1.LabelScope:         "org",
+		networkv1.LabelNetwork:       "vpc-1",
 		"app.kubernetes.io/instance": "payments-app",
 		"team":                       "payments",
 	}
@@ -227,10 +227,10 @@ func TestMetadata(t *testing.T) {
 		t.Errorf("labels = %v, want %v", manifest.Labels, wantLabels)
 	}
 	wantAnnotations := map[string]string{
-		networkv1beta1.AnnotationCreatedBy: "jane@example.com",
-		networkv1beta1.AnnotationReason:    "tags from creator rule",
-		"argocd.argoproj.io/tracking-id":   "app:group/kind:ns/name",
-		"note":                             "kept",
+		networkv1.AnnotationCreatedBy:    "jane@example.com",
+		networkv1.AnnotationReason:       "tags from creator rule",
+		"argocd.argoproj.io/tracking-id": "app:group/kind:ns/name",
+		"note":                           "kept",
 	}
 	if !reflect.DeepEqual(manifest.Annotations, wantAnnotations) {
 		t.Errorf("annotations = %v, want %v", manifest.Annotations, wantAnnotations)
@@ -238,7 +238,7 @@ func TestMetadata(t *testing.T) {
 	if manifest.Labels["app.kubernetes.io/instance"] != "payments-app" {
 		t.Errorf("a manifest keeps its labels, got %v", manifest.Labels)
 	}
-	if _, ok := manifest.Annotations[networkv1beta1.AnnotationMigratedFrom]; ok {
+	if _, ok := manifest.Annotations[networkv1.AnnotationMigratedFrom]; ok {
 		t.Error("a manifest must not carry the migration marker")
 	}
 	if _, ok := manifest.Annotations["kubectl.kubernetes.io/last-applied-configuration"]; ok {

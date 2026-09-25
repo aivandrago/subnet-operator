@@ -47,6 +47,7 @@ spec:
             description: >-
               {{`{{ $labels.cidr }}`}} in {{`{{ $labels.account }}`}}/{{`{{ $labels.region }}`}}
               ({{`{{ $labels.provider }}`}}, owner {{`{{ $labels.owner }}`}}) is running out of addresses.
+            runbook_url: "https://github.com/aivandrago/subnet-operator/blob/main/docs/operations/runbook.md#subnetnearlyfull"
 
         - alert: SubnetFull
           expr: hs_subnet_available_ips == 0
@@ -58,6 +59,7 @@ spec:
             description: >-
               {{`{{ $labels.cidr }}`}} in {{`{{ $labels.account }}`}}/{{`{{ $labels.region }}`}}
               ({{`{{ $labels.provider }}`}}) cannot take another network interface.
+            runbook_url: "https://github.com/aivandrago/subnet-operator/blob/main/docs/operations/runbook.md#subnetfull"
 
         - alert: SubnetInventoryTargetDown
           expr: hs_target_up == 0
@@ -70,6 +72,7 @@ spec:
               The inventory of this {{`{{ $labels.provider }}`}} account and region is stale.
               Check the NetworkScope status for the error, usually a credentials or permissions
               problem (on AWS, the IAM role or its trust policy).
+            runbook_url: "https://github.com/aivandrago/subnet-operator/blob/main/docs/operations/runbook.md#subnetinventorytargetdown"
 
         - alert: SubnetInventoryTargetThrottled
           # Reachable but rate-limited. hs_target_up stays 1 for a throttled target, so this
@@ -101,6 +104,7 @@ spec:
               ({{`{{ $labels.provider }}`}}) has CIDRs that overlap another network in the scope.
               Overlapping CIDRs break peering and transit routing between them.
               See status.overlapsWith on the Network object.
+            runbook_url: "https://github.com/aivandrago/subnet-operator/blob/main/docs/operations/runbook.md#networkcidroverlap"
 
         - alert: SubnetInventoryStale
           expr: time() - hs_scope_last_sync_timestamp_seconds > {{ .Values.prometheusRule.thresholds.staleSyncSeconds }}
@@ -112,6 +116,7 @@ spec:
             description: >-
               The operator is not completing full resyncs. Check that it is running and
               that its credentials still work.
+            runbook_url: "https://github.com/aivandrago/subnet-operator/blob/main/docs/operations/runbook.md#subnetinventorystale"
 
         - alert: UnmanagedNetworkResource
           # The counter rises once per resource the operator has never seen before, so an
@@ -129,7 +134,7 @@ spec:
               Import it to take it under management, or add an auto-import rule so the next one
               is tagged on its own. The dashboard lists them:
               https://hypersurgery.dev/dashboard/
-            runbook_url: "https://hypersurgery.dev/docs/#unmanaged"
+            runbook_url: "https://github.com/aivandrago/subnet-operator/blob/main/docs/operations/runbook.md#unmanagednetworkresource"
 
         - alert: SubnetClaimNotReady
           # A claim is a request someone is waiting on. Until now a claim stuck on NoSpace or
@@ -171,4 +176,5 @@ spec:
             description: >-
               The auto-import policy tagged these itself. Review them with
               kubectl get resourceimports -A.
+            runbook_url: "https://github.com/aivandrago/subnet-operator/blob/main/docs/operations/runbook.md#autoimportedresources"
 {{- end }}

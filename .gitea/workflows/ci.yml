@@ -38,6 +38,13 @@ jobs:
           cache: false
       - name: Lint
         run: make lint
+      # The OLM bundle is generated from config/manifests and the +operator-sdk markers in api/;
+      # the regenerated CSV base must match the committed one, and the bundle must pass the
+      # validation OperatorHub runs.
+      - name: OLM bundle validates
+        run: |
+          make bundle-validate
+          git diff --exit-code
 
   test:
     runs-on: operator
@@ -50,9 +57,9 @@ jobs:
           # between jobs. Restoring a 2 GB archive over them took minutes and failed on every
           # file that was already there.
           cache: false
-      - name: Generated code and manifests are up to date
+      - name: Generated code, manifests and API reference are up to date
         run: |
-          make manifests generate
+          make manifests generate api-docs
           git diff --exit-code
       - name: Helm chart lints and renders
         run: |
@@ -112,6 +119,26 @@ jobs:
           cache: false
       - name: E2E tests (Kind + Moto), oldest supported Kubernetes
         run: make test-e2e KIND_CLUSTER="$KIND_CLUSTER" KIND_NODE_IMAGE="$KIND_NODE_OLDEST"
+      - name: Clean up
+        if: always()
+        run: make cleanup-test-e2e KIND_CLUSTER="$KIND_CLUSTER" || true
+
+  # Installs the OLM bundle through OLM on Kind, as OperatorHub users get it: the webhooks with
+  # OLM's certificates, conversion through OLM's configuration, and scorecard (docs/olm.md).
+  olm:
+    runs-on: operator
+    env:
+      KIND_CLUSTER: aso-olm-${{ github.run_id }}
+      KUBECONFIG: ${{ github.workspace }}/.olm-kubeconfig
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          # No module cache, for the reason given in the e2e job.
+          cache: false
+      - name: Install the bundle through OLM (Kind), then scorecard
+        run: make test-olm KIND_CLUSTER="$KIND_CLUSTER" KIND_NODE_IMAGE="$KIND_NODE_NEWEST"
       - name: Clean up
         if: always()
         run: make cleanup-test-e2e KIND_CLUSTER="$KIND_CLUSTER" || true

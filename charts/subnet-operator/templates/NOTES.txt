@@ -12,7 +12,7 @@
 2. Tell it what to discover:
 
    kubectl apply -f - <<'EOF'
-   apiVersion: network.hypersurgery.dev/v1beta1
+   apiVersion: network.hypersurgery.dev/v1
    kind: NetworkScope
    metadata:
      name: organization
@@ -77,12 +77,6 @@ metrics scrape is available with networkPolicy.enabled=true.
 
 AWS changes are picked up on the resync interval (10m by default). For updates within seconds,
 deploy deploy/events/*.cfn.yaml and set providers.aws.events.queueUrl.
-{{- end }}
-{{- if or (dig "queueUrl" "" (default dict .Values.events)) (dig "region" "" (default dict .Values.aws)) (dig "endpointURL" "" (default dict .Values.aws)) (dig "egress" "podIdentity" "" (default dict .Values.networkPolicy)) }}
-
-Deprecated values are set: events.*, aws.* and networkPolicy.egress.podIdentity are now
-providers.aws.events.*, providers.aws.region / endpointURL and providers.aws.podIdentity.
-They still work in 0.9 and are removed in 0.10.
 {{- end }}
 {{- if .Values.webhook.enabled }}
 

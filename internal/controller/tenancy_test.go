@@ -30,7 +30,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
+	networkv1 "hypersurgery.dev/subnet-operator/api/v1"
 	"hypersurgery.dev/subnet-operator/internal/audit"
 	"hypersurgery.dev/subnet-operator/internal/inventory"
 	"hypersurgery.dev/subnet-operator/internal/tenancy"
@@ -62,15 +62,15 @@ var _ = Describe("Namespaces allowed to use a NetworkScope", func() {
 	paymentsOnly := func() *metav1.LabelSelector {
 		return &metav1.LabelSelector{MatchLabels: map[string]string{teamLabel: "payments"}}
 	}
-	createScope := func(selector *metav1.LabelSelector, policy *networkv1beta1.AutoImportPolicy) {
+	createScope := func(selector *metav1.LabelSelector, policy *networkv1.AutoImportPolicy) {
 		GinkgoHelper()
-		Expect(k8sClient.Create(ctx, &networkv1beta1.NetworkScope{
+		Expect(k8sClient.Create(ctx, &networkv1.NetworkScope{
 			ObjectMeta: metav1.ObjectMeta{Name: scopeName},
-			Spec: networkv1beta1.NetworkScopeSpec{
-				Provider:          networkv1beta1.ProviderAWS,
-				Accounts:          []networkv1beta1.Account{{ID: tenancyAccount}},
+			Spec: networkv1.NetworkScopeSpec{
+				Provider:          networkv1.ProviderAWS,
+				Accounts:          []networkv1.Account{{ID: tenancyAccount}},
 				Regions:           []string{tenancyRegion},
-				NetworkSelector:   &networkv1beta1.NetworkSelector{MatchTags: map[string]string{"hs/managed": "true"}},
+				NetworkSelector:   &networkv1.NetworkSelector{MatchTags: map[string]string{"hs/managed": "true"}},
 				NamespaceSelector: selector,
 				AutoImport:        policy,
 			},
@@ -78,7 +78,7 @@ var _ = Describe("Namespaces allowed to use a NetworkScope", func() {
 	}
 	setSelector := func(selector *metav1.LabelSelector) {
 		GinkgoHelper()
-		scope := &networkv1beta1.NetworkScope{}
+		scope := &networkv1.NetworkScope{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: scopeName}, scope)).To(Succeed())
 		scope.Spec.NamespaceSelector = selector
 		Expect(k8sClient.Update(ctx, scope)).To(Succeed())
@@ -97,12 +97,12 @@ var _ = Describe("Namespaces allowed to use a NetworkScope", func() {
 
 	AfterEach(func() {
 		for _, ns := range []string{allowedNS, otherNS} {
-			Expect(k8sClient.DeleteAllOf(ctx, &networkv1beta1.SubnetClaim{}, client.InNamespace(ns))).To(Succeed())
-			Expect(k8sClient.DeleteAllOf(ctx, &networkv1beta1.ResourceImport{}, client.InNamespace(ns))).To(Succeed())
+			Expect(k8sClient.DeleteAllOf(ctx, &networkv1.SubnetClaim{}, client.InNamespace(ns))).To(Succeed())
+			Expect(k8sClient.DeleteAllOf(ctx, &networkv1.ResourceImport{}, client.InNamespace(ns))).To(Succeed())
 		}
-		Expect(k8sClient.DeleteAllOf(ctx, &networkv1beta1.Network{},
-			client.MatchingLabels{networkv1beta1.LabelScope: scopeName})).To(Succeed())
-		Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &networkv1beta1.NetworkScope{
+		Expect(k8sClient.DeleteAllOf(ctx, &networkv1.Network{},
+			client.MatchingLabels{networkv1.LabelScope: scopeName})).To(Succeed())
+		Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &networkv1.NetworkScope{
 			ObjectMeta: metav1.ObjectMeta{Name: scopeName}}))).To(Succeed())
 	})
 
@@ -114,10 +114,10 @@ var _ = Describe("Namespaces allowed to use a NetworkScope", func() {
 
 		createVPC := func() {
 			GinkgoHelper()
-			vpc := &networkv1beta1.Network{
+			vpc := &networkv1.Network{
 				ObjectMeta: metav1.ObjectMeta{Name: vpcID,
-					Labels: map[string]string{networkv1beta1.LabelScope: scopeName, networkv1beta1.LabelNetwork: vpcID}},
-				Spec: networkv1beta1.NetworkSpec{Provider: networkv1beta1.ProviderAWS, ID: vpcID, Account: tenancyAccount, Region: tenancyRegion},
+					Labels: map[string]string{networkv1.LabelScope: scopeName, networkv1.LabelNetwork: vpcID}},
+				Spec: networkv1.NetworkSpec{Provider: networkv1.ProviderAWS, ID: vpcID, Account: tenancyAccount, Region: tenancyRegion},
 			}
 			Expect(k8sClient.Create(ctx, vpc)).To(Succeed())
 			vpc.Status.CIDRBlocks = []string{"10.70.0.0/16"}
@@ -125,21 +125,21 @@ var _ = Describe("Namespaces allowed to use a NetworkScope", func() {
 		}
 		createClaim := func(namespace string, zones ...string) {
 			GinkgoHelper()
-			Expect(k8sClient.Create(ctx, &networkv1beta1.SubnetClaim{
+			Expect(k8sClient.Create(ctx, &networkv1.SubnetClaim{
 				ObjectMeta: metav1.ObjectMeta{Name: "capacity", Namespace: namespace},
-				Spec: networkv1beta1.SubnetClaimSpec{
+				Spec: networkv1.SubnetClaimSpec{
 					ScopeRef: scopeName, Account: tenancyAccount, Region: tenancyRegion, NetworkID: vpcID,
 					PrefixLength: 24, Zones: zones,
-					Mode: networkv1beta1.ClaimModeCreate, Owner: "team-payments",
+					Mode: networkv1.ClaimModeCreate, Owner: "team-payments",
 				},
 			})).To(Succeed())
 		}
-		reconcileClaim := func(namespace string) *networkv1beta1.SubnetClaim {
+		reconcileClaim := func(namespace string) *networkv1.SubnetClaim {
 			GinkgoHelper()
 			key := types.NamespacedName{Name: "capacity", Namespace: namespace}
 			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: key})
 			Expect(err).NotTo(HaveOccurred())
-			claim := &networkv1beta1.SubnetClaim{}
+			claim := &networkv1.SubnetClaim{}
 			Expect(k8sClient.Get(ctx, key, claim)).To(Succeed())
 			return claim
 		}
@@ -187,7 +187,7 @@ var _ = Describe("Namespaces allowed to use a NetworkScope", func() {
 
 			By("the scope narrowing to another team, and the claim asking for a second zone")
 			setSelector(&metav1.LabelSelector{MatchLabels: map[string]string{teamLabel: "data"}})
-			claim := &networkv1beta1.SubnetClaim{}
+			claim := &networkv1.SubnetClaim{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "capacity", Namespace: allowedNS}, claim)).To(Succeed())
 			claim.Spec.Zones = append(claim.Spec.Zones, tenancyRegion+"b")
 			Expect(k8sClient.Update(ctx, claim)).To(Succeed())
@@ -210,20 +210,20 @@ var _ = Describe("Namespaces allowed to use a NetworkScope", func() {
 
 		createImport := func(namespace string) {
 			GinkgoHelper()
-			Expect(k8sClient.Create(ctx, &networkv1beta1.ResourceImport{
+			Expect(k8sClient.Create(ctx, &networkv1.ResourceImport{
 				ObjectMeta: metav1.ObjectMeta{Name: "take-over", Namespace: namespace},
-				Spec: networkv1beta1.ResourceImportSpec{
+				Spec: networkv1.ResourceImportSpec{
 					ScopeRef: scopeName, Account: tenancyAccount, Region: tenancyRegion,
 					ResourceID: "subnet-0e4a0001", Tags: map[string]string{"hs/owner": "team-payments"},
 				},
 			})).To(Succeed())
 		}
-		reconcileImport := func(namespace string) *networkv1beta1.ResourceImport {
+		reconcileImport := func(namespace string) *networkv1.ResourceImport {
 			GinkgoHelper()
 			key := types.NamespacedName{Name: "take-over", Namespace: namespace}
 			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: key})
 			Expect(err).NotTo(HaveOccurred())
-			imp := &networkv1beta1.ResourceImport{}
+			imp := &networkv1.ResourceImport{}
 			Expect(k8sClient.Get(ctx, key, imp)).To(Succeed())
 			return imp
 		}
@@ -242,7 +242,7 @@ var _ = Describe("Namespaces allowed to use a NetworkScope", func() {
 
 			imp := reconcileImport(otherNS)
 
-			Expect(imp.Status.State).To(Equal(networkv1beta1.ImportFailed))
+			Expect(imp.Status.State).To(Equal(networkv1.ImportFailed))
 			ready := meta.FindStatusCondition(imp.Status.Conditions, ConditionReady)
 			Expect(ready).NotTo(BeNil())
 			Expect(ready.Reason).To(Equal(tenancy.ReasonNamespaceNotAllowed))
@@ -255,7 +255,7 @@ var _ = Describe("Namespaces allowed to use a NetworkScope", func() {
 
 			imp := reconcileImport(allowedNS)
 
-			Expect(imp.Status.State).To(Equal(networkv1beta1.ImportApplied))
+			Expect(imp.Status.State).To(Equal(networkv1.ImportApplied))
 			Expect(writer.calls).To(HaveLen(1))
 		})
 
@@ -280,7 +280,7 @@ var _ = Describe("Namespaces allowed to use a NetworkScope", func() {
 
 			imp := reconcileImport(otherNS)
 
-			Expect(imp.Status.State).To(Equal(networkv1beta1.ImportApplied))
+			Expect(imp.Status.State).To(Equal(networkv1.ImportApplied))
 			Expect(writer.calls).To(HaveLen(1))
 		})
 
@@ -292,7 +292,7 @@ var _ = Describe("Namespaces allowed to use a NetworkScope", func() {
 
 			imp := reconcileImport(allowedNS)
 
-			Expect(imp.Status.State).To(Equal(networkv1beta1.ImportFailed))
+			Expect(imp.Status.State).To(Equal(networkv1.ImportFailed))
 			Expect(meta.FindStatusCondition(imp.Status.Conditions, ConditionReady).Reason).
 				To(Equal(tenancy.ReasonNamespaceNotAllowed))
 			Expect(meta.FindStatusCondition(imp.Status.Conditions, ConditionReady).Message).
@@ -313,17 +313,17 @@ var _ = Describe("Namespaces allowed to use a NetworkScope", func() {
 			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: scopeName}})
 			Expect(err).NotTo(HaveOccurred())
 		}
-		importsIn := func(namespace string) []networkv1beta1.ResourceImport {
+		importsIn := func(namespace string) []networkv1.ResourceImport {
 			GinkgoHelper()
-			list := &networkv1beta1.ResourceImportList{}
+			list := &networkv1.ResourceImportList{}
 			Expect(k8sClient.List(ctx, list, client.InNamespace(namespace),
-				client.MatchingLabels{networkv1beta1.LabelScope: scopeName})).To(Succeed())
+				client.MatchingLabels{networkv1.LabelScope: scopeName})).To(Succeed())
 			return list.Items
 		}
-		policyIn := func(namespace string) *networkv1beta1.AutoImportPolicy {
-			return &networkv1beta1.AutoImportPolicy{
-				Mode: networkv1beta1.AutoImportApply, Namespace: namespace,
-				AccountDefaults: []networkv1beta1.AccountDefault{
+		policyIn := func(namespace string) *networkv1.AutoImportPolicy {
+			return &networkv1.AutoImportPolicy{
+				Mode: networkv1.AutoImportApply, Namespace: namespace,
+				AccountDefaults: []networkv1.AccountDefault{
 					{Account: tenancyAccount, Tags: map[string]string{"hs/owner": "team-platform"}}},
 			}
 		}
@@ -381,7 +381,7 @@ var _ = Describe("Namespaces allowed to use a NetworkScope", func() {
 
 			imports := importsIn(allowedNS)
 			Expect(imports).To(HaveLen(1))
-			Expect(imports[0].Annotations).To(HaveKeyWithValue(networkv1beta1.AnnotationCreatedBy, reconciler.Identity))
+			Expect(imports[0].Annotations).To(HaveKeyWithValue(networkv1.AnnotationCreatedBy, reconciler.Identity))
 
 			decisions := auditLines(sink)
 			Expect(decisions).NotTo(BeEmpty())

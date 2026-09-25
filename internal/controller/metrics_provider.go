@@ -22,14 +22,14 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
+	networkv1 "hypersurgery.dev/subnet-operator/api/v1"
 )
 
 // scopeProvider is the provider of the named scope, for the provider label of a claim's or an
 // import's readiness metric. It is empty while the scope cannot be read: the metric still says
 // whether the object is ready, and the next reconcile fills the label in.
-func scopeProvider(ctx context.Context, c client.Reader, name string) networkv1beta1.Provider {
-	scope := &networkv1beta1.NetworkScope{}
+func scopeProvider(ctx context.Context, c client.Reader, name string) networkv1.Provider {
+	scope := &networkv1.NetworkScope{}
 	if err := c.Get(ctx, types.NamespacedName{Name: name}, scope); err != nil {
 		return ""
 	}

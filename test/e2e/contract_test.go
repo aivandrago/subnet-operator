@@ -28,7 +28,7 @@ import (
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	. "github.com/onsi/ginkgo/v2"
 
-	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
+	networkv1 "hypersurgery.dev/subnet-operator/api/v1"
 	awscloud "hypersurgery.dev/subnet-operator/internal/cloud/aws"
 	"hypersurgery.dev/subnet-operator/internal/inventory"
 	"hypersurgery.dev/subnet-operator/internal/provider"
@@ -69,7 +69,7 @@ func newMotoFixture() *motoFixture {
 func (f *motoFixture) Provider() provider.Provider { return f.provider }
 
 func (f *motoFixture) Target() inventory.Target {
-	return inventory.Target{Provider: networkv1beta1.ProviderAWS, Scope: "contract", Account: hubAccount,
+	return inventory.Target{Provider: networkv1.ProviderAWS, Scope: "contract", Account: hubAccount,
 		Region: contractRegion}
 }
 

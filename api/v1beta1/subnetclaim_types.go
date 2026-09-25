@@ -72,22 +72,26 @@ type SubnetClaimSpec struct {
 	// scopeRef is the NetworkScope whose inventory and credentials are used. The account and
 	// region below must be part of that scope, and the claim's provider is the scope's.
 	// +required
+	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="NetworkScope",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
 	ScopeRef string `json:"scopeRef"`
 
 	// account is the account that owns the network, in the provider's format (for AWS the
 	// 12-digit account ID).
 	// +kubebuilder:validation:MinLength=1
 	// +required
+	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Account",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
 	Account string `json:"account"`
 
 	// region of the network.
 	// +required
+	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Region",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
 	Region string `json:"region"`
 
 	// networkID is the network the subnets are carved out of, as its provider ID (for AWS the
 	// VPC ID). It must be discovered by the scope.
 	// +kubebuilder:validation:MinLength=1
 	// +required
+	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Network ID",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
 	NetworkID string `json:"networkID"`
 
 	// prefixLength is the size of every subnet, e.g. 24 for a /24. The provider decides the
@@ -95,6 +99,7 @@ type SubnetClaimSpec struct {
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=32
 	// +required
+	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Prefix Length",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:number"}
 	PrefixLength int32 `json:"prefixLength"`
 
 	// zones lists the zones to create one subnet in each. Required for providers whose
@@ -102,20 +107,25 @@ type SubnetClaimSpec struct {
 	// +kubebuilder:validation:MaxItems=6
 	// +listType=set
 	// +optional
+	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Zones"
 	Zones []string `json:"zones,omitempty"`
 
 	// mode is Allocate (reserve CIDRs only) or Create (also create the subnets).
 	// +kubebuilder:default=Create
 	// +optional
+	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Mode",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:select:Create","urn:alm:descriptor:com.tectonic.ui:select:Allocate"}
 	Mode ClaimMode `json:"mode,omitempty"`
 
 	// owner, env and tier become the owner, env and tier tags (hs/owner, hs/env and hs/tier on
 	// AWS).
 	// +required
+	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Owner",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
 	Owner string `json:"owner"`
 	// +optional
+	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Environment",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
 	Env string `json:"env,omitempty"`
 	// +optional
+	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Tier",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
 	Tier string `json:"tier,omitempty"`
 
 	// namePrefix is the Name tag; the zone suffix is appended, e.g. payments-a. Defaults to the
@@ -125,11 +135,13 @@ type SubnetClaimSpec struct {
 
 	// tags are added to every subnet. The owner, env and tier tags above win on conflict.
 	// +optional
+	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Tags",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:advanced"}
 	Tags map[string]string `json:"tags,omitempty"`
 
 	// aws holds the settings of subnets created on AWS. Only valid when the scope's provider is
 	// AWS.
 	// +optional
+	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="AWS Options",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:advanced"}
 	AWS *AWSClaimOptions `json:"aws,omitempty"`
 }
 
@@ -165,6 +177,7 @@ type SubnetClaimStatus struct {
 	// +listType=map
 	// +listMapKey=name
 	// +optional
+	// +operator-sdk:csv:customresourcedefinitions:type=status,displayName="Allocations"
 	Allocations []SubnetAllocation `json:"allocations,omitempty"`
 
 	// conditions: Allocated is True when every subnet has a CIDR; Ready is True when the claim
@@ -172,10 +185,12 @@ type SubnetClaimStatus struct {
 	// +listType=map
 	// +listMapKey=type
 	// +optional
+	// +operator-sdk:csv:customresourcedefinitions:type=status,displayName="Conditions",xDescriptors={"urn:alm:descriptor:io.kubernetes.conditions"}
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
 // +kubebuilder:object:root=true
+// +kubebuilder:deprecatedversion:warning="network.hypersurgery.dev/v1beta1 is deprecated: use network.hypersurgery.dev/v1, which has the same fields. v1beta1 is served until at least 1.2 and six months after 1.0"
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:categories=hypersurgery
 // +kubebuilder:printcolumn:name="Network",type=string,JSONPath=`.spec.networkID`
@@ -185,6 +200,7 @@ type SubnetClaimStatus struct {
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
 // +kubebuilder:printcolumn:name="Account",type=string,JSONPath=`.spec.account`,priority=1
 // +kubebuilder:printcolumn:name="Region",type=string,JSONPath=`.spec.region`,priority=1
+// +operator-sdk:csv:customresourcedefinitions:displayName="Subnet Claim",resources={{Subnet,v1,""},{Event,v1,""}}
 
 // SubnetClaim requests subnets in a network: the operator reserves free CIDRs and, in Create
 // mode, creates the subnets with the organization's tags. Subnets are never deleted by the

@@ -1,7 +1,8 @@
 # Runbook
 
 One entry per alert in `charts/subnet-operator/templates/prometheusrule.yaml`
-(`prometheusRule.enabled=true`). The metrics behind them are defined in
+(`prometheusRule.enabled=true`); symptoms without an alert are in the
+[troubleshooting index](README.md#troubleshooting-index). The metrics behind them are defined in
 `internal/metrics/metrics.go` and filled once per sync by `metrics.SetScope`.
 
 Two facts worth knowing before reading any entry:
@@ -14,15 +15,17 @@ Two facts worth knowing before reading any entry:
   (`resyncInterval`, 10m by default).
 
 Every metric here carries a `provider` label (`aws`), and names a network `network_id` and an
-availability zone `zone`, so alerts carry those labels too. 0.9 renamed the `hs_aws_` metrics
-of 0.8 (with `vpc_id` and `az`) and the alert `VPCCIDROverlap`, and no longer exports the old
-names; [upgrades.md](upgrades.md#upgrading-from-08-to-09) has the mapping for rules, routes and
-silences of your own.
+availability zone `zone`, so alerts carry those labels too. (Coming from 0.8 or older: 0.9
+renamed the `hs_aws_` metrics, the `vpc_id` and `az` labels and the alert `VPCCIDROverlap`;
+[upgrades.md](upgrades.md#metrics-and-alerts) has the mapping for rules, routes and silences of
+your own.)
 
 Conventions used below: `NS` is the release namespace
 (`subnet-operator-system` by default), `<fullname>` the name of the release's objects
-(`subnet-operator` for a release called `subnet-operator`; `<release>-subnet-operator` for
-others, and `<release>-aws-subnet-operator` before 0.8), `<scope>` a `NetworkScope` name.
+(`subnet-operator` for a release called `subnet-operator`, `<release>-subnet-operator` for
+others; a release first installed from the `aws-subnet-operator` chart of 0.7 or older may keep
+its old names, see [upgrades](upgrades.md#upgrading-from-07-to-08)), `<scope>` a `NetworkScope`
+name.
 
 | Alert | Severity | Pager? |
 |---|---|---|
@@ -81,8 +84,8 @@ run and the scrape fails, which is a different problem from pods that do not run
    certificate Secret is missing and `--webhook-cert-path` was set explicitly (without it the
    operator carries on with webhooks off), or the AWS credentials cannot be loaded at all.
 3. **Pods Running but not Ready, and the log says `aws.hypersurgery/v1alpha1 object(s) were
-   never migrated`.** Since 0.9 the operator does not start its controllers next to an
-   old-group object 0.8 never migrated, and a pod that is not ready is not scraped through the
+   never migrated`.** Only after an upgrade from 0.7 or 0.8: the operator does not start its
+   controllers next to an old-group object 0.8 never migrated, and a pod that is not ready is not scraped through the
    Service. The log and a `MigrationPending` Event on each object name them; the
    [upgrade guide](upgrades.md#objects-08-never-migrated) has what to do.
 4. **Pods Running, scrape failing.** The metrics endpoint is HTTPS with authn/authz by default
@@ -112,11 +115,11 @@ straight from `DescribeSubnets` (`internal/cloud/aws/discover.go`) and is copied
 **Confirm.**
 
 ```sh
-kubectl get subnet <subnet-id> -o yaml | yq '.status | {cidrBlock, availableIPs, totalIPs, utilizationPercent, availabilityZone, owner}'
+kubectl get hssubnet <subnet-id> -o yaml | yq '.status | {cidrBlock, availableIPs, totalIPs, utilizationPercent, zone, owner}'
 aws ec2 describe-subnets --subnet-ids <subnet-id> --query 'Subnets[0].AvailableIpAddressCount'
 ```
 
-If `status.lastSyncTime` of the owning target is old, the number may simply be stale — check
+If `status.targets[].lastSyncTime` of the owning scope's target is old, the number may simply be stale — check
 `SubnetInventoryStale` first.
 
 **Do.** This is a capacity decision, not an operator problem. AWS cannot resize a subnet, so
@@ -195,7 +198,8 @@ at 1 and has [its own alert](#subnetinventorytargetthrottled). The inventory for
 ```sh
 kubectl get nscope <scope> -o jsonpath='{range .status.targets[*]}{.account}/{.region}{"\t"}{.error}{"\n"}{end}'
 kubectl get nscope <scope> -o jsonpath='{.status.conditions[?(@.type=="Ready")].message}'
-kubectl -n $NS logs deployment/subnet-operator -c manager | grep "discovery failed"
+kubectl describe nscope <scope>            # a TargetUnreachable Warning Event per failed discovery
+kubectl -n $NS logs deployment/<fullname> -c manager | grep "discovery failed"
 ```
 
 **Common causes, in the order they are worth checking.** The error text is produced by
@@ -219,7 +223,7 @@ refresh, and a restart guarantees it.
 annotation alone does **not**, because the controller filters on generation changes. If you
 need it now, restart the pod).
 
-**The operator does not** delete the target's `VPC`/`Subnet` objects while discovery fails,
+**The operator does not** delete the target's `Network`/`Subnet` objects while discovery fails,
 does not zero its numbers, and does not touch AWS. It keeps the last good counts in
 `status.targets[]` so a flapping account does not look empty.
 
@@ -240,7 +244,7 @@ hs_target_throttled == 1
 **What it means.** EC2 keeps answering one account/region pair with `RequestLimitExceeded` (or
 another throttling code), and has done so on every attempt for the last 30 minutes. The
 account is reachable — credentials and permissions work — but its inventory is stale: the
-`VPC`/`Subnet` objects and `status.targets[]` keep the last good numbers and `lastSyncTime`,
+`Network`/`Subnet` objects and `status.targets[]` keep the last good numbers and `lastSyncTime`,
 exactly as for an unreachable target.
 
 EC2 rate-limits per account and per region, with one budget shared by everything that calls
@@ -324,13 +328,14 @@ sync still completes.
 kubectl get nscope                       # "Last sync" column
 kubectl -n $NS get pods
 kubectl -n $NS get lease                        # leader election, if enabled
-kubectl -n $NS logs deployment/subnet-operator -c manager --tail=200
+kubectl -n $NS logs deployment/<fullname> -c manager --tail=200
 ```
 
 **Do.**
 
-1. Is the pod running and is it the leader? With `leaderElection.enabled` only the leader
-   reconciles and only the leader consumes the SQS queue (`Poller.NeedLeaderElection`).
+1. Is the pod running and is it the leader? With `leaderElection.enabled` (the default) only
+   the leader reconciles and only the leader consumes the SQS queue
+   (`Poller.NeedLeaderElection`).
 2. Look for repeated errors from `updateStatus`, `updateOverlaps` or `syncTarget` — these are
    Kubernetes API failures (RBAC, admission webhooks, etcd pressure), and they abort the
    reconcile before the timestamp moves.
@@ -360,9 +365,9 @@ hs_network_cidr_overlaps > 0
 ```
 `for: 30m`, severity `warning`.
 
-Called `VPCCIDROverlap` up to 0.8: routes, inhibitions and silences that match on the old
-`alertname` need the new one ([upgrades.md](upgrades.md#upgrading-from-08-to-09)). It covers
-networks of every provider. Labels: `provider`, `scope`, `account`, `region`, `network_id`,
+Called `VPCCIDROverlap` up to 0.8: routes, inhibitions and silences carried over from then that
+match on the old `alertname` need the new one ([upgrades.md](upgrades.md#metrics-and-alerts)).
+It covers networks of every provider. Labels: `provider`, `scope`, `account`, `region`, `network_id`,
 `name`, `owner`, `env`.
 
 **What it means.** At least one other network (a VPC on AWS) **in the same `NetworkScope`**
@@ -392,8 +397,7 @@ same routing domain. The operator reports and never renumbers anything.
   invisible here.
 
 **Safe to ignore when.** The overlap is intentional and isolated — sandbox accounts that use
-the same `10.0.0.0/16` by convention and are never peered. Silence by `network_id` or `env`
-(`vpc_id` before 0.9).
+the same `10.0.0.0/16` by convention and are never peered. Silence by `network_id` or `env`.
 
 ---
 
@@ -402,14 +406,14 @@ the same `10.0.0.0/16` by convention and are never peered. Silence by `network_i
 ```promql
 increase(hs_unmanaged_resources_total[30m]) > 0
 ```
-`for: 10m`, severity `warning`, `runbook_url: https://hypersurgery.dev/docs/#unmanaged`.
+`for: 10m`, severity `warning`.
 Labels: `provider`, `scope`, `account`, `region`, `kind` (`network` or `subnet`).
 
 It fires ten minutes after a resource first turns up and resolves about half an hour after.
-Up to 0.8 the window was `[10m]`, as long as the `for`, and one new resource — the usual case —
-raised the increase for one evaluation less than the `for` needed, so the alert never fired
-for it; only a steady stream of new resources did. The counter also exists at zero from a
-target's first sync now, so that the first resource after a restart is a rise Prometheus can
+The window is longer than the `for` on purpose: with a window as long as the `for`, one new
+resource — the usual case — raises the increase for one evaluation less than the `for` needs,
+and the alert never fires for it (the rule up to 0.8 had that bug). The counter exists at zero
+from a target's first sync, so that the first resource after a restart is a rise Prometheus can
 see, not a series that starts at one.
 
 **What it means.** A VPC or subnet without the managed tag was seen **for the first time**.
@@ -463,8 +467,8 @@ a role holding only `ec2:CreateTags` is enough).
 **A restart or a change of leader is quiet.** The new process starts from the IDs the previous
 sync wrote to the scope's status, so resources that were already known do not count again. A
 resource created *while the operator was down* is not in that list, so it still fires — which is
-the point of the alert. It used to be the other way round: the set lived only in memory, and
-every restart reported every known unmanaged resource as new at once.
+the point of the alert. (Before 0.5 the set lived only in memory, and every restart reported
+every known unmanaged resource as new at once.)
 
 A scope that is deleted and recreated starts with an empty status, so its first sync counts
 everything unmanaged as new, exactly as a first install does.
@@ -508,7 +512,18 @@ kubectl get subnetclaims.network.hypersurgery.dev -n <namespace> <name> -o jsonp
   `CreateFailed` is something else.
 - `ScopeNotFound` / `AccountNotInScope` — the claim points at a scope that does not cover it.
   The admission webhook refuses these at `kubectl apply`, so this only appears if the scope
-  changed after the claim was accepted.
+  changed after the claim was accepted (or the webhooks are off).
+- `NamespaceNotAllowed` — the scope's `spec.namespaceSelector` does not select the claim's
+  namespace (an unset selector selects none; `{}` selects all). Either the claim belongs in
+  another namespace, or the scope's owner adds this one. Reservations the claim already has
+  stay; it gets no new ones.
+- `NetworkNotFound` — the network (VPC) in `spec.networkID` has not been discovered by that
+  scope, or belongs to another account or region: check `kubectl get hsnet`, the scope's
+  `networkSelector`, and that the target is healthy.
+- `ProviderNotEnabled` / `CreateNotSupported` / `ZonesRequired` / `InvalidPrefixLength` — the
+  scope's provider is not one the operator runs (`--providers`), or the claim asks for
+  something the provider cannot do. The full table is in
+  [failure modes](failure-modes.md#a-claim-that-cannot-be-satisfied).
 
 **Safe to ignore when.** The claim is deliberately parked — then delete it instead of leaving it
 to page; allocations it reserved are released, and no subnet is ever deleted by the operator.
@@ -532,8 +547,10 @@ reached AWS for half an hour. A dry run is settled by definition and never fires
 kubectl describe resourceimports.network.hypersurgery.dev -n <namespace> <name>   # status.error has the AWS message
 ```
 
-**Do, by reason.** `WritesDisabled` and `NoWriteRole` (state `Pending`), `ScopeNotFound` and
-`AccountNotInScope` (state `Failed`) as for claims above. `TagsNotApplied` (state `Failed`) is
+**Do, by reason.** `WritesDisabled` and `NoWriteRole` (state `Pending`), `ScopeNotFound`,
+`AccountNotInScope`, `NamespaceNotAllowed` and `ProviderNotEnabled` (state `Failed`) as for
+claims above; `RegionRequired` and `InvalidResourceID` (state `Failed`) mean the import names no
+region, or a resource ID that is not a `vpc-…` or `subnet-…`. `TagsNotApplied` (state `Failed`) is
 AWS refusing `ec2:CreateTags` — usually the write role lacks it, or an SCP denies tagging. A
 resource deleted after the import was requested lands here too, with `InvalidSubnetID.NotFound`
 or `InvalidVpcID.NotFound` in `status.error`: delete the import as well.
@@ -558,14 +575,14 @@ alone — those show up as `UnmanagedNetworkResource` instead).
 
 All four `result` series exist at zero for every target of a scope that runs the policy (mode
 `DryRun` or `Apply`), from its first sync on. That is what lets the first import after a
-restart or a change of leader count: a series that first appeared at 1, as it did up to 0.8,
-had not increased as far as `increase()` could tell, and the digest left that import out.
+restart or a change of leader count: a series that first appeared at 1 would not have
+increased as far as `increase()` could tell, and the digest would leave that import out.
 
 **Confirm.**
 
 ```sh
 kubectl get resourceimports.network.hypersurgery.dev -A -o custom-columns=\
-NAME:.metadata.name,RESOURCE:.spec.resourceID,BY:.spec.requestedBy,CREATED-BY:'.metadata.annotations.aws\.hypersurgery/created-by',STATE:.status.state
+NAME:.metadata.name,RESOURCE:.spec.resourceID,BY:.spec.requestedBy,CREATED-BY:'.metadata.annotations.network\.hypersurgery\.dev/created-by',STATE:.status.state
 kubectl get resourceimports.network.hypersurgery.dev <name> -o jsonpath='{.metadata.annotations.network\.hypersurgery\.dev/reason}'
 ```
 
@@ -591,7 +608,7 @@ that outcome — [ResourceImportNotSettled](#resourceimportnotsettled) pages on 
 
 ## Alerts the chart does not ship
 
-Worth adding locally; the metrics exist, the rules do not. (Operator down used to be the first row here; the chart ships it now as [SubnetOperatorDown](#subnetoperatordown).)
+Worth adding locally; the metrics exist, the rules do not.
 
 | Condition | Expression |
 |---|---|
@@ -599,8 +616,5 @@ Worth adding locally; the metrics exist, the rules do not. (Operator down used t
 | Throttling pressure before anything goes stale | `sum by (account, region) (rate(hs_api_throttled_total[15m])) > 0.05` |
 | Subnets missing required tags | `hs_subnet_missing_required_tags > 0` |
 | Policy cannot attribute anything | `increase(hs_auto_imports_total{result="no_owner"}[24h]) > 0` |
-| Old-group objects nothing migrates (a GitOps tool re-applying an unconverted manifest after 0.9) | `sum(hs_migration_pending_objects) > 0` |
-
-`ResourceImport` and `SubnetClaim` failures used to have no metric at all; they have
-[SubnetClaimNotReady](#subnetclaimnotready) and [ResourceImportNotSettled](#resourceimportnotsettled)
-now.
+| Old-group objects nothing migrates (a GitOps tool re-applying an unconverted `aws.hypersurgery` manifest) | `sum(hs_migration_pending_objects) > 0` |
+| Objects still stored at v1beta1 an hour after the upgrade to 1.0 (the log says why: usually CRDs that were not applied, or RBAC of your own without the CRD rules; see [upgrades](upgrades.md#what-the-operator-does-on-its-first-start)) | `hs_crd_stored_versions{version!="v1"} == 1` with `for: 1h` (the series goes away once only v1 is stored) |

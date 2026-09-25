@@ -3,7 +3,7 @@
 # and allow the plugins properly work.
 # More info: https://book.kubebuilder.io/reference/project-config.html
 cliVersion: 4.16.0
-domain: hypersurgery
+domain: hypersurgery.dev
 layout:
 - go.kubebuilder.io/v4
 projectName: subnet-operator
@@ -11,16 +11,11 @@ repo: hypersurgery.dev/subnet-operator
 resources:
 - api:
     crdVersion: v1
-  controller: true
   domain: hypersurgery.dev
   group: network
   kind: NetworkScope
   path: hypersurgery.dev/subnet-operator/api/v1beta1
   version: v1beta1
-  webhooks:
-    defaulting: true
-    validation: true
-    webhookVersion: v1
 - api:
     crdVersion: v1
   domain: hypersurgery.dev
@@ -37,7 +32,6 @@ resources:
   version: v1beta1
 - api:
     crdVersion: v1
-  controller: true
   domain: hypersurgery.dev
   group: network
   kind: SheetExport
@@ -46,14 +40,85 @@ resources:
 - api:
     crdVersion: v1
     namespaced: true
-  controller: true
   domain: hypersurgery.dev
   group: network
   kind: SubnetClaim
   path: hypersurgery.dev/subnet-operator/api/v1beta1
   version: v1beta1
+- api:
+    crdVersion: v1
+    namespaced: true
+  domain: hypersurgery.dev
+  group: network
+  kind: ResourceImport
+  path: hypersurgery.dev/subnet-operator/api/v1beta1
+  version: v1beta1
+- api:
+    crdVersion: v1
+  controller: true
+  domain: hypersurgery.dev
+  group: network
+  kind: NetworkScope
+  path: hypersurgery.dev/subnet-operator/api/v1
+  version: v1
   webhooks:
+    conversion: true
     defaulting: true
+    spoke:
+    - v1beta1
+    validation: true
+    webhookVersion: v1
+- api:
+    crdVersion: v1
+  domain: hypersurgery.dev
+  group: network
+  kind: Network
+  path: hypersurgery.dev/subnet-operator/api/v1
+  version: v1
+  webhooks:
+    conversion: true
+    spoke:
+    - v1beta1
+    webhookVersion: v1
+- api:
+    crdVersion: v1
+  domain: hypersurgery.dev
+  group: network
+  kind: Subnet
+  path: hypersurgery.dev/subnet-operator/api/v1
+  version: v1
+  webhooks:
+    conversion: true
+    spoke:
+    - v1beta1
+    webhookVersion: v1
+- api:
+    crdVersion: v1
+  controller: true
+  domain: hypersurgery.dev
+  group: network
+  kind: SheetExport
+  path: hypersurgery.dev/subnet-operator/api/v1
+  version: v1
+  webhooks:
+    conversion: true
+    spoke:
+    - v1beta1
+    webhookVersion: v1
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: hypersurgery.dev
+  group: network
+  kind: SubnetClaim
+  path: hypersurgery.dev/subnet-operator/api/v1
+  version: v1
+  webhooks:
+    conversion: true
+    defaulting: true
+    spoke:
+    - v1beta1
     validation: true
     webhookVersion: v1
 - api:
@@ -63,10 +128,13 @@ resources:
   domain: hypersurgery.dev
   group: network
   kind: ResourceImport
-  path: hypersurgery.dev/subnet-operator/api/v1beta1
-  version: v1beta1
+  path: hypersurgery.dev/subnet-operator/api/v1
+  version: v1
   webhooks:
+    conversion: true
     defaulting: true
+    spoke:
+    - v1beta1
     validation: true
     webhookVersion: v1
-version: "3"
+version: '3'

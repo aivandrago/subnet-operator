@@ -3,16 +3,27 @@
 Discovers cloud networks and subnets from resource tags (AWS VPCs and subnets today) and keeps
 a live inventory in the cluster: a `NetworkScope` selects a provider's accounts and regions, and
 the operator mirrors what it finds as `Network` and `Subnet` objects
-(`network.hypersurgery.dev/v1beta1`), reports missing tags and CIDR overlaps, and exports
+(`network.hypersurgery.dev/v1`), reports missing tags and CIDR overlaps, and exports
 Prometheus metrics.
 
+Upgrading: from 0.9, apply the new CRDs and move any `events.*`, `aws.*` or
+`networkPolicy.egress.podIdentity` values under `providers.aws` first, which 1.0 requires
+([0.9 to 1.0](https://github.com/aivandrago/subnet-operator/blob/main/docs/operations/upgrades.md#upgrading-from-09-to-10)).
 Until 0.7 this chart was called `aws-subnet-operator` and the API was
-`aws.hypersurgery/v1alpha1`. 0.8 migrated the old objects; 0.9 no longer serves that group, and
-does not start its controllers while an old object 0.8 never migrated exists. Upgrade from 0.7
-through 0.8: see the
-[upgrade guide](https://github.com/aivandrago/subnet-operator/blob/main/docs/operations/upgrades.md#upgrading-from-08-to-09).
+`aws.hypersurgery/v1alpha1`; 0.8 migrated the old objects and 0.9 removed that group, so older
+installs upgrade one release at a time through 0.8 and 0.9 (the
+[upgrade guide](https://github.com/aivandrago/subnet-operator/blob/main/docs/operations/upgrades.md)
+has every step).
 
-The core only calls `ec2:Describe*`. Nothing in your cloud is modified.
+By default the operator only calls `ec2:Describe*` and modifies nothing in your cloud. Creating
+subnets (`SubnetClaim`) and tagging (`ResourceImport`, the auto-import policy) need
+`writes.enabled=true` and a separate write role per account; nothing ever deletes a cloud
+resource.
+
+From 1.0 the API (`network.hypersurgery.dev/v1`) is stable, with a written
+[compatibility promise](https://github.com/aivandrago/subnet-operator/blob/main/docs/api-compatibility.md).
+It is tested against [Moto](https://github.com/getmoto/moto) in Kind, not yet against a real AWS
+organization; reports from one are very welcome.
 
 ## Install
 
@@ -57,6 +68,13 @@ CRDs are installed from `crds/` and, as Helm requires, are **not** removed on un
 kubectl apply -f charts/subnet-operator/crds/
 ```
 
+The CRDs serve `network.hypersurgery.dev/v1`, which they store, and `v1beta1`, the API of 0.8
+and 0.9, deprecated; the two have the same fields ([API compatibility](https://github.com/aivandrago/subnet-operator/blob/main/docs/api-compatibility.md)).
+After an upgrade from 0.9 the operator rewrites the stored objects at v1 itself
+([upgrade guide](https://github.com/aivandrago/subnet-operator/blob/main/docs/operations/upgrades.md#upgrading-from-09-to-10)),
+and it sets the CRDs' conversion ([below](#conversion-between-api-versions)): the files in `crds/`
+cannot, since they cannot name the release's Service or its CA.
+
 `crds/` holds `network.hypersurgery.dev` only. The `aws.hypersurgery` CRDs that 0.8 installed
 are not removed by an upgrade; delete them once nothing is left to migrate, as the
 [upgrade guide](https://github.com/aivandrago/subnet-operator/blob/main/docs/operations/upgrades.md#the-old-crds)
@@ -77,6 +95,8 @@ annotation.
 |---|---|---|
 | `replicaCount` | `2` | Manager replicas: one leader, one standby. More than one only makes sense with `leaderElection.enabled`. |
 | `image.repository` / `image.tag` | `ghcr.io/aivandrago/subnet-operator` / chart `appVersion` | Manager image. Public, multi-arch, signed with cosign. |
+| `image.pullPolicy` | `IfNotPresent` | Image pull policy. |
+| `nameOverride` / `fullnameOverride` | `""` | Override the chart name / the release's full name used for resource names. |
 | `imagePullSecrets` | `[]` | Not needed: the image is public. Set it only if you mirror the image somewhere that requires a login. |
 | `serviceAccount.create` / `.name` / `.annotations` | `true` / `""` / `{}` | Service account. Extra annotations win over the ones `providers.*` set. Empty `name` uses the release's full name, which changed with the chart's name in 0.8: pin the old one when upgrading if a Pod Identity association or an IRSA trust policy names it. |
 | `rbac.credentialSecretNamespaces` | `[]` | Extra namespaces where the operator may read credential Secrets. The release namespace, and the namespace of a `SheetExport` created by this chart, are covered already. |
@@ -87,8 +107,8 @@ annotation.
 | `providers.aws.events.debounce` | `""` (10s) | How long events are collected before the affected targets resync. |
 | `providers.aws.region` | `""` | Region for the operator's own calls (STS, SQS). |
 | `providers.aws.endpointURL` | `""` | Non-AWS endpoint, for testing against emulators. |
-| `providers.aws.podIdentity.enabled` / `.cidr` / `.port` | `true` / `169.254.170.23/32` / `80` | With `networkPolicy.enabled`, egress to the EKS Pod Identity agent; IRSA does not need it. Deprecated, removed in 0.10: the 0.8 name `networkPolicy.egress.podIdentity`, which still works; a key set here wins. |
-| `events.queueUrl` / `.debounce`, `aws.region` / `.endpointURL` | `""` | Deprecated 0.8 names of the `providers.aws` values above, removed in 0.10. They still work; the `providers.aws` value wins when both are set. |
+| `providers.aws.podIdentity.enabled` / `.cidr` / `.port` | `true` / `169.254.170.23/32` / `80` | With `networkPolicy.enabled`, egress to the EKS Pod Identity agent; IRSA does not need it. Its 0.8 name, `networkPolicy.egress.podIdentity`, deprecated in 0.9, is refused from 1.0. |
+| `events.queueUrl` / `.debounce`, `aws.region` / `.endpointURL` | — | Removed in 1.0 (the 0.8 names of the `providers.aws` values above, deprecated in 0.9). The chart refuses to render while one is set, naming the replacement; so it does for `--events-queue-url` or `--events-debounce` in `extraArgs` and `EVENTS_QUEUE_URL` in `extraEnv`. See the [upgrade guide](https://github.com/aivandrago/subnet-operator/blob/main/docs/operations/upgrades.md#values-and-flags-removed-in-10). |
 | `audit.sink` | `stdout` | Audit trail: one JSON line per decision on stdout, or `off`. See [docs/audit.md](../../docs/audit.md). |
 | `writes.enabled` | `false` | Let `SubnetClaim`s in Create mode create subnets. Allocation works without it. |
 | `leaderElection.enabled` | `true` | Leader election lease in the release namespace. |
@@ -97,14 +117,21 @@ annotation.
 | `leaderElection.retryPeriod` | `2s` | How often the lease is acted on. `renewDeadline` must exceed 1.2 × this; the operator refuses to start otherwise. |
 | `podDisruptionBudget.enabled` / `.minAvailable` / `.maxUnavailable` | `true` / `1` / `""` | Budget for node drains. Not created while `replicaCount` is 1, where it would block the drain. |
 | `health.port` | `8081` | Port of the liveness and readiness probes. |
-| `webhook.enabled` | `true` | Admission webhooks for `SubnetClaim`, `NetworkScope` and `ResourceImport`, in both API groups in 0.8. |
+| `webhook.enabled` | `true` | Admission webhooks for `SubnetClaim`, `NetworkScope` and `ResourceImport` (at every served version), and the conversion webhook. |
+| `webhook.port` / `.timeoutSeconds` | `9443` / `10` | Port the webhook server listens on; how long the API server waits for an admission review. |
+| `webhook.service.annotations` | `{}` | Annotations on the webhook Service. |
+| `webhook.conversion.enabled` | `true` | The operator points its CRDs' conversion between v1beta1 and v1 at its webhook, with the webhook certificate's CA; `false`, or `webhook.enabled=false`, leaves the conversion to the API server (strategy `None`). See [below](#conversion-between-api-versions). |
 | `webhook.failurePolicy` | `Fail` | Validation while the operator is unreachable: `Fail` refuses the object, `Ignore` lets it through to the controller (and lets an object in without a verified `created-by` annotation). Defaulting is always `Ignore`. |
 | `webhook.certificate.certManager` | `auto` | `auto` uses cert-manager when its API is present, otherwise the chart signs the certificate itself. `true`/`false` decide it outright. `true` is the recommended setting for production and GitOps, see [below](#admission-webhooks). |
 | `webhook.certificate.issuerRef` | `{}` | An existing cert-manager issuer instead of the self-signed one the chart creates. |
 | `webhook.certificate.duration` / `.renewBefore` | `8760h` / `720h` | cert-manager certificate lifetime. |
 | `metrics.secure` / `.port` | `true` / `8443` | HTTPS with authn/authz, or plain HTTP when false. |
+| `metrics.service.annotations` | `{}` | Annotations on the metrics Service. |
 | `metrics.serviceMonitor.enabled` | `false` | ServiceMonitor for the Prometheus operator. |
-| `prometheusRule.enabled` | `false` | Alerts: operator down, subnet nearly full or full, target down, target throttled, CIDR overlap, stale inventory, unmanaged resources, claims and imports stuck unfulfilled. |
+| `metrics.serviceMonitor.labels` / `.interval` / `.scrapeTimeout` | `{}` / `60s` / `30s` | Labels your Prometheus selects on, and the scrape timing. |
+| `metrics.serviceMonitor.insecureSkipVerify` | `true` | Skip verifying the metrics endpoint's certificate, which is self-signed by default. |
+| `prometheusRule.enabled` | `false` | Alerts: operator down, subnet nearly full or full, target down, target throttled, CIDR overlap, stale inventory, unmanaged resources, resources the auto-import policy tagged, claims and imports stuck unfulfilled. Each has a [runbook entry](https://github.com/aivandrago/subnet-operator/blob/main/docs/operations/runbook.md). |
+| `prometheusRule.labels` | `{}` | Labels your Prometheus selects rules on. |
 | `prometheusRule.thresholds.subnetUsedRatio` | `0.85` | When a subnet counts as nearly full. |
 | `prometheusRule.thresholds.staleSyncSeconds` | `3600` | When the inventory counts as stale. |
 | `prometheusRule.thresholds.notReadyFor` | `30m` | How long a `SubnetClaim` or `ResourceImport` may stay unfulfilled before it alerts. |
@@ -112,23 +139,31 @@ annotation.
 | `prometheusRule.operatorDown.job` | `""` | Scrape job the operator's metrics arrive under. Empty uses the chart's `ServiceMonitor` job; without either, `SubnetOperatorDown` is not rendered. |
 | `prometheusRule.operatorDown.for` | `10m` | How long no replica may be up before `SubnetOperatorDown` fires. |
 | `grafanaDashboard.enabled` | `false` | ConfigMap with the dashboard, for the Grafana sidecar. |
+| `grafanaDashboard.labels` / `.annotations` | `grafana_dashboard: "1"` / `{}` | Labels the Grafana sidecar selects on; annotations on the ConfigMap. |
 | `dashboard.enabled` | `false` | The dashboard app, reading the cluster as each viewer. See [The dashboard app](#the-dashboard-app). |
 | `dashboard.replicaCount` / `.port` / `.healthPort` | `1` / `8080` / `8081` | Replicas, the app port and the kubelet probe port. |
 | `dashboard.service.type` / `.port` | `ClusterIP` / `80` | The dashboard's Service. |
+| `dashboard.service.annotations` | `{}` | Annotations on the dashboard's Service. |
 | `dashboard.ingress.enabled` / `.className` / `.annotations` / `.hosts` / `.tls` | off | An Ingress for it. Put your SSO in front through the annotations. |
 | `dashboard.tls.secretName` | `""` | A `kubernetes.io/tls` Secret; the pod then serves HTTPS, so tokens are encrypted up to it. |
 | `dashboard.maxBodyBytes` | `65536` | Largest request body passed to the API server. |
 | `dashboard.networkPolicy.from` | `[]` | With `networkPolicy.enabled`, who may reach the app port. Empty means any source. |
-| `dashboard.resources` | 200m / 64Mi limits | Container resources. |
+| `dashboard.resources` | 200m / 64Mi limits, 10m / 32Mi requests | Container resources. |
 | `dashboard.podSecurityContext`, `dashboard.securityContext` | non-root, read-only rootfs, no capabilities | Pod and container security. |
+| `dashboard.podAnnotations` / `.podLabels` / `.nodeSelector` / `.tolerations` / `.affinity` | empty | Pod metadata and scheduling of the dashboard. |
 | `networkPolicy.enabled` | `false` | Restrict the operator to the API server, the AWS endpoints, DNS, the metrics scrape, the kubelet probes and, with the webhooks on, admission review calls. |
 | `networkPolicy.metricsFrom` | `[]` | Sources allowed to scrape metrics. Empty means any source. |
 | `networkPolicy.egress.cidrs` / `.ports` | `0.0.0.0/0` / `443, 6443` | Where the API server and the AWS endpoints are reached. |
-| `networkPolicy.egress.dns` | enabled | DNS in `kube-system`. |
+| `networkPolicy.egress.dns.enabled` / `.namespace` / `.ports` | `true` / `kube-system` / `[53]` | Egress to DNS in the namespace CoreDNS runs in. |
+| `networkPolicy.extraIngress` / `.extraEgress` | `[]` | Rules appended verbatim to the operator's NetworkPolicy. |
 | `networkScope.create` | `false` | Also create a `NetworkScope` with the release (provider AWS). `networkScope.accounts[]` take their roles in an `aws` member. `networkScope.networkSelector.matchTags` selects the VPCs. The 0.7 forms, `roleARN`, `externalID` and `writeRoleARN` next to the `id` and `vpcTagSelector`, were removed in 0.9 and fail the render. |
 | `networkScope.namespaceSelector` | `null` | Namespaces whose `SubnetClaim`s and `ResourceImport`s may use that scope. `null` leaves the field unset, which allows **no** namespace; `{}` allows every namespace (what 0.7 did with it unset) and is warned about; see [Permissions](#permissions). |
+| `networkScope.name` / `.accounts` / `.regions` / `.networkSelector.matchTags` / `.requiredSubnetTags` / `.resyncInterval` | `organization` / `[]` / `[]` / `hs/managed: "true"` / `[hs/owner, hs/env, hs/tier]` / `10m` | The fields of that `NetworkScope`, as in its spec. |
 | `sheetExport.create` | `false` | Also create a `SheetExport` (Google Sheet mirror). |
-| `resources` | 500m / 512Mi limits | Container resources. |
+| `sheetExport.name` / `.spreadsheetID` / `.sheetName` / `.extraTagColumns` / `.refreshInterval` | `organization` / `""` / `Subnets` / `[]` / `5m` | The fields of that `SheetExport`. |
+| `sheetExport.credentialsSecret.name` / `.namespace` / `.key` | `google-sheets` / release namespace / `credentials.json` | The Secret with the Google service account key. |
+| `resources` | 500m / 512Mi limits, 50m / 128Mi requests | Container resources. |
+| `podAnnotations` / `podLabels` | `{}` | Extra pod metadata. |
 | `podSecurityContext`, `securityContext` | non-root, read-only rootfs | Pod and container security. |
 | `extraArgs`, `extraEnv` | `[]` | Extra manager flags and environment variables. |
 | `nodeSelector`, `tolerations`, `affinity`, `priorityClassName` | empty | Scheduling. |
@@ -186,9 +221,10 @@ refuses updates to such objects; deleting them is always allowed.
 
 ### What the operator itself holds
 
-The ClusterRole holds only what is cluster-scoped: the operator's own CRDs, which are read
-and written across namespaces, and read access to namespaces, for their labels. Secrets are
-not in it. The Google service account key for
+The ClusterRole holds only what is cluster-scoped: the operator's own objects, which are read
+and written across namespaces, read access to namespaces, for their labels, and, by name, its
+six CustomResourceDefinitions: `get` and `patch` to set their conversion, `get` and `update` on
+their status to trim `storedVersions` after an upgrade. Secrets are not in it. The Google service account key for
 `SheetExport` is read through a Role bound in the release namespace, so a compromised
 operator cannot read Secrets anywhere else. Point a `SheetExport` at a Secret in another
 namespace and you have to add that namespace to `rbac.credentialSecretNamespaces`, which
@@ -246,6 +282,35 @@ which makes it right for trying the operator out, and wrong for keeping it:
 cert-manager issues a short-lived certificate (`duration`, `renewBefore`), renews it on its own,
 keeps the key out of the Helm release and renders the same manifest every time. Automatic
 rotation of the self-signed certificate is not implemented yet (issue #71).
+
+### Conversion between API versions
+
+The API server converts objects between v1beta1 and v1 whenever a client asks for the version
+an object is not stored at. With `webhook.conversion.enabled=true` (the default) the operator
+points each CRD's conversion at its webhook (strategy `Webhook`, the `<release>-webhook` Service,
+path `/convert`) with the CA from `ca.crt` of the webhook certificate's Secret, which both the
+chart's own certificate and cert-manager's carry, and follows a renewed CA within a minute. It
+does so once nothing is stored at v1beta1 any more, and until then leaves the `None` strategy
+the CRDs are installed with. Without a CA in the Secret (an issuer that does not fill `ca.crt`)
+it keeps `None` and logs why.
+
+Why the operator and not the chart: Helm installs `crds/` once, verbatim, and never upgrades
+or deletes them, which is what keeps `helm uninstall` from deleting every object. CRDs rendered as chart templates could name the Service and carry the CA, but Helm
+would then own them: `helm uninstall` would delete them and every object in them, and each
+upgrade would rewrite them. So the operator sets the conversion itself, with RBAC that names
+its six CRDs and allows nothing else on CustomResourceDefinitions
+([What the operator itself holds](#what-the-operator-itself-holds)). The cost is recorded in
+the [threat model](https://github.com/aivandrago/subnet-operator/blob/main/docs/security/threat-model.md#residual-risks-accepted-for-10):
+whoever holds the operator's token can change those six CRDs.
+
+With cert-manager (`webhook.certificate.certManager`) the same `ca.crt` mechanism applies; it
+is covered by render tests and envtest, and an end-to-end run with cert-manager is tracked in
+issue #86.
+
+`None` is also what the CRDs get with `webhook.enabled=false` or
+`webhook.conversion.enabled=false`. The API server then converts on its own, which is exact
+because the two versions have the same fields. With the webhook, a request at v1beta1 needs a
+ready operator pod; a request at v1 does not.
 
 With `networkPolicy.enabled=true` the webhook port is open to every source, because admission
 review calls come from the API server, which has no pod or namespace to select on and no

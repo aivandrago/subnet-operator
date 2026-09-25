@@ -30,7 +30,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
+	networkv1 "hypersurgery.dev/subnet-operator/api/v1"
 	"hypersurgery.dev/subnet-operator/internal/inventory"
 	"hypersurgery.dev/subnet-operator/internal/provider"
 )
@@ -84,20 +84,20 @@ var _ = Describe("SubnetClaim Controller", func() {
 		_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: claimName, Namespace: "default"}})
 		return err
 	}
-	getClaim := func() *networkv1beta1.SubnetClaim {
+	getClaim := func() *networkv1.SubnetClaim {
 		GinkgoHelper()
-		c := &networkv1beta1.SubnetClaim{}
+		c := &networkv1.SubnetClaim{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: claimName, Namespace: "default"}, c)).To(Succeed())
 		return c
 	}
-	createClaim := func(mutate func(*networkv1beta1.SubnetClaim)) {
+	createClaim := func(mutate func(*networkv1.SubnetClaim)) {
 		GinkgoHelper()
-		c := &networkv1beta1.SubnetClaim{
+		c := &networkv1.SubnetClaim{
 			ObjectMeta: metav1.ObjectMeta{Name: claimName, Namespace: "default"},
-			Spec: networkv1beta1.SubnetClaimSpec{
+			Spec: networkv1.SubnetClaimSpec{
 				ScopeRef: scopeName, Account: claimAccount, Region: claimRegion, NetworkID: claimVPC,
 				PrefixLength: 24, Zones: []string{claimRegion + "a", claimRegion + "b"},
-				Mode: networkv1beta1.ClaimModeCreate, Owner: "team-payments", Env: "prod", Tier: "private",
+				Mode: networkv1.ClaimModeCreate, Owner: "team-payments", Env: "prod", Tier: "private",
 				Tags: map[string]string{"cost-center": "cc-42", "hs/owner": "someone-else"},
 			},
 		}
@@ -108,15 +108,15 @@ var _ = Describe("SubnetClaim Controller", func() {
 	}
 	createSubnet := func(id, cidr, az string, tags map[string]string) {
 		GinkgoHelper()
-		sn := &networkv1beta1.Subnet{
+		sn := &networkv1.Subnet{
 			ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("%s-%d", id, claimCounter), Labels: labels},
-			Spec:       networkv1beta1.SubnetSpec{Provider: networkv1beta1.ProviderAWS, ID: id, NetworkID: claimVPC, Account: claimAccount, Region: claimRegion},
+			Spec:       networkv1.SubnetSpec{Provider: networkv1.ProviderAWS, ID: id, NetworkID: claimVPC, Account: claimAccount, Region: claimRegion},
 		}
 		Expect(k8sClient.Create(ctx, sn)).To(Succeed())
-		sn.Status = networkv1beta1.SubnetStatus{CIDRBlock: cidr, Zone: az, Tags: tags}
+		sn.Status = networkv1.SubnetStatus{CIDRBlock: cidr, Zone: az, Tags: tags}
 		Expect(k8sClient.Status().Update(ctx, sn)).To(Succeed())
 	}
-	cond := func(c *networkv1beta1.SubnetClaim, typ string) *metav1.Condition {
+	cond := func(c *networkv1.SubnetClaim, typ string) *metav1.Condition {
 		return meta.FindStatusCondition(c.Status.Conditions, typ)
 	}
 
@@ -125,8 +125,8 @@ var _ = Describe("SubnetClaim Controller", func() {
 		scopeName = fmt.Sprintf("claim-scope-%d", claimCounter)
 		claimName = fmt.Sprintf("claim-%d", claimCounter)
 		claimVPC = fmt.Sprintf("vpc-c1a1%04d", claimCounter)
-		labels = map[string]string{networkv1beta1.LabelScope: scopeName, networkv1beta1.LabelAccount: claimAccount,
-			networkv1beta1.LabelRegion: claimRegion, networkv1beta1.LabelNetwork: claimVPC}
+		labels = map[string]string{networkv1.LabelScope: scopeName, networkv1.LabelAccount: claimAccount,
+			networkv1.LabelRegion: claimRegion, networkv1.LabelNetwork: claimVPC}
 		writer = &fakeWriter{conflictOnce: map[string]bool{}}
 		notified = nil
 		reconciler = &SubnetClaimReconciler{
@@ -137,22 +137,22 @@ var _ = Describe("SubnetClaim Controller", func() {
 			},
 		}
 
-		Expect(k8sClient.Create(ctx, &networkv1beta1.NetworkScope{
+		Expect(k8sClient.Create(ctx, &networkv1.NetworkScope{
 			ObjectMeta: metav1.ObjectMeta{Name: scopeName},
-			Spec: networkv1beta1.NetworkScopeSpec{
-				Provider:          networkv1beta1.ProviderAWS,
+			Spec: networkv1.NetworkScopeSpec{
+				Provider:          networkv1.ProviderAWS,
 				NamespaceSelector: &metav1.LabelSelector{},
-				Accounts: []networkv1beta1.Account{
+				Accounts: []networkv1.Account{
 					{ID: claimAccount},
-					{ID: spokeAccount, AWS: &networkv1beta1.AWSAccount{RoleARN: "arn:aws:iam::" + spokeAccount + ":role/aws-subnet-operator-readonly"}},
+					{ID: spokeAccount, AWS: &networkv1.AWSAccount{RoleARN: "arn:aws:iam::" + spokeAccount + ":role/aws-subnet-operator-readonly"}},
 				},
 				Regions: []string{claimRegion},
 			},
 		})).To(Succeed())
 
-		vpc := &networkv1beta1.Network{
+		vpc := &networkv1.Network{
 			ObjectMeta: metav1.ObjectMeta{Name: claimVPC, Labels: labels},
-			Spec:       networkv1beta1.NetworkSpec{Provider: networkv1beta1.ProviderAWS, ID: claimVPC, Account: claimAccount, Region: claimRegion},
+			Spec:       networkv1.NetworkSpec{Provider: networkv1.ProviderAWS, ID: claimVPC, Account: claimAccount, Region: claimRegion},
 		}
 		Expect(k8sClient.Create(ctx, vpc)).To(Succeed())
 		vpc.Status.CIDRBlocks = []string{"10.50.0.0/16"}
@@ -164,10 +164,10 @@ var _ = Describe("SubnetClaim Controller", func() {
 	})
 
 	AfterEach(func() {
-		Expect(k8sClient.DeleteAllOf(ctx, &networkv1beta1.Subnet{}, client.MatchingLabels{networkv1beta1.LabelScope: scopeName})).To(Succeed())
-		Expect(k8sClient.DeleteAllOf(ctx, &networkv1beta1.Network{}, client.MatchingLabels{networkv1beta1.LabelScope: scopeName})).To(Succeed())
-		Expect(k8sClient.DeleteAllOf(ctx, &networkv1beta1.SubnetClaim{}, client.InNamespace("default"))).To(Succeed())
-		Expect(k8sClient.Delete(ctx, &networkv1beta1.NetworkScope{ObjectMeta: metav1.ObjectMeta{Name: scopeName}})).To(Succeed())
+		Expect(k8sClient.DeleteAllOf(ctx, &networkv1.Subnet{}, client.MatchingLabels{networkv1.LabelScope: scopeName})).To(Succeed())
+		Expect(k8sClient.DeleteAllOf(ctx, &networkv1.Network{}, client.MatchingLabels{networkv1.LabelScope: scopeName})).To(Succeed())
+		Expect(k8sClient.DeleteAllOf(ctx, &networkv1.SubnetClaim{}, client.InNamespace("default"))).To(Succeed())
+		Expect(k8sClient.Delete(ctx, &networkv1.NetworkScope{ObjectMeta: metav1.ObjectMeta{Name: scopeName}})).To(Succeed())
 	})
 
 	It("reserves free CIDRs and creates tagged subnets", func() {
@@ -182,7 +182,7 @@ var _ = Describe("SubnetClaim Controller", func() {
 		Expect(c.Status.Allocations[0].CIDRBlock).To(Equal("10.50.2.0/24"), "the first free block after the existing subnets")
 		Expect(c.Status.Allocations[1].CIDRBlock).To(Equal("10.50.3.0/24"))
 		Expect(c.Status.Allocations[0].SubnetID).To(Equal("subnet-new1"))
-		Expect(c.Status.Allocations[0].State).To(Equal(networkv1beta1.AllocationCreated))
+		Expect(c.Status.Allocations[0].State).To(Equal(networkv1.AllocationCreated))
 
 		Expect(writer.requests).To(HaveLen(2))
 		req := writer.requests[0]
@@ -192,8 +192,8 @@ var _ = Describe("SubnetClaim Controller", func() {
 		Expect(req.Tags).To(HaveKeyWithValue("hs/env", "prod"))
 		Expect(req.Tags).To(HaveKeyWithValue("hs/tier", "private"))
 		Expect(req.Tags).To(HaveKeyWithValue("cost-center", "cc-42"))
-		Expect(req.Tags).To(HaveKeyWithValue(networkv1beta1.TagManagedBy, networkv1beta1.TagManagedByValue))
-		Expect(req.Tags).To(HaveKeyWithValue(networkv1beta1.TagClaim, "default/"+claimName))
+		Expect(req.Tags).To(HaveKeyWithValue(networkv1.TagManagedBy, networkv1.TagManagedByValue))
+		Expect(req.Tags).To(HaveKeyWithValue(networkv1.TagClaim, "default/"+claimName))
 		Expect(writer.targets[0].OwnIdentity()).To(BeTrue(), "the operator's own account uses its own credentials")
 		Expect(notified).To(Equal([]inventory.TargetKey{{Account: claimAccount, Region: claimRegion}}))
 
@@ -203,12 +203,12 @@ var _ = Describe("SubnetClaim Controller", func() {
 	})
 
 	It("only reserves CIDRs in Allocate mode", func() {
-		createClaim(func(c *networkv1beta1.SubnetClaim) { c.Spec.Mode = networkv1beta1.ClaimModeAllocate })
+		createClaim(func(c *networkv1.SubnetClaim) { c.Spec.Mode = networkv1.ClaimModeAllocate })
 		Expect(reconcileClaim()).To(Succeed())
 		c := getClaim()
 		Expect(cond(c, ConditionReady).Status).To(Equal(metav1.ConditionTrue))
 		Expect(cond(c, ConditionReady).Reason).To(Equal("Allocated"))
-		Expect(c.Status.Allocations[0].State).To(Equal(networkv1beta1.AllocationPending))
+		Expect(c.Status.Allocations[0].State).To(Equal(networkv1.AllocationPending))
 		Expect(writer.requests).To(BeEmpty())
 	})
 
@@ -227,13 +227,13 @@ var _ = Describe("SubnetClaim Controller", func() {
 	})
 
 	It("takes reservations of other claims into account", func() {
-		other := &networkv1beta1.SubnetClaim{
+		other := &networkv1.SubnetClaim{
 			ObjectMeta: metav1.ObjectMeta{Name: claimName + "-other", Namespace: "default"},
-			Spec: networkv1beta1.SubnetClaimSpec{ScopeRef: scopeName, Account: claimAccount, Region: claimRegion,
+			Spec: networkv1.SubnetClaimSpec{ScopeRef: scopeName, Account: claimAccount, Region: claimRegion,
 				NetworkID: claimVPC, PrefixLength: 24, Zones: []string{claimRegion + "a"}, Owner: "x"},
 		}
 		Expect(k8sClient.Create(ctx, other)).To(Succeed())
-		other.Status.Allocations = []networkv1beta1.SubnetAllocation{{Name: "alloc-" + claimRegion + "a", Zone: claimRegion + "a", CIDRBlock: "10.50.2.0/24", State: networkv1beta1.AllocationPending}}
+		other.Status.Allocations = []networkv1.SubnetAllocation{{Name: "alloc-" + claimRegion + "a", Zone: claimRegion + "a", CIDRBlock: "10.50.2.0/24", State: networkv1.AllocationPending}}
 		Expect(k8sClient.Status().Update(ctx, other)).To(Succeed())
 
 		createClaim(nil)
@@ -285,14 +285,14 @@ var _ = Describe("SubnetClaim Controller", func() {
 		Expect(reconcileClaim()).To(Succeed())
 		c := getClaim()
 		Expect(cond(c, ConditionReady).Reason).To(Equal("CreateFailed"))
-		Expect(c.Status.Allocations[0].State).To(Equal(networkv1beta1.AllocationFailed))
+		Expect(c.Status.Allocations[0].State).To(Equal(networkv1.AllocationFailed))
 		Expect(c.Status.Allocations[0].Error).To(ContainSubstring("UnauthorizedOperation"))
 		Expect(c.Status.Allocations[0].CIDRBlock).To(Equal("10.50.2.0/24"), "the reservation is kept for the retry")
 	})
 
 	It("adopts subnets that already carry the claim tag", func() {
 		createSubnet("subnet-adopt", "10.50.9.0/24", claimRegion+"a",
-			map[string]string{networkv1beta1.TagClaim: "default/" + claimName})
+			map[string]string{networkv1.TagClaim: "default/" + claimName})
 
 		createClaim(nil)
 		Expect(reconcileClaim()).To(Succeed())
@@ -300,13 +300,13 @@ var _ = Describe("SubnetClaim Controller", func() {
 		a := c.Status.Allocations[0]
 		Expect(a.SubnetID).To(Equal("subnet-adopt"))
 		Expect(a.CIDRBlock).To(Equal("10.50.9.0/24"))
-		Expect(a.State).To(Equal(networkv1beta1.AllocationCreated))
+		Expect(a.State).To(Equal(networkv1.AllocationCreated))
 		Expect(writer.requests).To(HaveLen(1), "only the other AZ is created")
 		Expect(writer.requests[0].Zone).To(Equal(claimRegion + "b"))
 	})
 
 	It("reports a VPC that was not discovered", func() {
-		createClaim(func(c *networkv1beta1.SubnetClaim) { c.Spec.NetworkID = "vpc-0deadbeef0" })
+		createClaim(func(c *networkv1.SubnetClaim) { c.Spec.NetworkID = "vpc-0deadbeef0" })
 		Expect(reconcileClaim()).To(Succeed())
 		Expect(cond(getClaim(), ConditionReady).Reason).To(Equal("NetworkNotFound"))
 		Expect(writer.requests).To(BeEmpty())
@@ -314,17 +314,17 @@ var _ = Describe("SubnetClaim Controller", func() {
 
 	It("allocates but does not create for a spoke without a write role", func() {
 		spokeVPC := fmt.Sprintf("vpc-5b0ce%04d", claimCounter)
-		spokeLabels := map[string]string{networkv1beta1.LabelScope: scopeName, networkv1beta1.LabelAccount: spokeAccount,
-			networkv1beta1.LabelRegion: claimRegion, networkv1beta1.LabelNetwork: spokeVPC}
-		vpc := &networkv1beta1.Network{
+		spokeLabels := map[string]string{networkv1.LabelScope: scopeName, networkv1.LabelAccount: spokeAccount,
+			networkv1.LabelRegion: claimRegion, networkv1.LabelNetwork: spokeVPC}
+		vpc := &networkv1.Network{
 			ObjectMeta: metav1.ObjectMeta{Name: spokeVPC, Labels: spokeLabels},
-			Spec:       networkv1beta1.NetworkSpec{Provider: networkv1beta1.ProviderAWS, ID: spokeVPC, Account: spokeAccount, Region: claimRegion},
+			Spec:       networkv1.NetworkSpec{Provider: networkv1.ProviderAWS, ID: spokeVPC, Account: spokeAccount, Region: claimRegion},
 		}
 		Expect(k8sClient.Create(ctx, vpc)).To(Succeed())
 		vpc.Status.CIDRBlocks = []string{"10.60.0.0/16"}
 		Expect(k8sClient.Status().Update(ctx, vpc)).To(Succeed())
 
-		createClaim(func(c *networkv1beta1.SubnetClaim) { c.Spec.Account = spokeAccount; c.Spec.NetworkID = spokeVPC })
+		createClaim(func(c *networkv1.SubnetClaim) { c.Spec.Account = spokeAccount; c.Spec.NetworkID = spokeVPC })
 		Expect(reconcileClaim()).To(Succeed())
 		c := getClaim()
 		Expect(cond(c, ConditionAllocated).Status).To(Equal(metav1.ConditionTrue))
@@ -334,7 +334,7 @@ var _ = Describe("SubnetClaim Controller", func() {
 	})
 
 	It("refuses a claim without zones, which every AWS subnet needs", func() {
-		createClaim(func(c *networkv1beta1.SubnetClaim) { c.Spec.Zones = nil })
+		createClaim(func(c *networkv1.SubnetClaim) { c.Spec.Zones = nil })
 		Expect(reconcileClaim()).To(Succeed())
 		Expect(cond(getClaim(), ConditionReady).Reason).To(Equal("ZonesRequired"))
 		Expect(getClaim().Status.Allocations).To(BeEmpty())
@@ -350,7 +350,7 @@ var _ = Describe("SubnetClaim Controller", func() {
 	})
 
 	It("refuses a prefix length AWS does not accept", func() {
-		createClaim(func(c *networkv1beta1.SubnetClaim) { c.Spec.PrefixLength = 30 })
+		createClaim(func(c *networkv1.SubnetClaim) { c.Spec.PrefixLength = 30 })
 		Expect(reconcileClaim()).To(Succeed())
 		Expect(cond(getClaim(), ConditionReady).Reason).To(Equal("InvalidPrefixLength"))
 		Expect(writer.requests).To(BeEmpty())

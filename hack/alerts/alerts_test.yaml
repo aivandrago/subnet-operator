@@ -135,6 +135,7 @@ tests:
             exp_annotations:
               summary: Subnet subnet-full has no free addresses
               description: 10.0.9.0/24 in 111111111111/eu-central-1 (aws) cannot take another network interface.
+              runbook_url: https://github.com/aivandrago/subnet-operator/blob/main/docs/operations/runbook.md#subnetfull
 
   # Claims and imports are requests someone is waiting on; before these gauges existed, a stuck
   # one was visible only in its status.
@@ -257,6 +258,7 @@ tests:
                 The inventory of this aws account and region is stale.
                 Check the NetworkScope status for the error, usually a credentials or permissions
                 problem (on AWS, the IAM role or its trust policy).
+              runbook_url: https://github.com/aivandrago/subnet-operator/blob/main/docs/operations/runbook.md#subnetinventorytargetdown
       - eval_time: 35m
         alertname: SubnetInventoryTargetThrottled
         exp_alerts: []
@@ -314,6 +316,7 @@ tests:
               description: >-
                 10.0.1.0/24 in 111111111111/eu-central-1
                 (aws, owner payments) is running out of addresses.
+              runbook_url: https://github.com/aivandrago/subnet-operator/blob/main/docs/operations/runbook.md#subnetnearlyfull
       - eval_time: 20m
         alertname: SubnetFull
         exp_alerts: []          # nearly full is not full
@@ -359,6 +362,7 @@ tests:
                 (aws) has CIDRs that overlap another network in the scope.
                 Overlapping CIDRs break peering and transit routing between them.
                 See status.overlapsWith on the Network object.
+              runbook_url: https://github.com/aivandrago/subnet-operator/blob/main/docs/operations/runbook.md#networkcidroverlap
 
   # Complements the first test: a scope whose sync stopped while the operator keeps exporting
   # its last timestamp is stale, and says so.
@@ -387,6 +391,7 @@ tests:
               description: >-
                 The operator is not completing full resyncs. Check that it is running and
                 that its credentials still work.
+              runbook_url: https://github.com/aivandrago/subnet-operator/blob/main/docs/operations/runbook.md#subnetinventorystale
 
   # The counter rises once per resource first seen. A step is something new nobody owns; a flat
   # counter, however high, is resources the operator already reported.
@@ -420,7 +425,7 @@ tests:
                 Import it to take it under management, or add an auto-import rule so the next one
                 is tagged on its own. The dashboard lists them:
                 https://hypersurgery.dev/dashboard/
-              runbook_url: https://hypersurgery.dev/docs/#unmanaged
+              runbook_url: https://github.com/aivandrago/subnet-operator/blob/main/docs/operations/runbook.md#unmanagednetworkresource
       # Once the step has left the window, the alert resolves.
       - eval_time: 40m
         alertname: UnmanagedNetworkResource
@@ -462,6 +467,7 @@ tests:
               description: >-
                 The auto-import policy tagged these itself. Review them with
                 kubectl get resourceimports -A.
+              runbook_url: https://github.com/aivandrago/subnet-operator/blob/main/docs/operations/runbook.md#autoimportedresources
       # A day after the last one there is nothing left to report.
       - eval_time: 48h
         alertname: AutoImportedResources
@@ -495,3 +501,4 @@ tests:
               description: >-
                 The auto-import policy tagged these itself. Review them with
                 kubectl get resourceimports -A.
+              runbook_url: https://github.com/aivandrago/subnet-operator/blob/main/docs/operations/runbook.md#autoimportedresources

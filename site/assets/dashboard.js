@@ -608,7 +608,7 @@
     function importYAML(r, form) {
       var name = r.id.slice(0, 15) + '-import';
       var lines = [
-        ['apiVersion', 'network.hypersurgery.dev/v1beta1'], ['kind', 'ResourceImport'],
+        ['apiVersion', 'network.hypersurgery.dev/v1'], ['kind', 'ResourceImport'],
         ['metadata', null], ['  name', name], ['  namespace', form.namespace],
         ['spec', null], ['  scopeRef', 'organization'], ['  account', '"' + r.account + '"'],
         ['  region', r.region], ['  resourceID', r.id], ['  tags', null],
@@ -827,7 +827,7 @@
    * HTML: the static frame is markup, every value is a text node built by h().
    */
 
-  var API_GROUP_PATH = '/apis/network.hypersurgery.dev/v1beta1/';
+  var API_GROUP_PATH = '/apis/network.hypersurgery.dev/v1/';
   // The only call outside the group: who the API server says the credentials belong to.
   var SELF_SUBJECT_REVIEW_PATH = '/apis/authentication.k8s.io/v1/selfsubjectreviews';
   var DEFAULT_PROXY = 'http://127.0.0.1:8001';
@@ -1336,7 +1336,7 @@
     if (resource.kind === 'subnet' && form.tier) tags[str(keys.tier) || 'hs/tier'] = form.tier;
     if (form.name) tags.Name = form.name;
     var o = {
-      apiVersion: 'network.hypersurgery.dev/v1beta1',
+      apiVersion: 'network.hypersurgery.dev/v1',
       kind: 'ResourceImport',
       metadata: { generateName: resource.id + '-', namespace: form.namespace },
       spec: {

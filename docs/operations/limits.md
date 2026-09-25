@@ -82,7 +82,7 @@ The price of a slow sync is staleness, not a thundering herd.
   the instance as a whole.)
 - There is no flag to make an instance watch only some scopes (no namespace or label
   selector), and the CRDs are cluster-scoped. Two operator installs in one cluster would both
-  reconcile every `NetworkScope` and fight over the same `VPC`/`Subnet` objects. Shard across
+  reconcile every `NetworkScope` and fight over the same `Network`/`Subnet` objects. Shard across
   clusters, not within one.
 
 ## Measured at the documented capacity
@@ -167,7 +167,7 @@ selector, `U` = VPCs it leaves out, and 100 VPC IDs per filter (`maxFilterValues
 So a typical target — fewer than 100 managed and fewer than 100 unmanaged VPCs, no
 pagination — costs:
 
-- **4 requests** per full sync with `discoverUnmanaged: true` (the 0.3.x default),
+- **4 requests** per full sync with `discoverUnmanaged: true` (the default),
 - **3 requests** with it off, or with no tag selector at all.
 
 Pagination adds one request per extra page; these calls return up to the EC2 page maximum
@@ -217,7 +217,7 @@ reached `Applied` makes no call at all on later reconciles.
 Usually the real ceiling, because it grows with the size of the inventory rather than with the
 number of accounts. Per sync of a scope:
 
-- uncached `LIST`s of the scope's `Subnet`s and `VPC`s — the controllers use
+- uncached `LIST`s of the scope's `Subnet`s and `Network`s — the controllers use
   `mgr.GetAPIReader()`, so these go to the API server, not the informer cache (that is
   deliberate: objects created earlier in the same sync must be visible);
 - one more `LIST` pair per target inside `deleteGone`;
@@ -225,7 +225,7 @@ number of accounts. Per sync of a scope:
   new status is deep-equal to the old one, so a quiet organization writes almost nothing (one
   write per sync at 400 targets, measured), but free-IP counts move constantly, so expect a
   status write for most busy subnets, and their VPCs, on every full sync;
-- `updateOverlaps` compares every VPC of the scope against every other: O(V²) prefix
+- `updateOverlaps` compares every network of the scope against every other: O(N²) prefix
   comparisons per sync. Fine at hundreds of VPCs, noticeable at tens of thousands.
 
 For a scope with 10,000 subnets on a 10-minute interval, that is on the order of 10,000
@@ -240,7 +240,7 @@ capacity close to it.
 
 **What actually holds memory:**
 
-1. the controller-runtime informer cache: every `NetworkScope`, `VPC`, `Subnet`,
+1. the controller-runtime informer cache: every `NetworkScope`, `Network`, `Subnet`,
    `SubnetClaim` and `ResourceImport` in the cluster, with full status including the complete
    tag map of every resource;
 2. the metrics: every subnet has its own `hs_subnet_*` series with a dozen labels, and

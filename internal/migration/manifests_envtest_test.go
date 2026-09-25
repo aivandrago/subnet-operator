@@ -21,6 +21,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"regexp"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -30,7 +31,7 @@ import (
 	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
+	networkv1 "hypersurgery.dev/subnet-operator/api/v1"
 )
 
 // The examples of the last release, converted, must be accepted by the new CRDs: their schema
@@ -56,7 +57,7 @@ var _ = Describe("Converted manifests", func() {
 				if err := utilyaml.Unmarshal(doc, &obj.Object); err != nil || len(obj.Object) == 0 {
 					continue
 				}
-				if obj.GroupVersionKind().Group != networkv1beta1.GroupVersion.Group {
+				if obj.GroupVersionKind().Group != networkv1.GroupVersion.Group {
 					continue
 				}
 				if obj.GetNamespace() == "" && obj.GetKind() != "NetworkScope" && obj.GetKind() != "SheetExport" {
@@ -90,9 +91,11 @@ var _ = Describe("Converted manifests", func() {
 					continue
 				}
 				Expect(obj.GetAPIVersion()).NotTo(HavePrefix("aws.hypersurgery"), "%s still uses the old group", file)
-				if obj.GroupVersionKind().Group != networkv1beta1.GroupVersion.Group {
+				if obj.GroupVersionKind().Group != networkv1.GroupVersion.Group {
 					continue
 				}
+				Expect(obj.GetAPIVersion()).To(Equal(networkv1.GroupVersion.String()),
+					"%s uses a deprecated version", file)
 				Expect(k8sClient.Create(ctx, obj, client.DryRunAll)).To(Succeed(), "%s from %s", obj.GetName(), file)
 				sent++
 			}
@@ -100,11 +103,55 @@ var _ = Describe("Converted manifests", func() {
 		Expect(sent).To(BeNumerically(">=", 10))
 	})
 
+	It("match the complete manifests in the docs, which the CRDs accept as they are", func() {
+		// A YAML block in the docs with an apiVersion, a kind and a name is a manifest someone
+		// will apply; at v1 it must be accepted. Blocks at older versions are the upgrade
+		// guide's before-and-after and are left alone; fragments (a spec: alone) are skipped.
+		docs := []string{filepath.Join("..", "..", "README.md"),
+			filepath.Join("..", "..", "charts", "subnet-operator", "README.md")}
+		err := filepath.WalkDir(filepath.Join("..", "..", "docs"), func(p string, d os.DirEntry, err error) error {
+			if err == nil && filepath.Ext(p) == ".md" {
+				docs = append(docs, p)
+			}
+			return err
+		})
+		Expect(err).NotTo(HaveOccurred())
+		block := regexp.MustCompile("(?ms)^\\s*```ya?ml\\s*\\n(.*?)^\\s*```")
+		sent := 0
+		for _, file := range docs {
+			in, err := os.ReadFile(file)
+			Expect(err).NotTo(HaveOccurred())
+			for _, m := range block.FindAllSubmatch(in, -1) {
+				reader := utilyaml.NewYAMLReader(bufioReader(m[1]))
+				for {
+					doc, err := reader.Read()
+					if err != nil {
+						break
+					}
+					obj := &unstructured.Unstructured{}
+					if err := utilyaml.Unmarshal(doc, &obj.Object); err != nil || len(obj.Object) == 0 {
+						continue
+					}
+					if obj.GetAPIVersion() != networkv1.GroupVersion.String() || obj.GetName() == "" {
+						continue
+					}
+					if obj.GetNamespace() == "" && obj.GetKind() != "NetworkScope" && obj.GetKind() != "SheetExport" &&
+						obj.GetKind() != "Network" && obj.GetKind() != "Subnet" {
+						obj.SetNamespace("default")
+					}
+					Expect(k8sClient.Create(ctx, obj, client.DryRunAll)).To(Succeed(), "%s from %s", obj.GetName(), file)
+					sent++
+				}
+			}
+		}
+		Expect(sent).To(BeNumerically(">=", 2), "the README's SubnetClaim and ResourceImport at least")
+	})
+
 	It("are refused when an AWS account ID is not 12 digits, by the CRD itself", func() {
-		scope := &networkv1beta1.NetworkScope{
+		scope := &networkv1.NetworkScope{
 			ObjectMeta: metav1.ObjectMeta{Name: "bad-account"},
-			Spec: networkv1beta1.NetworkScopeSpec{Provider: networkv1beta1.ProviderAWS,
-				Accounts: []networkv1beta1.Account{{ID: "12345"}}, Regions: []string{"eu-central-1"}},
+			Spec: networkv1.NetworkScopeSpec{Provider: networkv1.ProviderAWS,
+				Accounts: []networkv1.Account{{ID: "12345"}}, Regions: []string{"eu-central-1"}},
 		}
 		err := k8sClient.Create(ctx, scope, client.DryRunAll)
 		Expect(err).To(MatchError(ContainSubstring("an AWS account id is 12 digits")))

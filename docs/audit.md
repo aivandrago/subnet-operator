@@ -14,15 +14,25 @@ turn on, and they are kept for as long as the cluster keeps Events (an hour by d
 |---|---|---|---|
 | `ResourceImport` | Normal | `Imported` | tags reached AWS |
 | `ResourceImport` | Normal | `DryRun` | the tags were computed, not applied |
-| `ResourceImport` | Warning | the condition's reason (`WritesDisabled`, `NoWriteRole`, `TagsNotApplied`, `ScopeNotFound`, `NamespaceNotAllowed`, `AccountNotInScope`, `ProviderNotEnabled`) | the import did not happen, with the reason |
+| `ResourceImport` | Warning | the condition's reason (`WritesDisabled`, `NoWriteRole`, `TagsNotApplied`, `ScopeNotFound`, `NamespaceNotAllowed`, `AccountNotInScope`, `ProviderNotEnabled`, `RegionRequired`, `InvalidResourceID`) | the import did not happen, with the reason |
 | `SubnetClaim` | Normal | `Allocated` | a CIDR was reserved for an availability zone |
 | `SubnetClaim` | Normal | `SubnetCreated` | the subnet exists in AWS |
-| `SubnetClaim` | Warning | the condition's reason (`NoSpace`, `WritesDisabled`, `CreateFailed`, `NetworkNotFound`, `ZonesRequired`, `NamespaceNotAllowed`, …) | the claim did not get what it asked for |
+| `SubnetClaim` | Warning | the condition's reason (`NoSpace`, `WritesDisabled`, `NoWriteRole`, `CreateFailed`, `CreateNotSupported`, `NetworkNotFound`, `ZonesRequired`, `InvalidPrefixLength`, `ScopeNotFound`, `NamespaceNotAllowed`, `AccountNotInScope`, `ProviderNotEnabled`) | the claim did not get what it asked for |
 | `NetworkScope` | Normal | `AutoImportRequested` | the auto-import policy wrote a `ResourceImport` |
 | `NetworkScope` | Warning | `NoOwner` | the policy found a resource no rule could attribute |
 | `NetworkScope` | Warning | `TargetUnreachable` | an account/region could not be read |
+| `NetworkScope` | Warning | `TargetThrottled` | an account/region was rate-limited by its cloud and is backed off; it stays in the inventory with its last known state |
 | `NetworkScope` | Warning | `NamespaceNotAllowed` | the auto-import policy was not run, because the scope does not allow the namespace it writes its imports to |
 | `NetworkScope` | Warning | `NamespacesUnrestricted` | the scope has no `namespaceSelector`, so every namespace may use it; once per change of the spec |
+
+The operator also records Events on its own CustomResourceDefinitions (`kubectl describe crd
+subnets.network.hypersurgery.dev`): `StorageVersionMigrated` (Normal) when it has rewritten what
+an earlier release stored and trimmed `status.storedVersions`, and `ConversionConfigured`
+(Normal) when it changes a CRD's conversion: to its webhook (`--crd-conversion=webhook`, the
+chart's default) or to the API server's own (`--crd-conversion=none`). These are about the upgrade, not about a decision on a cloud resource, and have no
+audit line ([operations/upgrades.md](operations/upgrades.md#upgrading-from-09-to-10)). The same
+goes for `MigrationPending` (Warning), on an `aws.hypersurgery/v1alpha1` object 0.8 never
+migrated, while it blocks the operator from starting its controllers.
 
 A Warning Event reuses the reason of the status condition it accompanies, so the conditions
 and the Events answer a question with the same word.

@@ -1,5 +1,5 @@
 {{- if .Values.sheetExport.create }}
-apiVersion: network.hypersurgery.dev/v1beta1
+apiVersion: network.hypersurgery.dev/v1
 kind: SheetExport
 metadata:
   name: {{ .Values.sheetExport.name }}

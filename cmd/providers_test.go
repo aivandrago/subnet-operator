@@ -21,7 +21,7 @@ import (
 	"strings"
 	"testing"
 
-	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
+	networkv1 "hypersurgery.dev/subnet-operator/api/v1"
 )
 
 func TestNewProvidersBuildsTheNamedOnes(t *testing.T) {
@@ -33,7 +33,7 @@ func TestNewProvidersBuildsTheNamedOnes(t *testing.T) {
 	if len(r.All()) != 1 {
 		t.Fatalf("providers = %d, want AWS once", len(r.All()))
 	}
-	if _, ok := r.Get(networkv1beta1.ProviderAWS); !ok {
+	if _, ok := r.Get(networkv1.ProviderAWS); !ok {
 		t.Error("AWS is not registered")
 	}
 }

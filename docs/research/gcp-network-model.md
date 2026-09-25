@@ -1,5 +1,9 @@
 # GCP network model: metadata, IP usage, discovery, auth, events
 
+> **Research note, not documentation of the operator.** The operator has no GCP provider
+> yet (1.0 ships AWS only); this page records what the design of the v1 API was based on
+> ([ADR 0002](../adr/0002-multi-cloud-model.md)). It is not kept current with the cloud's APIs.
+
 Research for issue #40 (input to ADR #39 and issues #46–#50). Checked on 2026-09-24 against the
 Compute Engine discovery documents (`compute v1`/`beta`/`alpha`, revision 20260910/20260916), the REST
 reference, and product docs. Links point to `docs.cloud.google.com`, where `cloud.google.com/...` now redirects.

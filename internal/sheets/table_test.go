@@ -23,23 +23,23 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
 
-	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
+	networkv1 "hypersurgery.dev/subnet-operator/api/v1"
 )
 
-func subnet(account, region, vpc, id, cidr string) networkv1beta1.Subnet {
-	return networkv1beta1.Subnet{
-		Spec: networkv1beta1.SubnetSpec{Provider: networkv1beta1.ProviderAWS, ID: id, NetworkID: vpc, Account: account, Region: region},
-		Status: networkv1beta1.SubnetStatus{
+func subnet(account, region, vpc, id, cidr string) networkv1.Subnet {
+	return networkv1.Subnet{
+		Spec: networkv1.SubnetSpec{Provider: networkv1.ProviderAWS, ID: id, NetworkID: vpc, Account: account, Region: region},
+		Status: networkv1.SubnetStatus{
 			CIDRBlock: cidr, Zone: region + "a", TotalIPs: ptr.To[int64](251), AvailableIPs: ptr.To[int64](51),
 			UtilizationPercent: ptr.To[int32](79), Owner: "team-a", Env: "prod", Tier: "private",
-			AWS: &networkv1beta1.AWSSubnetStatus{RouteTableID: "rtb-1"}, Tags: map[string]string{"cost-center": "cc-42"},
+			AWS: &networkv1.AWSSubnetStatus{RouteTableID: "rtb-1"}, Tags: map[string]string{"cost-center": "cc-42"},
 		},
 	}
 }
 
 func TestBuildTable(t *testing.T) {
 	synced := metav1.NewTime(time.Date(2026, 9, 22, 8, 5, 0, 0, time.UTC))
-	subnets := []networkv1beta1.Subnet{
+	subnets := []networkv1.Subnet{
 		subnet("222222222222", "eu-west-1", "vpc-b", "subnet-b1", "10.1.0.0/24"),
 		subnet("111111111111", "eu-central-1", "vpc-a", "subnet-a10", "10.0.10.0/24"),
 		subnet("111111111111", "eu-central-1", "vpc-a", "subnet-a9", "10.0.9.0/24"),
@@ -88,7 +88,7 @@ func TestBuildTable(t *testing.T) {
 func TestBuildTableLeavesUnknownCountsEmpty(t *testing.T) {
 	s := subnet("111111111111", "eu-central-1", "vpc-a", "subnet-a", "10.0.0.0/24")
 	s.Status.AvailableIPs, s.Status.UtilizationPercent = nil, nil
-	row := BuildTable([]networkv1beta1.Subnet{s}, nil, nil, nil).Rows[0]
+	row := BuildTable([]networkv1.Subnet{s}, nil, nil, nil).Rows[0]
 	if row[13] != "251" || row[14] != "" || row[15] != "" {
 		t.Errorf("total, free, used %% = %q, %q, %q; want 251 and two empty cells", row[13], row[14], row[15])
 	}

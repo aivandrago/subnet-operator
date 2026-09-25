@@ -26,3 +26,7 @@
 # Binaries the release workflow cross-compiles for Dockerfile.release.
 !dist/manager-linux-*
 !dist/dashboard-linux-*
+
+# The OLM bundle, for make bundle-build (bundle.Dockerfile copies it from the repository root).
+!bundle
+!bundle/**

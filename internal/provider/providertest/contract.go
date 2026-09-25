@@ -40,7 +40,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/util/validation/field"
 
-	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
+	networkv1 "hypersurgery.dev/subnet-operator/api/v1"
 	"hypersurgery.dev/subnet-operator/internal/inventory"
 	"hypersurgery.dev/subnet-operator/internal/provider"
 )
@@ -214,8 +214,8 @@ func findSubnet(ss []inventory.Subnet, id string) (inventory.Subnet, bool) {
 }
 
 // keys are the ownership tag keys the operator uses by default on the provider.
-func keys(f Fixture) networkv1beta1.TagKeys {
-	return networkv1beta1.DefaultTagKeys(f.Provider().Name())
+func keys(f Fixture) networkv1.TagKeys {
+	return networkv1.DefaultTagKeys(f.Provider().Name())
 }
 
 func declaresItself(t T, f Fixture) {
@@ -223,9 +223,9 @@ func declaresItself(t T, f Fixture) {
 	if p.Name() == "" {
 		t.Errorf("the provider has no name")
 	}
-	known := []networkv1beta1.Capability{networkv1beta1.CapabilityCreateSubnet,
-		networkv1beta1.CapabilityChangeEvents, networkv1beta1.CapabilityIPUsage}
-	seen := map[networkv1beta1.Capability]bool{}
+	known := []networkv1.Capability{networkv1.CapabilityCreateSubnet,
+		networkv1.CapabilityChangeEvents, networkv1.CapabilityIPUsage}
+	seen := map[networkv1.Capability]bool{}
 	for _, c := range p.Capabilities() {
 		if !slices.Contains(known, c) {
 			t.Errorf("capability %q is not one the API defines", c)
@@ -235,8 +235,8 @@ func declaresItself(t T, f Fixture) {
 		}
 		seen[c] = true
 	}
-	models := []networkv1beta1.OwnershipModel{networkv1beta1.OwnershipResourceTags,
-		networkv1beta1.OwnershipParentNetworkTags}
+	models := []networkv1.OwnershipModel{networkv1.OwnershipResourceTags,
+		networkv1.OwnershipParentNetworkTags}
 	o := p.Ownership()
 	if !slices.Contains(models, o.Networks) {
 		t.Errorf("ownership model of networks %q is not one the API defines", o.Networks)
@@ -244,7 +244,7 @@ func declaresItself(t T, f Fixture) {
 	if !slices.Contains(models, o.Subnets) {
 		t.Errorf("ownership model of subnets %q is not one the API defines", o.Subnets)
 	}
-	if o.Networks == networkv1beta1.OwnershipParentNetworkTags {
+	if o.Networks == networkv1.OwnershipParentNetworkTags {
 		t.Errorf("a network has no parent network to keep its metadata on")
 	}
 	if p.WriteIdentityField() == "" {
@@ -260,7 +260,7 @@ func declaresItself(t T, f Fixture) {
 
 func ownIdentityByDefault(t T, f Fixture) {
 	p := f.Provider()
-	account := networkv1beta1.Account{ID: f.Target().Account}
+	account := networkv1.Account{ID: f.Target().Account}
 	for _, access := range []provider.Access{provider.Read, provider.Write} {
 		id := p.Identity(account, access)
 		if id != nil && !id.Own() {
@@ -319,7 +319,7 @@ func discoveryShape(t T, f Fixture) {
 		t.Errorf("subnet %s has tags %v, missing %s=team-a", tagged, a.Tags, k.Owner)
 	}
 
-	ipUsage := provider.HasCapability(p, networkv1beta1.CapabilityIPUsage)
+	ipUsage := provider.HasCapability(p, networkv1.CapabilityIPUsage)
 	seen := map[string]bool{}
 	for _, s := range snap.Subnets {
 		if seen[s.ID] {
@@ -356,9 +356,9 @@ func discoveryShape(t T, f Fixture) {
 func checkOwnershipSource(t T, p provider.Provider, s inventory.Subnet) {
 	t.Helper()
 	switch s.OwnershipSource {
-	case networkv1beta1.OwnershipSourceSubnet:
-	case networkv1beta1.OwnershipSourceNetwork:
-		if p.Ownership().Subnets != networkv1beta1.OwnershipParentNetworkTags {
+	case networkv1.OwnershipSourceSubnet:
+	case networkv1.OwnershipSourceNetwork:
+		if p.Ownership().Subnets != networkv1.OwnershipParentNetworkTags {
 			t.Errorf("subnet %s inherits its ownership from the network, but subnets use the %s model",
 				s.ID, p.Ownership().Subnets)
 		}
@@ -486,7 +486,7 @@ func createSubnet(t T, f Fixture) {
 	c, cancel := ctx()
 	defer cancel()
 
-	if !provider.HasCapability(p, networkv1beta1.CapabilityCreateSubnet) {
+	if !provider.HasCapability(p, networkv1.CapabilityCreateSubnet) {
 		if _, err := p.CreateSubnet(c, f.Target(), req); !errors.Is(err, inventory.ErrNotSupported) {
 			t.Errorf("the provider does not declare CreateSubnet, but CreateSubnet returned %v, not ErrNotSupported", err)
 		}
@@ -507,7 +507,7 @@ func createSubnet(t T, f Fixture) {
 	if s.Tags[k.Owner] != "team-c" {
 		t.Errorf("created subnet has tags %v, missing %s=team-c", s.Tags, k.Owner)
 	}
-	if s.OwnershipSource != networkv1beta1.OwnershipSourceSubnet {
+	if s.OwnershipSource != networkv1.OwnershipSourceSubnet {
 		t.Errorf("a subnet created with its own tags reports ownershipSource %q, want Subnet", s.OwnershipSource)
 	}
 
@@ -553,7 +553,7 @@ func ownershipWritesOnlyAdd(t T, f Fixture) {
 			t.Errorf("subnet %s: %s = %q after the write, want %q (tags %v)", s, key, got.Tags[key], want, got.Tags)
 		}
 	}
-	if got.OwnershipSource != networkv1beta1.OwnershipSourceSubnet {
+	if got.OwnershipSource != networkv1.OwnershipSourceSubnet {
 		t.Errorf("a subnet with ownership of its own reports ownershipSource %q, want Subnet", got.OwnershipSource)
 	}
 	net, ok := findNetwork(snap.Networks, n)
@@ -573,10 +573,10 @@ func tagRules(t T, f Fixture) {
 	// that cannot carry one of these needs provider-dependent keys before it can ship.
 	written := map[string]string{
 		k.Owner: teamA, k.Env: prod, k.Tier: "private",
-		networkv1beta1.DefaultManagedTag: networkv1beta1.DefaultManagedValue,
-		networkv1beta1.TagManagedBy:      networkv1beta1.TagManagedByValue,
-		networkv1beta1.TagClaim:          "team-a/claim",
-		nameTag:                          "claim-a",
+		networkv1.DefaultManagedTag: networkv1.DefaultManagedValue,
+		networkv1.TagManagedBy:      networkv1.TagManagedByValue,
+		networkv1.TagClaim:          "team-a/claim",
+		nameTag:                     "claim-a",
 	}
 	if errs := p.ValidateTags(field.NewPath("tags"), written); len(errs) > 0 {
 		t.Errorf("the provider refuses tags the operator writes: %v", errs.ToAggregate())

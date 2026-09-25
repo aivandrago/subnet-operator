@@ -32,7 +32,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
+	networkv1 "hypersurgery.dev/subnet-operator/api/v1"
 	"hypersurgery.dev/subnet-operator/internal/inventory"
 	"hypersurgery.dev/subnet-operator/internal/provider"
 )
@@ -80,7 +80,7 @@ func snapshotA() *inventory.Snapshot {
 		Subnets: []inventory.Subnet{
 			{ID: "subnet-a1", NetworkID: "vpc-aaa", Account: accountA, Region: region, State: "available",
 				CIDRBlock: "10.0.1.0/24", Zone: "eu-central-1a", TotalIPs: new(int64(251)), AvailableIPs: new(int64(51)),
-				OwnershipSource: networkv1beta1.OwnershipSourceSubnet, AWS: &networkv1beta1.AWSSubnetStatus{Public: true},
+				OwnershipSource: networkv1.OwnershipSourceSubnet, AWS: &networkv1.AWSSubnetStatus{Public: true},
 				Tags: map[string]string{"hs/owner": "team-a", "hs/env": "prod", "hs/tier": "public"}},
 			{ID: "subnet-a2", NetworkID: "vpc-aaa", Account: accountA, Region: region, State: "available",
 				CIDRBlock: "10.0.2.0/24", Zone: "eu-central-1b", TotalIPs: new(int64(251)), AvailableIPs: new(int64(251))},
@@ -122,9 +122,9 @@ var _ = Describe("NetworkScope Controller", func() {
 		Expect(reconciler.NotifyChanged(ctx, keys)).To(Succeed())
 	}
 
-	getScope := func() *networkv1beta1.NetworkScope {
+	getScope := func() *networkv1.NetworkScope {
 		GinkgoHelper()
-		s := &networkv1beta1.NetworkScope{}
+		s := &networkv1.NetworkScope{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: scopeName}, s)).To(Succeed())
 		return s
 	}
@@ -138,14 +138,14 @@ var _ = Describe("NetworkScope Controller", func() {
 		}
 		reconciler = &NetworkScopeReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), Providers: awsProviders(discoverer, nil, nil)}
 
-		scope := &networkv1beta1.NetworkScope{
+		scope := &networkv1.NetworkScope{
 			ObjectMeta: metav1.ObjectMeta{Name: scopeName},
-			Spec: networkv1beta1.NetworkScopeSpec{
-				Provider:          networkv1beta1.ProviderAWS,
+			Spec: networkv1.NetworkScopeSpec{
+				Provider:          networkv1.ProviderAWS,
 				NamespaceSelector: &metav1.LabelSelector{},
-				Accounts: []networkv1beta1.Account{
+				Accounts: []networkv1.Account{
 					{ID: accountA},
-					{ID: accountB, AWS: &networkv1beta1.AWSAccount{RoleARN: "arn:aws:iam::" + accountB + ":role/aws-subnet-operator-readonly"}},
+					{ID: accountB, AWS: &networkv1.AWSAccount{RoleARN: "arn:aws:iam::" + accountB + ":role/aws-subnet-operator-readonly"}},
 				},
 				Regions:            []string{region},
 				RequiredSubnetTags: []string{"hs/owner", "hs/env"},
@@ -157,19 +157,19 @@ var _ = Describe("NetworkScope Controller", func() {
 
 	AfterEach(func() {
 		// envtest runs no garbage collector, so children are removed explicitly.
-		Expect(k8sClient.DeleteAllOf(ctx, &networkv1beta1.Subnet{}, client.MatchingLabels{networkv1beta1.LabelScope: scopeName})).To(Succeed())
-		Expect(k8sClient.DeleteAllOf(ctx, &networkv1beta1.Network{}, client.MatchingLabels{networkv1beta1.LabelScope: scopeName})).To(Succeed())
+		Expect(k8sClient.DeleteAllOf(ctx, &networkv1.Subnet{}, client.MatchingLabels{networkv1.LabelScope: scopeName})).To(Succeed())
+		Expect(k8sClient.DeleteAllOf(ctx, &networkv1.Network{}, client.MatchingLabels{networkv1.LabelScope: scopeName})).To(Succeed())
 		Expect(k8sClient.Delete(ctx, getScope())).To(Succeed())
 	})
 
 	It("mirrors VPCs and subnets with inventory data and compliance findings", func() {
 		reconcileScope()
 
-		s := &networkv1beta1.Subnet{}
+		s := &networkv1.Subnet{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "subnet-a1"}, s)).To(Succeed())
-		Expect(s.Spec).To(Equal(networkv1beta1.SubnetSpec{Provider: networkv1beta1.ProviderAWS, ID: "subnet-a1", NetworkID: "vpc-aaa", Account: accountA, Region: region}))
-		Expect(s.Labels).To(HaveKeyWithValue(networkv1beta1.LabelScope, scopeName))
-		Expect(s.Labels).To(HaveKeyWithValue(networkv1beta1.LabelAccount, accountA))
+		Expect(s.Spec).To(Equal(networkv1.SubnetSpec{Provider: networkv1.ProviderAWS, ID: "subnet-a1", NetworkID: "vpc-aaa", Account: accountA, Region: region}))
+		Expect(s.Labels).To(HaveKeyWithValue(networkv1.LabelScope, scopeName))
+		Expect(s.Labels).To(HaveKeyWithValue(networkv1.LabelAccount, accountA))
 		Expect(s.OwnerReferences).To(HaveLen(1))
 		Expect(s.OwnerReferences[0].Name).To(Equal(scopeName))
 		Expect(s.Status.CIDRBlock).To(Equal("10.0.1.0/24"))
@@ -185,7 +185,7 @@ var _ = Describe("NetworkScope Controller", func() {
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "subnet-a2"}, s)).To(Succeed())
 		Expect(s.Status.MissingTags).To(Equal([]string{"hs/owner", "hs/env"}))
 
-		v := &networkv1beta1.Network{}
+		v := &networkv1.Network{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "vpc-aaa"}, v)).To(Succeed())
 		Expect(v.Status.Name).To(Equal("prod"))
 		Expect(v.Status.Owner).To(Equal("platform"))
@@ -208,22 +208,22 @@ var _ = Describe("NetworkScope Controller", func() {
 		discoverer.mu.Lock()
 		own, spoke := discoverer.targets[accountA+"/"+region], discoverer.targets[accountB+"/"+region]
 		discoverer.mu.Unlock()
-		Expect(own.Provider).To(Equal(networkv1beta1.ProviderAWS))
+		Expect(own.Provider).To(Equal(networkv1.ProviderAWS))
 		Expect(own.OwnIdentity()).To(BeTrue())
 		Expect(spoke.OwnIdentity()).To(BeFalse())
 		Expect(spoke.Identity.String()).To(Equal("arn:aws:iam::" + accountB + ":role/aws-subnet-operator-readonly"))
 
 		By("reporting the provider's capabilities and ownership model on the scope")
 		scope := getScope()
-		Expect(scope.Status.Capabilities).To(Equal([]networkv1beta1.Capability{
-			networkv1beta1.CapabilityCreateSubnet, networkv1beta1.CapabilityIPUsage}))
-		Expect(scope.Status.Ownership).To(Equal(&networkv1beta1.Ownership{
-			Networks: networkv1beta1.OwnershipResourceTags, Subnets: networkv1beta1.OwnershipResourceTags}))
+		Expect(scope.Status.Capabilities).To(Equal([]networkv1.Capability{
+			networkv1.CapabilityCreateSubnet, networkv1.CapabilityIPUsage}))
+		Expect(scope.Status.Ownership).To(Equal(&networkv1.Ownership{
+			Networks: networkv1.OwnershipResourceTags, Subnets: networkv1.OwnershipResourceTags}))
 
 		By("saying where each subnet's ownership came from")
-		s := &networkv1beta1.Subnet{}
+		s := &networkv1.Subnet{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "subnet-a1"}, s)).To(Succeed())
-		Expect(s.Status.OwnershipSource).To(Equal(networkv1beta1.OwnershipSourceSubnet))
+		Expect(s.Status.OwnershipSource).To(Equal(networkv1.OwnershipSourceSubnet))
 	})
 
 	It("keeps IP usage the provider could not report unknown, down to the network", func() {
@@ -232,12 +232,12 @@ var _ = Describe("NetworkScope Controller", func() {
 		discoverer.snapshots[accountA+"/"+region] = snap
 		reconcileScope()
 
-		s := &networkv1beta1.Subnet{}
+		s := &networkv1.Subnet{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "subnet-a2"}, s)).To(Succeed())
 		Expect(s.Status.TotalIPs).To(HaveValue(Equal(int64(251))))
 		Expect(s.Status.AvailableIPs).To(BeNil())
 		Expect(s.Status.UtilizationPercent).To(BeNil())
-		v := &networkv1beta1.Network{}
+		v := &networkv1.Network{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "vpc-aaa"}, v)).To(Succeed())
 		Expect(v.Status.TotalIPs).To(HaveValue(Equal(int64(502))))
 		Expect(v.Status.AvailableIPs).To(BeNil(), "a sum that left a subnet out would look precise and be wrong")
@@ -270,9 +270,9 @@ var _ = Describe("NetworkScope Controller", func() {
 		notify(accountA, accountB)
 		reconcileScope()
 
-		err := k8sClient.Get(ctx, types.NamespacedName{Name: "subnet-a2"}, &networkv1beta1.Subnet{})
+		err := k8sClient.Get(ctx, types.NamespacedName{Name: "subnet-a2"}, &networkv1.Subnet{})
 		Expect(apierrors.IsNotFound(err)).To(BeTrue(), "subnet-a2 is gone from AWS")
-		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "vpc-bbb"}, &networkv1beta1.Network{})).To(Succeed(),
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "vpc-bbb"}, &networkv1.Network{})).To(Succeed(),
 			"a failed discovery must not delete the account's objects")
 
 		scope := getScope()
@@ -304,8 +304,8 @@ var _ = Describe("NetworkScope Controller", func() {
 		notify(accountA, "999999999999")
 		reconcileScope()
 
-		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "subnet-a3"}, &networkv1beta1.Subnet{})).To(Succeed())
-		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "vpc-bbb"}, &networkv1beta1.Network{})).To(Succeed(),
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "subnet-a3"}, &networkv1.Subnet{})).To(Succeed())
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "vpc-bbb"}, &networkv1.Network{})).To(Succeed(),
 			"account B was not reported changed and must not be synced before the next full sync")
 		Expect(discoverer.calls[accountB+"/"+region]).To(Equal(1))
 
@@ -319,34 +319,34 @@ var _ = Describe("NetworkScope Controller", func() {
 
 	It("deletes objects of accounts removed from the scope", func() {
 		reconcileScope()
-		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "vpc-bbb"}, &networkv1beta1.Network{})).To(Succeed())
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "vpc-bbb"}, &networkv1.Network{})).To(Succeed())
 
 		scope := getScope()
 		scope.Spec.Accounts = scope.Spec.Accounts[:1]
 		Expect(k8sClient.Update(ctx, scope)).To(Succeed())
 		reconcileScope()
 
-		err := k8sClient.Get(ctx, types.NamespacedName{Name: "vpc-bbb"}, &networkv1beta1.Network{})
+		err := k8sClient.Get(ctx, types.NamespacedName{Name: "vpc-bbb"}, &networkv1.Network{})
 		Expect(apierrors.IsNotFound(err)).To(BeTrue(), "vpc-bbb belongs to the removed account")
-		v := &networkv1beta1.Network{}
+		v := &networkv1.Network{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "vpc-aaa"}, v)).To(Succeed())
 		Expect(v.Status.OverlapsWith).To(BeEmpty(), "the overlapping VPC is gone")
 		Expect(getScope().Status.Targets).To(HaveLen(1))
 	})
 
 	It("does not take over objects owned by another scope", func() {
-		foreign := &networkv1beta1.Network{
-			ObjectMeta: metav1.ObjectMeta{Name: "vpc-bbb", Labels: map[string]string{networkv1beta1.LabelScope: "other"}},
-			Spec:       networkv1beta1.NetworkSpec{Provider: networkv1beta1.ProviderAWS, ID: "vpc-bbb", Account: accountB, Region: region},
+		foreign := &networkv1.Network{
+			ObjectMeta: metav1.ObjectMeta{Name: "vpc-bbb", Labels: map[string]string{networkv1.LabelScope: "other"}},
+			Spec:       networkv1.NetworkSpec{Provider: networkv1.ProviderAWS, ID: "vpc-bbb", Account: accountB, Region: region},
 		}
 		Expect(k8sClient.Create(ctx, foreign)).To(Succeed())
 		DeferCleanup(func() { Expect(k8sClient.Delete(ctx, foreign)).To(Succeed()) })
 
 		reconcileScope()
 
-		v := &networkv1beta1.Network{}
+		v := &networkv1.Network{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "vpc-bbb"}, v)).To(Succeed())
-		Expect(v.Labels).To(HaveKeyWithValue(networkv1beta1.LabelScope, "other"))
+		Expect(v.Labels).To(HaveKeyWithValue(networkv1.LabelScope, "other"))
 		Expect(v.OwnerReferences).To(BeEmpty())
 	})
 })

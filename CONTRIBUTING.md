@@ -8,10 +8,13 @@ your own accounts and say what broke or what was confusing.
 - **Running it.** The operator has been exercised against [Moto](https://github.com/getmoto/moto)
   in CI, not against a real AWS organization. Reports from a real one — especially with many
   accounts, unusual tagging conventions or a strict Terraform setup — are worth more than code.
-- **Feedback on the API** before `v1` freezes (the API is `network.hypersurgery.dev/v1beta1`): the tag schema, `SubnetClaim`,
+- **Feedback on the API** (`network.hypersurgery.dev/v1`, which only grows from 1.0 on, see
+  [docs/api-compatibility.md](docs/api-compatibility.md)): the tag schema, `SubnetClaim`,
   `ResourceImport` and the auto-import policy.
-- **The Google Cloud and Azure providers.** The inventory model is already cloud-neutral; the
-  discovery side is not written.
+- **The Google Cloud and Azure providers.** The API and the inventory model are cloud-neutral
+  and a provider plugs into a registry (`internal/provider`, with a contract suite in
+  `providertest`); only the AWS provider is written. The design is
+  [ADR 0002](docs/adr/0002-multi-cloud-model.md).
 
 ## Opening an issue
 
@@ -33,9 +36,14 @@ include the VPC's CIDRs and the subnets that already exist in it.
    named by `KIND_CLUSTER` (cluster, Moto container, manager image tag), so parallel runs on
    one Docker host do not collide, and `make cleanup-test-e2e KIND_CLUSTER=...` removes
    whatever an interrupted run left behind.
-3. Changes to `api/` need `make manifests generate`, and `make helm-crds` so the chart's copies
-   of the CRDs match. CI fails if they drift.
-4. Commit messages: a short imperative subject, then why the change exists, not what the diff
+3. Changes to `api/` need `make manifests generate`, `make helm-crds` so the chart's copies
+   of the CRDs match, and `make api-docs` so the [API reference](docs/reference/api.md) does.
+   CI fails if any of them drift.
+4. Documentation is checked too: `make test` fails on a relative link or an `#anchor` in the
+   Markdown or on the site (`site/`) that points nowhere (`test/docs`), and on a metric, alert or
+   runbook section the docs name that does not exist (`internal/metrics`). A change of
+   behaviour updates the page that describes it in the same pull request.
+5. Commit messages: a short imperative subject, then why the change exists, not what the diff
    already shows. English.
 
 ## Conventions worth knowing

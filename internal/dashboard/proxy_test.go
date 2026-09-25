@@ -110,14 +110,14 @@ func statusOf(t *testing.T, rec *httptest.ResponseRecorder) metav1.Status {
 
 func TestReadsOfTheGroupAreForwardedWithTheViewersTokenVerbatim(t *testing.T) {
 	for _, target := range []string{
-		"/apis/network.hypersurgery.dev/v1beta1/subnets",
-		"/apis/network.hypersurgery.dev/v1beta1/subnets?labelSelector=network.hypersurgery.dev%2Fscope%3Dorg&limit=500",
-		"/apis/network.hypersurgery.dev/v1beta1/subnets?watch=true&resourceVersion=42",
-		"/apis/network.hypersurgery.dev/v1beta1/networks/vpc-0abc",
-		"/apis/network.hypersurgery.dev/v1beta1/networkscopes/org/status",
-		"/apis/network.hypersurgery.dev/v1beta1/subnetclaims",
-		"/apis/network.hypersurgery.dev/v1beta1/namespaces/payments/subnetclaims",
-		"/apis/network.hypersurgery.dev/v1beta1/namespaces/payments/resourceimports/checkout",
+		"/apis/network.hypersurgery.dev/v1/subnets",
+		"/apis/network.hypersurgery.dev/v1/subnets?labelSelector=network.hypersurgery.dev%2Fscope%3Dorg&limit=500",
+		"/apis/network.hypersurgery.dev/v1/subnets?watch=true&resourceVersion=42",
+		"/apis/network.hypersurgery.dev/v1/networks/vpc-0abc",
+		"/apis/network.hypersurgery.dev/v1/networkscopes/org/status",
+		"/apis/network.hypersurgery.dev/v1/subnetclaims",
+		"/apis/network.hypersurgery.dev/v1/namespaces/payments/subnetclaims",
+		"/apis/network.hypersurgery.dev/v1/namespaces/payments/resourceimports/checkout",
 	} {
 		t.Run(target, func(t *testing.T) {
 			api := newFakeAPIServer(t)
@@ -142,8 +142,8 @@ func TestReadsOfTheGroupAreForwardedWithTheViewersTokenVerbatim(t *testing.T) {
 
 func TestCreatingAResourceImportIsForwarded(t *testing.T) {
 	api := newFakeAPIServer(t)
-	body := `{"apiVersion":"network.hypersurgery.dev/v1beta1","kind":"ResourceImport"}`
-	rec := do(newTestProxy(t, api), write("/apis/network.hypersurgery.dev/v1beta1/namespaces/default/resourceimports", body))
+	body := `{"apiVersion":"network.hypersurgery.dev/v1","kind":"ResourceImport"}`
+	rec := do(newTestProxy(t, api), write("/apis/network.hypersurgery.dev/v1/namespaces/default/resourceimports", body))
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("got %d, want 201: %s", rec.Code, rec.Body.String())
 	}
@@ -164,30 +164,30 @@ func TestCreatingAResourceImportIsForwarded(t *testing.T) {
 
 func TestEverythingOffTheListIsRefusedBeforeTheAPIServer(t *testing.T) {
 	cases := []struct{ method, target string }{
-		{http.MethodDelete, "/apis/network.hypersurgery.dev/v1beta1/subnets/subnet-0abc"},
-		{http.MethodDelete, "/apis/network.hypersurgery.dev/v1beta1/namespaces/default/resourceimports/x"},
-		{http.MethodPut, "/apis/network.hypersurgery.dev/v1beta1/networkscopes/org"},
-		{http.MethodPatch, "/apis/network.hypersurgery.dev/v1beta1/networkscopes/org"},
-		{http.MethodPost, "/apis/network.hypersurgery.dev/v1beta1/networkscopes"},
-		{http.MethodPost, "/apis/network.hypersurgery.dev/v1beta1/namespaces/default/subnetclaims"},
-		{http.MethodPost, "/apis/network.hypersurgery.dev/v1beta1/resourceimports"},
-		{http.MethodPost, "/apis/network.hypersurgery.dev/v1beta1/namespaces/default/resourceimports/x"},
-		{http.MethodPost, "/apis/network.hypersurgery.dev/v1beta1/namespaces/default/resourceimports/x/status"},
+		{http.MethodDelete, "/apis/network.hypersurgery.dev/v1/subnets/subnet-0abc"},
+		{http.MethodDelete, "/apis/network.hypersurgery.dev/v1/namespaces/default/resourceimports/x"},
+		{http.MethodPut, "/apis/network.hypersurgery.dev/v1/networkscopes/org"},
+		{http.MethodPatch, "/apis/network.hypersurgery.dev/v1/networkscopes/org"},
+		{http.MethodPost, "/apis/network.hypersurgery.dev/v1/networkscopes"},
+		{http.MethodPost, "/apis/network.hypersurgery.dev/v1/namespaces/default/subnetclaims"},
+		{http.MethodPost, "/apis/network.hypersurgery.dev/v1/resourceimports"},
+		{http.MethodPost, "/apis/network.hypersurgery.dev/v1/namespaces/default/resourceimports/x"},
+		{http.MethodPost, "/apis/network.hypersurgery.dev/v1/namespaces/default/resourceimports/x/status"},
 		{http.MethodGet, "/api/v1/secrets"},
 		{http.MethodGet, "/api/v1/namespaces/kube-system/secrets/admin"},
 		{http.MethodGet, "/apis/apps/v1/deployments"},
-		{http.MethodGet, "/apis/network.hypersurgery.dev.evil/v1beta1/subnets"},
+		{http.MethodGet, "/apis/network.hypersurgery.dev.evil/v1/subnets"},
 		{http.MethodGet, "/apis/aws.hypersurgery/v1alpha1/subnets"},
 		{http.MethodGet, "/apis/network.hypersurgery.dev"},
-		{http.MethodGet, "/apis/network.hypersurgery.dev/v1beta1"},
-		{http.MethodGet, "/apis/network.hypersurgery.dev/v1beta1/namespaces/default"},
-		{http.MethodGet, "/apis/network.hypersurgery.dev/v1beta1/subnets/subnet-0abc/proxy"},
-		{http.MethodGet, "/apis/network.hypersurgery.dev/v1beta1/subnets/../../../api/v1/secrets"},
-		{http.MethodGet, "/apis/network.hypersurgery.dev/v1beta1/subnets%2F..%2F..%2F..%2Fapi%2Fv1%2Fsecrets"},
-		{http.MethodGet, "/apis/network.hypersurgery.dev/v1beta1//subnets"},
+		{http.MethodGet, "/apis/network.hypersurgery.dev/v1"},
+		{http.MethodGet, "/apis/network.hypersurgery.dev/v1/namespaces/default"},
+		{http.MethodGet, "/apis/network.hypersurgery.dev/v1/subnets/subnet-0abc/proxy"},
+		{http.MethodGet, "/apis/network.hypersurgery.dev/v1/subnets/../../../api/v1/secrets"},
+		{http.MethodGet, "/apis/network.hypersurgery.dev/v1/subnets%2F..%2F..%2F..%2Fapi%2Fv1%2Fsecrets"},
+		{http.MethodGet, "/apis/network.hypersurgery.dev/v1//subnets"},
 		{http.MethodGet, "/apis/network.hypersurgery.dev/latest/subnets"},
-		{http.MethodOptions, "/apis/network.hypersurgery.dev/v1beta1/subnets"},
-		{http.MethodHead, "/apis/network.hypersurgery.dev/v1beta1/subnets"},
+		{http.MethodOptions, "/apis/network.hypersurgery.dev/v1/subnets"},
+		{http.MethodHead, "/apis/network.hypersurgery.dev/v1/subnets"},
 	}
 	for _, c := range cases {
 		t.Run(c.method+" "+c.target, func(t *testing.T) {
@@ -213,7 +213,7 @@ func TestEverythingOffTheListIsRefusedBeforeTheAPIServer(t *testing.T) {
 }
 
 func TestWritesMustComeFromTheDashboardsOwnPage(t *testing.T) {
-	const target = "/apis/network.hypersurgery.dev/v1beta1/namespaces/default/resourceimports"
+	const target = "/apis/network.hypersurgery.dev/v1/namespaces/default/resourceimports"
 	cases := map[string]func(r *http.Request){
 		"without the custom header": func(r *http.Request) { r.Header.Del(CSRFHeader) },
 		"as a form post":            func(r *http.Request) { r.Header.Set("Content-Type", "application/x-www-form-urlencoded") },
@@ -239,7 +239,7 @@ func TestWritesMustComeFromTheDashboardsOwnPage(t *testing.T) {
 
 func TestAWriteThroughAProxyThatRewritesHostIsForwarded(t *testing.T) {
 	api := newFakeAPIServer(t)
-	r := write("/apis/network.hypersurgery.dev/v1beta1/namespaces/default/resourceimports", `{}`)
+	r := write("/apis/network.hypersurgery.dev/v1/namespaces/default/resourceimports", `{}`)
 	r.Host = "subnet-operator-dashboard.subnets.svc"
 	r.Header.Set("Origin", "https://subnets.example.com")
 	r.Header.Set("X-Forwarded-Host", "subnets.example.com")
@@ -264,7 +264,7 @@ func TestWithoutABearerTokenNothingIsForwarded(t *testing.T) {
 	for name, spoil := range cases {
 		t.Run(name, func(t *testing.T) {
 			api := newFakeAPIServer(t)
-			r := signed(http.MethodGet, "/apis/network.hypersurgery.dev/v1beta1/subnets", nil)
+			r := signed(http.MethodGet, "/apis/network.hypersurgery.dev/v1/subnets", nil)
 			spoil(r)
 			rec := do(newTestProxy(t, api), r)
 			if rec.Code != http.StatusUnauthorized {
@@ -285,7 +285,7 @@ func TestWithoutABearerTokenNothingIsForwarded(t *testing.T) {
 
 func TestImpersonationAndOtherHeadersStayBehind(t *testing.T) {
 	api := newFakeAPIServer(t)
-	r := signed(http.MethodGet, "/apis/network.hypersurgery.dev/v1beta1/subnets", nil)
+	r := signed(http.MethodGet, "/apis/network.hypersurgery.dev/v1/subnets", nil)
 	r.Header.Set("Accept", "application/json")
 	dropped := map[string]string{
 		"Impersonate-User":         "system:admin",
@@ -333,7 +333,7 @@ func TestImpersonationAndOtherHeadersStayBehind(t *testing.T) {
 
 func TestAnOversizedBodyIsRefused(t *testing.T) {
 	api := newFakeAPIServer(t)
-	rec := do(newTestProxy(t, api), write("/apis/network.hypersurgery.dev/v1beta1/namespaces/default/resourceimports",
+	rec := do(newTestProxy(t, api), write("/apis/network.hypersurgery.dev/v1/namespaces/default/resourceimports",
 		`{"pad":"`+strings.Repeat("x", 2048)+`"}`))
 	if rec.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("got %d, want 413: %s", rec.Code, rec.Body.String())
@@ -345,7 +345,7 @@ func TestAnOversizedBodyIsRefused(t *testing.T) {
 
 func TestAPIResponsesAreNotCachedAndSetNoCookies(t *testing.T) {
 	api := newFakeAPIServer(t)
-	rec := do(newTestProxy(t, api), signed(http.MethodGet, "/apis/network.hypersurgery.dev/v1beta1/subnets", nil))
+	rec := do(newTestProxy(t, api), signed(http.MethodGet, "/apis/network.hypersurgery.dev/v1/subnets", nil))
 	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
 		t.Errorf("Cache-Control %q, want no-store", got)
 	}
@@ -359,8 +359,8 @@ const selfSubjectReview = `{"apiVersion":"authentication.k8s.io/v1","kind":"Self
 
 func TestAWatchIsForwardedWithItsQueryAndNotBuffered(t *testing.T) {
 	for _, target := range []string{
-		"/apis/network.hypersurgery.dev/v1beta1/subnets?watch=1&resourceVersion=42&allowWatchBookmarks=true&timeoutSeconds=300",
-		"/apis/network.hypersurgery.dev/v1beta1/namespaces/payments/resourceimports?watch=true&resourceVersion=7&allowWatchBookmarks=true",
+		"/apis/network.hypersurgery.dev/v1/subnets?watch=1&resourceVersion=42&allowWatchBookmarks=true&timeoutSeconds=300",
+		"/apis/network.hypersurgery.dev/v1/namespaces/payments/resourceimports?watch=true&resourceVersion=7&allowWatchBookmarks=true",
 	} {
 		t.Run(target, func(t *testing.T) {
 			api := newFakeAPIServer(t)
@@ -383,7 +383,7 @@ func TestAWatchIsForwardedWithItsQueryAndNotBuffered(t *testing.T) {
 	}
 
 	api := newFakeAPIServer(t)
-	rec := do(newTestProxy(t, api), signed(http.MethodGet, "/apis/network.hypersurgery.dev/v1beta1/subnets", nil))
+	rec := do(newTestProxy(t, api), signed(http.MethodGet, "/apis/network.hypersurgery.dev/v1/subnets", nil))
 	if got := rec.Header().Get("X-Accel-Buffering"); got != "" {
 		t.Errorf("a plain list carries X-Accel-Buffering %q", got)
 	}
@@ -404,7 +404,7 @@ func TestAWatchStreamsEventsAsTheyHappen(t *testing.T) {
 	front := httptest.NewServer(NewProxy(ProxyOptions{Upstream: u, Transport: api.Client().Transport}))
 	defer front.Close()
 
-	req, _ := http.NewRequest(http.MethodGet, front.URL+"/apis/network.hypersurgery.dev/v1beta1/subnets?watch=1", nil)
+	req, _ := http.NewRequest(http.MethodGet, front.URL+"/apis/network.hypersurgery.dev/v1/subnets?watch=1", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	res, err := front.Client().Do(req)
 	if err != nil {

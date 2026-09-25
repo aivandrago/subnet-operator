@@ -1,6 +1,11 @@
 # ADR 0002: The multi-cloud model
 
-Status: accepted (2026-09-24)
+Status: accepted (2026-09-24); implemented for AWS. The group, `v1beta1` and the migration from
+the old group shipped in 0.8; the provider registry, the neutral metrics and the removal of
+`aws.hypersurgery` in 0.9; `v1` with the conversion webhook and the storage migration in 1.0
+(§10). AWS is the only provider the operator registers: the GCP (#46–#51) and Azure (#52–#57)
+providers are not implemented and are planned for 1.x releases on the v1 API. Written before
+the implementation; the implementation notes at the end record where it decided or deviated.
 
 Refs: #39 (this ADR), research spikes #40 ([GCP](../research/gcp-network-model.md)) and #41
 ([Azure](../research/azure-network-model.md)), implementation #42–#45 (Phase 5a), #46–#51 (GCP),
@@ -265,7 +270,8 @@ Alternatives:
   `aws.externalID`, `SubnetClaim.spec.aws.routeTableID`, `aws.mapPublicIPOnLaunch`,
   `Subnet.status.aws.*`). There is no "AWS only" prose on neutral fields, because there are no
   AWS-only neutral fields.
-- Change events are **not** API: they are operator configuration (today `--events-queue-url`).
+- Change events are **not** API: they are operator configuration (then `--events-queue-url`,
+  from 0.9 `--aws-events-queue-url`).
   Each provider registers an optional event source (#43): AWS EventBridge→SQS, GCP audit logs→
   Pub/Sub (#49), Azure Event Grid→queue (#55). The chart gets `providers.<name>.events.*`.
 - What a provider can do is reported, not guessed: `NetworkScope.status.capabilities` lists
@@ -334,7 +340,7 @@ controllers and stays not ready", see the implementation notes for 0.9.)
 |---|---|---|---|
 | 0.8 | `aws.hypersurgery/v1alpha1` (deprecated), `network.hypersurgery.dev/v1beta1` | v1beta1 | migration controller |
 | 0.9 | `network.hypersurgery.dev/v1beta1` | v1beta1 | old group removed (done; see the implementation notes for 0.9); `hs_aws_*` renamed to `hs_*`, with no overlap |
-| 1.0 | `v1`, `v1beta1` (deprecated) | v1 | conversion webhook; storage migrated to v1 |
+| 1.0 | `v1`, `v1beta1` (deprecated) | v1 | conversion webhook; storage migrated to v1 (done; see the implementation notes for #58) |
 | ≥1.2 and ≥6 months after 1.0 | `v1` | v1 | `v1beta1` no longer served |
 
 - The new group starts at **v1beta1**, not v1alpha1: this ADR fixes its shape for 1.0, and
@@ -657,7 +663,8 @@ What the implementation decided where this ADR left room, or deviates from its l
   `internal/cloud/aws/events`. The operator runs the providers named by `--providers` (default
   `aws`); per-provider flags are prefixed (`--aws-events-queue-url`), and the chart has
   `providers.aws.{enabled,irsaRoleARN,region,endpointURL,events.*}` with the 0.8 names kept until
-  0.10. GCP Workload Identity Federation and Azure Workload Identity become
+  0.10 (removed in 1.0 instead, the release after 0.9; see the notes for #58). GCP Workload
+  Identity Federation and Azure Workload Identity become
   `providers.gcp.*`/`providers.azure.*` values that render the service account annotations and pod
   labels those need.
 - **API additions** (optional status fields, so additive): `NetworkScope.status.capabilities`
@@ -716,3 +723,76 @@ What the implementation decided where this ADR left room, or deviates from its l
   conversion. The guard and `hs_migration_pending_objects` are about the old group only and can
   stay as they are until the old group is gone from supported upgrade paths.
 
+## Implementation notes (#58: v1)
+
+- **v1 next to v1beta1.** Both versions are in `network.hypersurgery.dev`, scaffolded with
+  `kubebuilder create api` and `create webhook --conversion --spoke v1beta1`. v1 is the storage
+  version and the hub; v1beta1 is served with `deprecated: true` and a warning. The operator,
+  its controllers, webhooks, dashboard, examples, samples and `migrate-manifests` use v1; only
+  the conversion and the upgrade test know v1beta1.
+- **A real conversion, for identical fields.** v1 has v1beta1's fields, so the spoke converts a
+  spec or a status through its JSON form, and refuses a field the other side lacks instead of
+  dropping it. The first field one version has and the other lacks therefore fails the round
+  trip loudly, which is the moment to write that conversion by hand. Random objects of every
+  kind, status included, go through both round trips in the tests. Going through Go types
+  respells values (`5m` becomes `5m0s`, an explicit `false` disappears), which a GitOps tool
+  reading at v1beta1 would report as drift, so the webhook returns the object as it was
+  written, with the new apiVersion, wherever that decodes to exactly what the typed conversion
+  produced (`ExactConversion` in `internal/webhook/v1`). The upgrade test found this.
+- **Schema fixes before freezing.** Cheap, and impossible later: `regions`,
+  `accounts[].regions` and `requiredSubnetTags` became sets, `autoImport.accountDefaults` a map
+  keyed by `account`, and `scopeRef` 1–253 characters. The admission webhook refuses the same
+  duplicates at v1beta1, which the v1beta1 schema cannot. Reviewed and left as they are:
+  `provider` stays an enum listing only `AWS`, documented as open (adding values is additive);
+  every top-level status field is optional (inside a status list, only what the operator
+  always writes is required); `TargetStatus` stays an atomic list the operator alone writes; the claim and import `state` fields stay open strings. `ipUsageTime`,
+  `secondaryCIDRBlocks` and `SubnetClaim.spec.count` stay deferred: each is an optional field
+  that can be added in a 1.x release.
+- **Storage migration in the operator.** On every start the leader looks at each CRD's
+  `status.storedVersions`. Where it lists more than `[v1]` and the CRD already stores v1, it
+  writes every object back unchanged through the status subresource (the API server re-encodes
+  it at v1; neither the generation nor the admission webhooks are involved), then trims the
+  list to `[v1]`, with an Event on the CRD, a log line and two metrics
+  (`hs_crd_stored_versions`, `hs_storage_migration_rewritten_objects_total`). A later start
+  finds `[v1]` and does nothing. The Kubernetes storage version migrator was the alternative;
+  it is one more component for users to run, for a job that happens once.
+- **The conversion is configured by the operator, not by the CRD files.** Helm installs
+  `crds/` verbatim, so the files cannot name the release's Service or carry its CA. The CRDs
+  ship with the `None` strategy, exact while the fields are the same. Once the storage is
+  migrated, the leader points each CRD at its own webhook with the CA from `ca.crt` of the
+  webhook certificate (the chart's own or cert-manager's) and keeps it current every minute;
+  with the webhook off it sets `None`. The operator may `get` and `patch` its six CRDs, and
+  `get` and `update` their status, by name and nothing else. The kustomize install instead
+  has kubebuilder's conversion patches and cert-manager's CA injector among its `[WEBHOOK]` and
+  `[CERTMANAGER]` sections, off by default like the admission webhooks, and there the operator
+  leaves the conversion alone (`--crd-conversion` empty). The OLM bundle (#74) does the
+  same, with OLM configuring the conversion and injecting the CA ([OLM](../olm.md)).
+- **Admission for v1 only.** The webhooks are registered for v1; the API server converts a
+  v1beta1 request before it calls them (`matchPolicy: Equivalent`), so the checks are the same
+  at both versions.
+- **Upgrade test.** It starts from the published 0.9.0, creates objects at v1beta1, applies the
+  1.0 CRDs, upgrades, and checks that `storedVersions` ends as `[v1]`, that the conversion
+  points at the release's webhook with the chart's CA, that every object and its status
+  survived, that v1beta1 reads return what v1 reads do, and that a second start rewrites
+  nothing.
+
+Owner decisions on the open questions of #58 (2026-09-25):
+
+- **The operator keeps patching its own CRDs' conversion**, by name. Rendering the CRDs as chart
+  templates was the alternative; it would hand them to Helm, so that `helm uninstall` deletes
+  them with every object. The residual risk is in the
+  [threat model](../security/threat-model.md#residual-risks-accepted-for-10).
+- **Kustomize stays webhook-less by default.** An e2e deployment with cert-manager is deferred,
+  not a 1.0 blocker (#86).
+- **`mode` and `autoImport.mode` are closed enums**: a new value is a behaviour change and needs
+  a new API version or an opt-in field ([API compatibility](../api-compatibility.md#closed-enums)).
+- **A security fix may tighten validation within v1**, announced as breaking, with stored objects
+  kept working on unchanged updates ([API compatibility](../api-compatibility.md#security-fixes)).
+- **What 0.9 deprecated for removal in 0.10 is removed in 1.0**: `events.*`, `aws.*`,
+  `networkPolicy.egress.podIdentity`, `--events-queue-url`, `--events-debounce` and
+  `EVENTS_QUEUE_URL`. The chart refuses the values and the operator the flags, naming the
+  replacement ([policy](../policy.md#deprecation)).
+- **Rollback to 0.9 stays a documented `kubectl patch`** of the six CRDs back to `None`, run as
+  written by `internal/crdversions/rollback_test.go`.
+- **The frozen v1 schema baseline** (`api/v1/testdata/crds-1.0`) is refreshed in the 1.0
+  release commit and never after ([release steps](../release.md)).

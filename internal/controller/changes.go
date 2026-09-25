@@ -22,7 +22,7 @@ import (
 
 	"sigs.k8s.io/controller-runtime/pkg/event"
 
-	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
+	networkv1 "hypersurgery.dev/subnet-operator/api/v1"
 	"hypersurgery.dev/subnet-operator/internal/inventory"
 )
 
@@ -65,7 +65,7 @@ func (r *NetworkScopeReconciler) NotifyChanged(ctx context.Context, changed []in
 	for _, k := range changed {
 		set[k] = true
 	}
-	scopes := &networkv1beta1.NetworkScopeList{}
+	scopes := &networkv1.NetworkScopeList{}
 	if err := r.List(ctx, scopes); err != nil {
 		return err
 	}

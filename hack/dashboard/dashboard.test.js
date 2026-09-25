@@ -202,7 +202,7 @@ test('an import uses the scope\'s tag keys, and leaves requestedBy to the API se
   const vpc = { kind: 'vpc', id: 'vpc-0aaa', scope: 'org', account: '111111111111', region: 'eu-central-1' };
   const v = live.importObject(vpc, { owner: 'team-a', tier: 'private', dryRun: true, namespace: 'default' }, scope);
   assert.deepEqual({ ...v.spec.tags }, { 'team/inventory': 'yes', team: 'team-a' }, 'a VPC gets the selector tags and no tier');
-  assert.equal(o.apiVersion, 'network.hypersurgery.dev/v1beta1');
+  assert.equal(o.apiVersion, 'network.hypersurgery.dev/v1');
   assert.equal(v.spec.dryRun, true);
 });
 
@@ -242,13 +242,13 @@ test('in the cluster the pasted token is sent; through kubectl proxy no credenti
 
   const cluster = recordingFetch();
   await live.apiClient({ mode: 'cluster', base: '' }, cluster.fetch).list('subnets');
-  assert.equal(cluster.calls[0].url, '/apis/network.hypersurgery.dev/v1beta1/subnets');
+  assert.equal(cluster.calls[0].url, '/apis/network.hypersurgery.dev/v1/subnets');
   assert.equal(cluster.calls[0].init.headers.Authorization, 'Bearer tok-123');
   assert.equal(cluster.calls[0].init.credentials, 'same-origin');
 
   const kubectl = recordingFetch();
   await live.apiClient({ mode: 'kubectl', base: 'http://127.0.0.1:8001' }, kubectl.fetch).list('subnets');
-  assert.equal(kubectl.calls[0].url, 'http://127.0.0.1:8001/apis/network.hypersurgery.dev/v1beta1/subnets');
+  assert.equal(kubectl.calls[0].url, 'http://127.0.0.1:8001/apis/network.hypersurgery.dev/v1/subnets');
   assert.ok(!('Authorization' in kubectl.calls[0].init.headers), 'the token must not leave for another origin');
   assert.equal(kubectl.calls[0].init.credentials, 'omit');
 });
@@ -258,7 +258,7 @@ test('an import is posted as JSON with the header the dashboard checks for write
   const rec = recordingFetch();
   await live.apiClient({ mode: 'cluster', base: '' }, rec.fetch).create('team a', 'resourceimports', { kind: 'ResourceImport' });
   const { url, init } = rec.calls[0];
-  assert.equal(url, '/apis/network.hypersurgery.dev/v1beta1/namespaces/team%20a/resourceimports');
+  assert.equal(url, '/apis/network.hypersurgery.dev/v1/namespaces/team%20a/resourceimports');
   assert.equal(init.method, 'POST');
   assert.equal(init.headers['Content-Type'], 'application/json');
   assert.equal(init.headers['X-Subnet-Dashboard'], '1');
@@ -307,7 +307,7 @@ test('a watch asks for bookmarks from a resourceVersion and delivers events spli
   const seen = [];
   await live.apiClient({ mode: 'cluster', base: '' }, fetch).watch('subnets', '41', (e) => seen.push(e));
   const u = new URL(calls[0].url, 'https://dash.example');
-  assert.equal(u.pathname, '/apis/network.hypersurgery.dev/v1beta1/subnets');
+  assert.equal(u.pathname, '/apis/network.hypersurgery.dev/v1/subnets');
   assert.equal(u.searchParams.get('watch'), '1');
   assert.equal(u.searchParams.get('allowWatchBookmarks'), 'true');
   assert.equal(u.searchParams.get('resourceVersion'), '41');

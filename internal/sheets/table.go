@@ -28,7 +28,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
+	networkv1 "hypersurgery.dev/subnet-operator/api/v1"
 )
 
 // Table is what ends up in the sheet: one header row and one row per subnet.
@@ -52,12 +52,12 @@ var baseColumns = []string{
 // networkNames and syncedAt are looked up by network ID and by "account/region"; missing entries
 // are left empty. Counts a provider could not report are left empty too, rather than written as
 // zero.
-func BuildTable(subnets []networkv1beta1.Subnet, networkNames map[string]string,
+func BuildTable(subnets []networkv1.Subnet, networkNames map[string]string,
 	syncedAt map[string]*metav1.Time, extraTagColumns []string) Table {
 	t := Table{Header: slices.Concat(baseColumns, extraTagColumns)}
 
 	sorted := slices.Clone(subnets)
-	slices.SortFunc(sorted, func(a, b networkv1beta1.Subnet) int {
+	slices.SortFunc(sorted, func(a, b networkv1.Subnet) int {
 		if c := cmp.Or(
 			cmp.Compare(a.Spec.Provider, b.Spec.Provider),
 			cmp.Compare(a.Spec.Account, b.Spec.Account),

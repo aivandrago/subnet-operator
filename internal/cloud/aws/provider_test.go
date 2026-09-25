@@ -24,7 +24,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 
-	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
+	networkv1 "hypersurgery.dev/subnet-operator/api/v1"
 	"hypersurgery.dev/subnet-operator/internal/inventory"
 	"hypersurgery.dev/subnet-operator/internal/provider"
 )
@@ -33,7 +33,7 @@ import (
 // role must stay read-only.
 func TestIdentitySeparatesReadAndWrite(t *testing.T) {
 	p := NewProvider(Clients{}, nil)
-	account := networkv1beta1.Account{ID: "222222222222", AWS: &networkv1beta1.AWSAccount{
+	account := networkv1.Account{ID: "222222222222", AWS: &networkv1.AWSAccount{
 		RoleARN:      "arn:aws:iam::222222222222:role/read",
 		WriteRoleARN: "arn:aws:iam::222222222222:role/write",
 		ExternalID:   "ext",
@@ -44,7 +44,7 @@ func TestIdentitySeparatesReadAndWrite(t *testing.T) {
 	if got := p.Identity(account, provider.Write); got != (Identity{RoleARN: account.AWS.WriteRoleARN, ExternalID: "ext"}) {
 		t.Errorf("write identity = %#v", got)
 	}
-	if !p.Identity(networkv1beta1.Account{ID: "111111111111"}, provider.Write).Own() {
+	if !p.Identity(networkv1.Account{ID: "111111111111"}, provider.Write).Own() {
 		t.Error("an account without an aws member is not reached with the operator's own credentials")
 	}
 }
@@ -68,16 +68,16 @@ func TestForeignIdentityIsRefused(t *testing.T) {
 // ChangeEvents is only claimed when there is a queue to read them from.
 func TestCapabilitiesFollowTheConfiguration(t *testing.T) {
 	without := NewProvider(Clients{}, nil).Capabilities()
-	if slices.Contains(without, networkv1beta1.CapabilityChangeEvents) {
+	if slices.Contains(without, networkv1.CapabilityChangeEvents) {
 		t.Errorf("capabilities without a queue = %v", without)
 	}
-	for _, c := range []networkv1beta1.Capability{networkv1beta1.CapabilityCreateSubnet, networkv1beta1.CapabilityIPUsage} {
+	for _, c := range []networkv1.Capability{networkv1.CapabilityCreateSubnet, networkv1.CapabilityIPUsage} {
 		if !slices.Contains(without, c) {
 			t.Errorf("capabilities = %v, missing %s", without, c)
 		}
 	}
 	with := NewProvider(Clients{}, &Events{QueueURL: "https://sqs.eu-central-1.amazonaws.com/1/q"})
-	if !slices.Contains(with.Capabilities(), networkv1beta1.CapabilityChangeEvents) {
+	if !slices.Contains(with.Capabilities(), networkv1.CapabilityChangeEvents) {
 		t.Errorf("capabilities with a queue = %v", with.Capabilities())
 	}
 	if NewProvider(Clients{}, nil).Events(provider.EventSink{}) != nil {

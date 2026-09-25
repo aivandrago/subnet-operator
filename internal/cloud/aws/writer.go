@@ -27,7 +27,7 @@ import (
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/smithy-go"
 
-	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
+	networkv1 "hypersurgery.dev/subnet-operator/api/v1"
 	"hypersurgery.dev/subnet-operator/internal/inventory"
 )
 
@@ -119,7 +119,7 @@ func CreateSubnet(ctx context.Context, api EC2WriteAPI, req inventory.CreateSubn
 	// controller records it instead of creating a second one.
 	opts := req.AWS
 	if opts == nil {
-		opts = &networkv1beta1.AWSClaimOptions{}
+		opts = &networkv1.AWSClaimOptions{}
 	}
 	if opts.MapPublicIPOnLaunch {
 		if _, err := api.ModifySubnetAttribute(ctx, &ec2.ModifySubnetAttributeInput{

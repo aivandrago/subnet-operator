@@ -31,7 +31,7 @@ import (
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/smithy-go"
 
-	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
+	networkv1 "hypersurgery.dev/subnet-operator/api/v1"
 	"hypersurgery.dev/subnet-operator/internal/inventory"
 	"hypersurgery.dev/subnet-operator/internal/provider"
 	"hypersurgery.dev/subnet-operator/internal/provider/providertest"
@@ -64,7 +64,7 @@ func newMemoryFixture() *memoryFixture {
 func (f *memoryFixture) Provider() provider.Provider { return f.provider }
 
 func (f *memoryFixture) Target() inventory.Target {
-	return inventory.Target{Provider: networkv1beta1.ProviderAWS, Scope: "contract", Account: contractAccount,
+	return inventory.Target{Provider: networkv1.ProviderAWS, Scope: "contract", Account: contractAccount,
 		Region: "eu-central-1"}
 }
 

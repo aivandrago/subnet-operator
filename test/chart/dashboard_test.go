@@ -63,6 +63,7 @@ type rendered struct {
 	netpols         []networkingv1.NetworkPolicy
 	roleBindings    []rbacv1.RoleBinding
 	clusterBindings []rbacv1.ClusterRoleBinding
+	clusterRoles    []rbacv1.ClusterRole
 	names           []string
 }
 
@@ -106,6 +107,8 @@ func render(t *testing.T, set ...string) rendered {
 			decode(t, doc, &r.roleBindings)
 		case "ClusterRoleBinding":
 			decode(t, doc, &r.clusterBindings)
+		case "ClusterRole":
+			decode(t, doc, &r.clusterRoles)
 		}
 	}
 	return r

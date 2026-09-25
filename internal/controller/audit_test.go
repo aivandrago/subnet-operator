@@ -32,7 +32,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
+	networkv1 "hypersurgery.dev/subnet-operator/api/v1"
 	"hypersurgery.dev/subnet-operator/internal/audit"
 	"hypersurgery.dev/subnet-operator/internal/inventory"
 )
@@ -134,20 +134,20 @@ var _ = Describe("Audit trail", func() {
 				Recorder: recorder, Audit: audit.NewWriter(sink),
 			}
 
-			Expect(k8sClient.Create(ctx, &networkv1beta1.NetworkScope{
+			Expect(k8sClient.Create(ctx, &networkv1.NetworkScope{
 				ObjectMeta: metav1.ObjectMeta{Name: scopeName},
-				Spec: networkv1beta1.NetworkScopeSpec{
-					Provider:          networkv1beta1.ProviderAWS,
+				Spec: networkv1.NetworkScopeSpec{
+					Provider:          networkv1.ProviderAWS,
 					NamespaceSelector: &metav1.LabelSelector{},
-					Accounts:          []networkv1beta1.Account{{ID: auditAccount}},
+					Accounts:          []networkv1.Account{{ID: auditAccount}},
 					Regions:           []string{auditRegion},
 				},
 			})).To(Succeed())
-			Expect(k8sClient.Create(ctx, &networkv1beta1.ResourceImport{
+			Expect(k8sClient.Create(ctx, &networkv1.ResourceImport{
 				ObjectMeta: metav1.ObjectMeta{Name: importName, Namespace: "default",
-					Labels:      map[string]string{networkv1beta1.LabelScope: scopeName},
+					Labels:      map[string]string{networkv1.LabelScope: scopeName},
 					Annotations: map[string]string{annotationReason: "tags from creator rule"}},
-				Spec: networkv1beta1.ResourceImportSpec{
+				Spec: networkv1.ResourceImportSpec{
 					ScopeRef: scopeName, Account: auditAccount, Region: auditRegion, ResourceID: resourceID,
 					Tags:        map[string]string{"hs/managed": "true", "hs/owner": "team-payments"},
 					RequestedBy: requestedBy(auditCreator),
@@ -156,29 +156,29 @@ var _ = Describe("Audit trail", func() {
 		})
 
 		AfterEach(func() {
-			Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &networkv1beta1.ResourceImport{
+			Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &networkv1.ResourceImport{
 				ObjectMeta: metav1.ObjectMeta{Name: importName, Namespace: "default"}}))).To(Succeed())
-			Expect(k8sClient.DeleteAllOf(ctx, &networkv1beta1.Subnet{},
-				client.MatchingLabels{networkv1beta1.LabelScope: scopeName})).To(Succeed())
-			Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &networkv1beta1.NetworkScope{
+			Expect(k8sClient.DeleteAllOf(ctx, &networkv1.Subnet{},
+				client.MatchingLabels{networkv1.LabelScope: scopeName})).To(Succeed())
+			Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &networkv1.NetworkScope{
 				ObjectMeta: metav1.ObjectMeta{Name: scopeName}}))).To(Succeed())
 		})
 
 		It("leaves an Event on the object and an audit line with the tags before and after", func() {
 			// The resource is already in the inventory with tags of its own, so the line can say
 			// what changed rather than only what was applied.
-			subnet := &networkv1beta1.Subnet{
+			subnet := &networkv1.Subnet{
 				ObjectMeta: metav1.ObjectMeta{Name: resourceID,
-					Labels: map[string]string{networkv1beta1.LabelScope: scopeName}},
-				Spec: networkv1beta1.SubnetSpec{Provider: networkv1beta1.ProviderAWS, ID: resourceID, Account: auditAccount, Region: auditRegion},
+					Labels: map[string]string{networkv1.LabelScope: scopeName}},
+				Spec: networkv1.SubnetSpec{Provider: networkv1.ProviderAWS, ID: resourceID, Account: auditAccount, Region: auditRegion},
 			}
 			Expect(k8sClient.Create(ctx, subnet)).To(Succeed())
-			subnet.Status = networkv1beta1.SubnetStatus{Tags: map[string]string{"Name": "legacy"}}
+			subnet.Status = networkv1.SubnetStatus{Tags: map[string]string{"Name": "legacy"}}
 			Expect(k8sClient.Status().Update(ctx, subnet)).To(Succeed())
 
 			Expect(reconcileImport()).To(Succeed())
 
-			haveEvent(recorder, "Normal "+EventImported, resourceID, networkv1beta1.RequestedByPolicy, "maria.k")
+			haveEvent(recorder, "Normal "+EventImported, resourceID, networkv1.RequestedByPolicy, "maria.k")
 
 			lines := auditLines(sink)
 			Expect(lines).To(HaveLen(1))
@@ -201,9 +201,9 @@ var _ = Describe("Audit trail", func() {
 
 		It("carries the authenticated creator next to the principal", func() {
 			reconciler.WebhooksEnabled = true
-			imp := &networkv1beta1.ResourceImport{}
+			imp := &networkv1.ResourceImport{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: importName, Namespace: "default"}, imp)).To(Succeed())
-			imp.Annotations[networkv1beta1.AnnotationCreatedBy] = "jane@example.com"
+			imp.Annotations[networkv1.AnnotationCreatedBy] = "jane@example.com"
 			Expect(k8sClient.Update(ctx, imp)).To(Succeed())
 
 			Expect(reconcileImport()).To(Succeed())
@@ -216,9 +216,9 @@ var _ = Describe("Audit trail", func() {
 
 		It("says unknown rather than repeat a creator no webhook vouched for", func() {
 			reconciler.WebhooksEnabled = false
-			imp := &networkv1beta1.ResourceImport{}
+			imp := &networkv1.ResourceImport{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: importName, Namespace: "default"}, imp)).To(Succeed())
-			imp.Annotations[networkv1beta1.AnnotationCreatedBy] = "somebody-else"
+			imp.Annotations[networkv1.AnnotationCreatedBy] = "somebody-else"
 			Expect(k8sClient.Update(ctx, imp)).To(Succeed())
 
 			Expect(reconcileImport()).To(Succeed())
@@ -240,7 +240,7 @@ var _ = Describe("Audit trail", func() {
 		})
 
 		It("records a dry run as a dry run, with nothing applied", func() {
-			imp := &networkv1beta1.ResourceImport{}
+			imp := &networkv1.ResourceImport{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: importName, Namespace: "default"}, imp)).To(Succeed())
 			imp.Spec.DryRun = true
 			Expect(k8sClient.Update(ctx, imp)).To(Succeed())
@@ -290,16 +290,16 @@ var _ = Describe("Audit trail", func() {
 			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: scopeName}})
 			Expect(err).NotTo(HaveOccurred())
 		}
-		createScope := func(p *networkv1beta1.AutoImportPolicy) {
+		createScope := func(p *networkv1.AutoImportPolicy) {
 			GinkgoHelper()
-			Expect(k8sClient.Create(ctx, &networkv1beta1.NetworkScope{
+			Expect(k8sClient.Create(ctx, &networkv1.NetworkScope{
 				ObjectMeta: metav1.ObjectMeta{Name: scopeName},
-				Spec: networkv1beta1.NetworkScopeSpec{
-					Provider:          networkv1beta1.ProviderAWS,
+				Spec: networkv1.NetworkScopeSpec{
+					Provider:          networkv1.ProviderAWS,
 					NamespaceSelector: &metav1.LabelSelector{},
-					Accounts:          []networkv1beta1.Account{{ID: auditAccount}},
+					Accounts:          []networkv1.Account{{ID: auditAccount}},
 					Regions:           []string{auditRegion},
-					NetworkSelector:   &networkv1beta1.NetworkSelector{MatchTags: map[string]string{"hs/managed": "true"}},
+					NetworkSelector:   &networkv1.NetworkSelector{MatchTags: map[string]string{"hs/managed": "true"}},
 					AutoImport:        p,
 				},
 			})).To(Succeed())
@@ -318,20 +318,20 @@ var _ = Describe("Audit trail", func() {
 		})
 
 		AfterEach(func() {
-			list := &networkv1beta1.ResourceImportList{}
+			list := &networkv1.ResourceImportList{}
 			Expect(k8sClient.List(ctx, list, client.InNamespace("default"),
-				client.MatchingLabels{networkv1beta1.LabelScope: scopeName})).To(Succeed())
+				client.MatchingLabels{networkv1.LabelScope: scopeName})).To(Succeed())
 			for i := range list.Items {
 				Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &list.Items[i]))).To(Succeed())
 			}
-			Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &networkv1beta1.NetworkScope{
+			Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &networkv1.NetworkScope{
 				ObjectMeta: metav1.ObjectMeta{Name: scopeName}}))).To(Succeed())
 		})
 
 		It("records the resource nobody could be found for as no_owner", func() {
-			createScope(&networkv1beta1.AutoImportPolicy{
-				Mode: networkv1beta1.AutoImportApply,
-				FromCreator: []networkv1beta1.CreatorRule{
+			createScope(&networkv1.AutoImportPolicy{
+				Mode: networkv1.AutoImportApply,
+				FromCreator: []networkv1.CreatorRule{
 					{PrincipalPrefix: "arn:aws:sts::111111111111:assumed-role/payments-",
 						Tags: map[string]string{"hs/owner": "team-payments"}},
 				},
@@ -361,7 +361,7 @@ var _ = Describe("Audit trail", func() {
 			Expect(orphan).To(HaveLen(1))
 			Expect(orphan[0].Result).To(Equal(audit.ResultNoOwner))
 			Expect(orphan[0].Reason).To(ContainSubstring("no rule resolved"))
-			Expect(orphan[0].Principal).To(Equal(networkv1beta1.RequestedByPolicy),
+			Expect(orphan[0].Principal).To(Equal(networkv1.RequestedByPolicy),
 				"nobody could be named, so the policy owns the decision")
 			Expect(orphan[0].TagsAfter).To(BeEmpty())
 		})
@@ -393,47 +393,47 @@ var _ = Describe("Audit trail", func() {
 				Recorder: recorder, Audit: audit.NewWriter(sink),
 			}
 
-			Expect(k8sClient.Create(ctx, &networkv1beta1.NetworkScope{
+			Expect(k8sClient.Create(ctx, &networkv1.NetworkScope{
 				ObjectMeta: metav1.ObjectMeta{Name: scopeName},
-				Spec: networkv1beta1.NetworkScopeSpec{
-					Provider:          networkv1beta1.ProviderAWS,
+				Spec: networkv1.NetworkScopeSpec{
+					Provider:          networkv1.ProviderAWS,
 					NamespaceSelector: &metav1.LabelSelector{},
-					Accounts:          []networkv1beta1.Account{{ID: auditAccount}},
+					Accounts:          []networkv1.Account{{ID: auditAccount}},
 					Regions:           []string{auditRegion},
 				},
 			})).To(Succeed())
-			vpc := &networkv1beta1.Network{
+			vpc := &networkv1.Network{
 				ObjectMeta: metav1.ObjectMeta{Name: claimVPC,
-					Labels: map[string]string{networkv1beta1.LabelScope: scopeName, networkv1beta1.LabelNetwork: claimVPC}},
-				Spec: networkv1beta1.NetworkSpec{Provider: networkv1beta1.ProviderAWS, ID: claimVPC, Account: auditAccount, Region: auditRegion},
+					Labels: map[string]string{networkv1.LabelScope: scopeName, networkv1.LabelNetwork: claimVPC}},
+				Spec: networkv1.NetworkSpec{Provider: networkv1.ProviderAWS, ID: claimVPC, Account: auditAccount, Region: auditRegion},
 			}
 			Expect(k8sClient.Create(ctx, vpc)).To(Succeed())
 			vpc.Status.CIDRBlocks = []string{"10.60.0.0/16"}
 			Expect(k8sClient.Status().Update(ctx, vpc)).To(Succeed())
 
-			Expect(k8sClient.Create(ctx, &networkv1beta1.SubnetClaim{
+			Expect(k8sClient.Create(ctx, &networkv1.SubnetClaim{
 				ObjectMeta: metav1.ObjectMeta{Name: claimName, Namespace: "default"},
-				Spec: networkv1beta1.SubnetClaimSpec{
+				Spec: networkv1.SubnetClaimSpec{
 					ScopeRef: scopeName, Account: auditAccount, Region: auditRegion, NetworkID: claimVPC,
 					PrefixLength: 24, Zones: []string{auditRegion + "a"},
-					Mode: networkv1beta1.ClaimModeCreate, Owner: "team-payments", Env: "prod",
+					Mode: networkv1.ClaimModeCreate, Owner: "team-payments", Env: "prod",
 				},
 			})).To(Succeed())
 		})
 
 		AfterEach(func() {
-			Expect(k8sClient.DeleteAllOf(ctx, &networkv1beta1.SubnetClaim{}, client.InNamespace("default"))).To(Succeed())
-			Expect(k8sClient.DeleteAllOf(ctx, &networkv1beta1.Network{},
-				client.MatchingLabels{networkv1beta1.LabelScope: scopeName})).To(Succeed())
-			Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &networkv1beta1.NetworkScope{
+			Expect(k8sClient.DeleteAllOf(ctx, &networkv1.SubnetClaim{}, client.InNamespace("default"))).To(Succeed())
+			Expect(k8sClient.DeleteAllOf(ctx, &networkv1.Network{},
+				client.MatchingLabels{networkv1.LabelScope: scopeName})).To(Succeed())
+			Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &networkv1.NetworkScope{
 				ObjectMeta: metav1.ObjectMeta{Name: scopeName}}))).To(Succeed())
 		})
 
 		It("records the reserved CIDR and the created subnet, attributed to the claim's owner", func() {
 			reconciler.WebhooksEnabled = true
-			claim := &networkv1beta1.SubnetClaim{}
+			claim := &networkv1.SubnetClaim{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: claimName, Namespace: "default"}, claim)).To(Succeed())
-			claim.Annotations = map[string]string{networkv1beta1.AnnotationCreatedBy: "jane@example.com"}
+			claim.Annotations = map[string]string{networkv1.AnnotationCreatedBy: "jane@example.com"}
 			Expect(k8sClient.Update(ctx, claim)).To(Succeed())
 
 			_, err := reconciler.Reconcile(ctx, reconcile.Request{

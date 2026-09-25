@@ -5,9 +5,18 @@ is meant to be true of the code and of CI as they are; where something is a plan
 fact, it says so. If you find a gap between this page and reality, that is a bug — please open
 an issue.
 
+**1.0 is the first stable release.** "Stable" means the promises on this page and in
+[API compatibility](api-compatibility.md): the `v1` API only grows, breaking changes wait for a
+major release, deprecations run their full period, security fixes reach the latest minor
+release. It does not mean the operator has been proven in a large real AWS organization: CI
+tests every change against [Moto](https://github.com/getmoto/moto) in Kind, including an upgrade
+from the previous release, and a conformance run against a real AWS organization has not been
+done yet. If you run it against one, a report is the most useful contribution there is
+([CONTRIBUTING.md](../CONTRIBUTING.md)).
+
 ## At a glance
 
-| | Today (0.x, `network.hypersurgery.dev/v1beta1`) | From 1.0 |
+| | 0.x (up to 0.9, `network.hypersurgery.dev/v1beta1`) | From 1.0 (`network.hypersurgery.dev/v1`) |
 |---|---|---|
 | Breaking changes | Only in a minor release (0.**N**.0), listed in the release notes, with an upgrade note | Only in a major release |
 | API stability | None promised; changes are additive in practice and every release upgrades from the previous one | Per API version, see [below](#api-versions) |
@@ -33,7 +42,9 @@ There are two version numbers, both [semantic versions](https://semver.org/):
   with.
 
 Images and charts are signed with cosign (keyless, by the release workflow in
-`.github/workflows/release.yml`); the chart's `values.yaml` shows how to verify.
+`.github/workflows/release.yml`); the chart's `values.yaml` shows how to verify. From 1.0 each
+release also publishes an OLM bundle image, `ghcr.io/aivandrago/subnet-operator-bundle:vX.Y.Z`,
+signed the same way, with the operator image pinned by digest ([olm.md](olm.md)).
 
 ### What the numbers mean
 
@@ -50,7 +61,9 @@ A change is breaking when an existing, valid install could stop working, change 
 need a human to act after `helm upgrade`. In particular:
 
 - **CRDs**: removing or renaming a field, changing its type or meaning, making an optional field
-  required, tightening validation so that an object stored today is refused on its next update,
+  required, tightening validation so that an object stored today is refused on its next update
+  (within `v1` a security fix is the one exception, under the conditions in
+  [API compatibility](api-compatibility.md#security-fixes)),
   changing a default in a way that changes behaviour (for example `spec.discoverUnmanaged`
   defaulting to `true` in 0.3.0 was one, and was announced as one), removing a kind or an API
   version.
@@ -73,28 +86,39 @@ stream gaining fields ([audit.md](audit.md) documents the ones that exist).
 
 ## API versions
 
-Since 0.8 every kind is `network.hypersurgery.dev/v1beta1`, the version stored. Up to 0.7 the
-API was `aws.hypersurgery/v1alpha1`. A conversion webhook cannot move objects between two
-groups, so 0.8 served both, deprecated the old one and migrated every old object into the new
-group itself, status included ([operations/upgrades.md](operations/upgrades.md#upgrading-from-07-to-08)).
+From 1.0 every kind is `network.hypersurgery.dev/v1`, the version stored, and
+`network.hypersurgery.dev/v1beta1`, the API of 0.8 and 0.9, is served next to it, deprecated.
+Both have the same fields; the operator's conversion webhook converts between them, and the
+operator rewrites what 0.9 stored at v1 on its first start
+([operations/upgrades.md](operations/upgrades.md#upgrading-from-09-to-10)).
+
+Up to 0.7 the API was `aws.hypersurgery/v1alpha1`. A conversion webhook cannot move objects
+between two groups, so 0.8 served both, deprecated the old one and migrated every old object
+into the new group itself, status included ([operations/upgrades.md](operations/upgrades.md#upgrading-from-07-to-08)).
 0.9 removes the old group ([ADR 0002](adr/0002-multi-cloud-model.md) §10): it neither serves nor
 migrates it, and does not start its controllers while an old object 0.8 never migrated exists, so
 **0.7 upgrades through 0.8** ([operations/upgrades.md](operations/upgrades.md#upgrading-from-08-to-09)).
-`manager migrate-manifests`, which rewrites manifests kept in git, stays.
+`manager migrate-manifests`, which rewrites manifests kept in git, stays, and from 1.0 also moves
+v1beta1 manifests to v1.
 
 What each version promises:
 
 - **`v1alpha1`** (the old group, removed in 0.9) promised nothing, and what the project promised
   and tested instead held: **upgrading from one release to the next keeps your objects and their
   status**. The [upgrade test](#the-upgrade-test) checked that across the move to the new group
-  (0.7 to 0.8), and checks that what 0.8 migrated survives 0.9.
-- **`v1beta1`**: no field removed or changed in meaning within `v1beta1`. Fields may be
-  deprecated and are then kept for the deprecation period below. `provider` is an open enum:
-  values for new clouds are added, and a client must skip a value it does not know. Provider
-  members (`aws`, later `gcp`, `azure`) and optional fields may be added.
+  (0.7 to 0.8) and to 0.9.
+- **`v1beta1`** (0.8 and 0.9; deprecated in 1.0): no field was removed or changed in meaning
+  within it, and it converts losslessly to `v1`. It is **served until at least 1.2 and at least
+  six months after 1.0**, whichever is later; the release that stops serving it lists that as a
+  breaking change.
 - **`v1`**: no breaking change without a new API version (`v2`), and every served version
-  converts losslessly to every other, with a conversion webhook between `v1beta1` and `v1`. A
-  version is served for at least two minor releases after it is deprecated.
+  converts losslessly to every other. `provider` is an open enum: values for new clouds are
+  added, and a client must skip a value it does not know. The spec enums `SubnetClaim.spec.mode`
+  and `NetworkScope.spec.autoImport.mode` are closed: a new value there changes behaviour and
+  needs a new API version or an opt-in field. Provider members (`aws`, later `gcp`,
+  `azure`) and optional fields may be added; nothing is removed or renamed. The whole promise,
+  with what a client must do, is [API compatibility](api-compatibility.md). A version is served
+  for at least two minor releases or six months after it is deprecated, whichever is longer.
 
 `v1` is the precondition for the operator's 1.0, not a separate step.
 
@@ -135,13 +159,27 @@ every series for a release that nobody needed.
 [upgrades.md](operations/upgrades.md#upgrading-from-08-to-09) has the mapping and what to change
 in rules, dashboards, routes and silences of your own.
 
-Deprecated in 0.9, removed in 0.10:
+Deprecated in 0.9, removed in 1.0 (announced for 0.10; 1.0 is the minor release after 0.9, so
+the one-release period holds):
 
 - the chart values `events.queueUrl`, `events.debounce`, `aws.region` and `aws.endpointURL`
   (now under `providers.aws`), and the manager flags `--events-queue-url` and
-  `--events-debounce` with `EVENTS_QUEUE_URL` (now `--aws-events-queue-url` and
-  `--aws-events-debounce`), deprecated by the provider registry (#43);
+  `--events-debounce` with the environment variable `EVENTS_QUEUE_URL` (now
+  `--aws-events-queue-url` and `--aws-events-debounce`), deprecated by the provider registry
+  (#43);
 - the chart value `networkPolicy.egress.podIdentity` (now `providers.aws.podIdentity`).
+
+The chart refuses to render with any of these values set, or with the old flags or
+`EVENTS_QUEUE_URL` in `extraArgs`/`extraEnv`, and names the replacement; the manager refuses to
+start with the old flags or with `EVENTS_QUEUE_URL` set, and says which to use instead. Ignoring
+them would leave the operator running without its event queue, in another region, or cut off
+from the EKS Pod Identity agent, without a word. Move them before upgrading
+([operations/upgrades.md](operations/upgrades.md#values-and-flags-removed-in-10)).
+
+Deprecated in 1.0, served until at least 1.2 and at least six months after 1.0:
+
+- the API version `network.hypersurgery.dev/v1beta1`, replaced by `network.hypersurgery.dev/v1`
+  with the same fields ([API compatibility](api-compatibility.md#v1beta1)).
 
 The chart's old name, `aws-subnet-operator`, is not published any more from 0.8 on.
 
@@ -159,24 +197,25 @@ every push to `master` and weekly) runs `test/e2e/upgrade_test.go` in Kind again
 
 1. installs the **latest published chart**, `oci://ghcr.io/aivandrago/charts/subnet-operator`,
    with its own published image (`UPGRADE_FROM=<version>` picks another version; `UPGRADE_CHART`
-   another chart reference). For 0.9 that is 0.8, the release that migrates
-   `aws.hypersurgery/v1alpha1`;
+   another chart reference). For 1.0 that is 0.9, the last release that stores
+   `network.hypersurgery.dev/v1beta1`;
 2. creates a `NetworkScope` across two accounts, a `SubnetClaim` that creates subnets, applied and
-   dry-run `ResourceImport`s and a `SheetExport` in the old group, the way a user coming from 0.7
-   has them, and waits until 0.8 has migrated every one and the copies have settled;
-3. applies the CRDs of the build under test and runs `helm upgrade` of the same release to the
-   local chart and image, the way the upgrade guide says;
-4. checks that the old CRDs are still there and no webhook serves the old group any more; that
-   the scope keeps syncing and stays Ready with the same networks and subnets, claims keep their
+   dry-run `ResourceImport`s and a `SheetExport` at v1beta1, and waits until they have settled;
+3. applies the CRDs of the build under test, checks that every CRD now lists `[v1beta1 v1]` in
+   `status.storedVersions`, checks that a `helm upgrade` which still sets the values 0.9
+   deprecated is refused, naming their replacements, and changes nothing, and then runs
+   `helm upgrade` of the same release to the local chart and image, the way the upgrade guide
+   says. Both releases are installed with the `providers.aws` names, which 0.9 already reads;
+4. checks that the operator trims `storedVersions` to `[v1]` on every CRD, with an Event and the
+   metrics, and points their conversion at the release's webhook with the chart's CA; that the
+   scope keeps syncing and stays Ready with the same networks and subnets, claims keep their
    reservations and creator and stay Ready, imports are not applied again, and nothing is created
-   or tagged again in AWS; that the new release's webhooks accept an update of every object;
-   that `hs_unmanaged_resources_total` does not rise for unmanaged resources the previous release
-   already knew, and does rise, by one, for one created after the upgrade;
-5. creates an old-group object that nothing migrates, and checks that the running operator
-   counts it (`hs_migration_pending_objects`) and records an Event on it, that a restarted pod
-   stays not ready, says why and leaves the lease and the old pods alone, and that the rollout
-   completes once the object is deleted;
-6. deletes the old CRDs, as the upgrade guide says, and checks that the operator carries on.
+   or tagged again in AWS; that every object reads the same at v1beta1 as at v1, with the
+   deprecation warning, and can be written at v1beta1; that the new release's webhooks accept an
+   update of every object; that `hs_unmanaged_resources_total` does not rise for unmanaged
+   resources the previous release already knew, and does rise, by one, for one created after the
+   upgrade;
+5. restarts the operator and checks that it rewrites nothing the second time.
 
 It skips itself, saying why, only when the checkout is the release commit of the latest
 published version, where there is nothing to upgrade from.
@@ -234,9 +273,13 @@ are written down.
 How to report a vulnerability, and what the operator can and cannot do by design, is in
 [SECURITY.md](../SECURITY.md).
 
-- **Before 1.0** (now): fixes land on `master` and ship in the next release; a security fix is
-  reason enough to cut a patch release rather than wait for features. There are no backports to
-  older minor releases: the fix for 0.5.x is to upgrade to the release that carries it.
+- **Before 1.0**: fixes landed on `master` and shipped in the next release; a security fix was
+  reason enough to cut a patch release rather than wait for features. There were no backports to
+  older minor releases: the fix for 0.5.x is to upgrade to the release that carries it. That
+  stays so for every 0.x release, 0.9 included: the fix is to upgrade to 1.0 or later.
 - **From 1.0**: the latest minor release gets every security fix as a patch release; the minor
   release before it gets fixes for vulnerabilities rated high or critical for three months after
-  its successor is released.
+  its successor is released. A security fix may tighten the validation of `v1` where nothing
+  looser closes the hole, announced as breaking in the release notes and the advisory, with
+  objects already stored kept working as long as the tightened field is not changed
+  ([API compatibility](api-compatibility.md#security-fixes)).

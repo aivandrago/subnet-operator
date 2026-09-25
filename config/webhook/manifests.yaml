@@ -10,14 +10,14 @@ webhooks:
     service:
       name: webhook-service
       namespace: system
-      path: /mutate-network-hypersurgery-dev-v1beta1-networkscope
+      path: /mutate-network-hypersurgery-dev-v1-networkscope
   failurePolicy: Ignore
-  name: mnetworkscope-v1beta1.kb.io
+  name: mnetworkscope-v1.kb.io
   rules:
   - apiGroups:
     - network.hypersurgery.dev
     apiVersions:
-    - v1beta1
+    - v1
     operations:
     - CREATE
     - UPDATE
@@ -30,14 +30,14 @@ webhooks:
     service:
       name: webhook-service
       namespace: system
-      path: /mutate-network-hypersurgery-dev-v1beta1-resourceimport
+      path: /mutate-network-hypersurgery-dev-v1-resourceimport
   failurePolicy: Ignore
-  name: mresourceimport-v1beta1.kb.io
+  name: mresourceimport-v1.kb.io
   rules:
   - apiGroups:
     - network.hypersurgery.dev
     apiVersions:
-    - v1beta1
+    - v1
     operations:
     - CREATE
     - UPDATE
@@ -50,14 +50,14 @@ webhooks:
     service:
       name: webhook-service
       namespace: system
-      path: /mutate-network-hypersurgery-dev-v1beta1-subnetclaim
+      path: /mutate-network-hypersurgery-dev-v1-subnetclaim
   failurePolicy: Ignore
-  name: msubnetclaim-v1beta1.kb.io
+  name: msubnetclaim-v1.kb.io
   rules:
   - apiGroups:
     - network.hypersurgery.dev
     apiVersions:
-    - v1beta1
+    - v1
     operations:
     - CREATE
     - UPDATE
@@ -76,14 +76,14 @@ webhooks:
     service:
       name: webhook-service
       namespace: system
-      path: /validate-network-hypersurgery-dev-v1beta1-networkscope
+      path: /validate-network-hypersurgery-dev-v1-networkscope
   failurePolicy: Fail
-  name: vnetworkscope-v1beta1.kb.io
+  name: vnetworkscope-v1.kb.io
   rules:
   - apiGroups:
     - network.hypersurgery.dev
     apiVersions:
-    - v1beta1
+    - v1
     operations:
     - CREATE
     - UPDATE
@@ -96,14 +96,14 @@ webhooks:
     service:
       name: webhook-service
       namespace: system
-      path: /validate-network-hypersurgery-dev-v1beta1-resourceimport
+      path: /validate-network-hypersurgery-dev-v1-resourceimport
   failurePolicy: Fail
-  name: vresourceimport-v1beta1.kb.io
+  name: vresourceimport-v1.kb.io
   rules:
   - apiGroups:
     - network.hypersurgery.dev
     apiVersions:
-    - v1beta1
+    - v1
     operations:
     - CREATE
     - UPDATE
@@ -116,14 +116,14 @@ webhooks:
     service:
       name: webhook-service
       namespace: system
-      path: /validate-network-hypersurgery-dev-v1beta1-subnetclaim
+      path: /validate-network-hypersurgery-dev-v1-subnetclaim
   failurePolicy: Fail
-  name: vsubnetclaim-v1beta1.kb.io
+  name: vsubnetclaim-v1.kb.io
   rules:
   - apiGroups:
     - network.hypersurgery.dev
     apiVersions:
-    - v1beta1
+    - v1
     operations:
     - CREATE
     - UPDATE

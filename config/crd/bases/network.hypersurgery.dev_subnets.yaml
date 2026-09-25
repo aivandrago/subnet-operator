@@ -69,7 +69,7 @@ spec:
       name: Missing tags
       priority: 1
       type: string
-    name: v1beta1
+    name: v1
     schema:
       openAPIV3Schema:
         description: |-
@@ -212,5 +212,205 @@ spec:
         type: object
     served: true
     storage: true
+    subresources:
+      status: {}
+  - additionalPrinterColumns:
+    - jsonPath: .spec.networkID
+      name: Network
+      type: string
+    - jsonPath: .status.cidrBlock
+      name: CIDR
+      type: string
+    - jsonPath: .status.zone
+      name: Zone
+      type: string
+    - jsonPath: .status.availableIPs
+      name: Free IPs
+      type: integer
+    - jsonPath: .status.utilizationPercent
+      name: Used %
+      type: integer
+    - jsonPath: .status.owner
+      name: Owner
+      type: string
+    - jsonPath: .spec.provider
+      name: Provider
+      priority: 1
+      type: string
+    - jsonPath: .status.aws.public
+      name: Public
+      priority: 1
+      type: boolean
+    - jsonPath: .spec.account
+      name: Account
+      priority: 1
+      type: string
+    - jsonPath: .spec.region
+      name: Region
+      priority: 1
+      type: string
+    - jsonPath: .status.name
+      name: Name
+      priority: 1
+      type: string
+    - jsonPath: .status.env
+      name: Env
+      priority: 1
+      type: string
+    - jsonPath: .status.tier
+      name: Tier
+      priority: 1
+      type: string
+    - jsonPath: .status.missingTags
+      name: Missing tags
+      priority: 1
+      type: string
+    deprecated: true
+    deprecationWarning: 'network.hypersurgery.dev/v1beta1 is deprecated: use network.hypersurgery.dev/v1,
+      which has the same fields. v1beta1 is served until at least 1.2 and six months
+      after 1.0'
+    name: v1beta1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          Subnet is a subnet discovered by a NetworkScope. It is read-only for users. On AWS the
+          object is named after the subnet ID.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: spec identifies the subnet
+            properties:
+              account:
+                description: account is the account that owns the subnet.
+                type: string
+              id:
+                description: id is the provider's ID of the subnet; for AWS the subnet
+                  ID.
+                type: string
+              networkID:
+                description: networkID is the ID of the network the subnet belongs
+                  to; for AWS the VPC ID.
+                type: string
+              provider:
+                description: provider is the provider of the scope that discovered
+                  the subnet.
+                enum:
+                - AWS
+                type: string
+              region:
+                description: region of the subnet.
+                type: string
+            required:
+            - account
+            - id
+            - networkID
+            - provider
+            - region
+            type: object
+          status:
+            description: status is the observed state of the subnet
+            properties:
+              availableIPs:
+                description: |-
+                  availableIPs is the number of free IPv4 addresses. Unset when the provider could not
+                  report it, which is not the same as zero.
+                format: int64
+                type: integer
+              aws:
+                description: aws holds what only an AWS subnet has.
+                properties:
+                  availabilityZoneID:
+                    description: availabilityZoneID is the account-independent AZ
+                      ID, e.g. euc1-az2.
+                    type: string
+                  public:
+                    description: public is true when the subnet's route table has
+                      a default route to an internet gateway.
+                    type: boolean
+                  routeTableID:
+                    description: routeTableID is the explicitly associated route table,
+                      or the VPC main route table.
+                    type: string
+                type: object
+              cidrBlock:
+                description: cidrBlock is the IPv4 CIDR block.
+                type: string
+              env:
+                description: env is read from the env tag configured in the NetworkScope.
+                type: string
+              ipv6CIDRBlocks:
+                description: ipv6CIDRBlocks are the associated IPv6 CIDR blocks.
+                items:
+                  type: string
+                type: array
+                x-kubernetes-list-type: atomic
+              missingTags:
+                description: missingTags lists required tag keys that are absent or
+                  empty.
+                items:
+                  type: string
+                type: array
+                x-kubernetes-list-type: atomic
+              name:
+                description: name is the value of the Name tag.
+                type: string
+              owner:
+                description: owner is read from the owner tag configured in the NetworkScope.
+                type: string
+              ownershipSource:
+                description: |-
+                  ownershipSource says where owner, env and tier were read from: Subnet (the subnet's own
+                  metadata) or Network (inherited from its network, on providers whose subnets cannot
+                  carry metadata of their own).
+                type: string
+              state:
+                description: state is the provider's state of the subnet.
+                type: string
+              tags:
+                additionalProperties:
+                  type: string
+                description: tags are the subnet's tags at the provider.
+                type: object
+              tier:
+                description: tier is read from the tier tag configured in the NetworkScope.
+                type: string
+              totalIPs:
+                description: |-
+                  totalIPs is the number of usable IPv4 addresses, as the provider counts them (AWS
+                  reserves 5 per subnet). Unset when unknown.
+                format: int64
+                type: integer
+              utilizationPercent:
+                description: utilizationPercent is the share of used IPv4 addresses,
+                  0-100. Unset when unknown.
+                format: int32
+                type: integer
+              zone:
+                description: |-
+                  zone is the zone of a zonal subnet, e.g. the AWS availability zone eu-central-1a. Empty
+                  for providers whose subnets are regional.
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: false
     subresources:
       status: {}

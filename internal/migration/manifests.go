@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -31,14 +32,17 @@ import (
 	awsv1alpha1 "hypersurgery.dev/subnet-operator/internal/migration/v1alpha1"
 )
 
-// Manifests rewrites a stream of YAML documents for the new group, the way
+// Manifests rewrites a stream of YAML documents for network.hypersurgery.dev/v1, the way
 // `manager migrate-manifests` does for a GitOps repository: aws.hypersurgery/v1alpha1
 // NetworkScope, SubnetClaim, ResourceImport and SheetExport documents are converted with
 // the mapping 0.8's in-cluster migration used; VPC and Subnet documents are left out, because
-// the operator writes those itself; every other document is copied unchanged, byte for byte.
+// the operator writes those itself; network.hypersurgery.dev/v1beta1 documents get the v1
+// apiVersion and are otherwise kept byte for byte, since both versions have the same fields;
+// every other document is copied unchanged, byte for byte.
 //
-// A converted document loses its comments and its status (apply ignores status anyway). What a
-// human should know about a conversion goes to notes, one line per note, naming the document.
+// A converted v1alpha1 document loses its comments and its status (apply ignores status
+// anyway). What a human should know about a conversion goes to notes, one line per note,
+// naming the document.
 func Manifests(in io.Reader, out, notes io.Writer) error {
 	reader := utilyaml.NewYAMLReader(bufio.NewReader(in))
 	first := true
@@ -82,6 +86,9 @@ func convertDocument(doc []byte) (out []byte, keep bool, notes Notes, err error)
 	}
 	if err := yaml.Unmarshal(doc, &tm); err != nil {
 		return nil, false, nil, err
+	}
+	if tm.APIVersion == betaAPIVersion {
+		return toV1(doc, tm.Kind)
 	}
 	if tm.APIVersion != OldAPIVersion {
 		// Not ours: copied as it is. It may still name the old group — an RBAC rule, a label
@@ -156,4 +163,27 @@ func prefixed(name string, notes Notes) Notes {
 		out = append(out, name+": "+strings.TrimSpace(n))
 	}
 	return out
+}
+
+// betaAPIVersion is the version of the group that 1.0 deprecates. Its documents only need the
+// apiVersion changed: v1 has the same fields.
+const betaAPIVersion = "network.hypersurgery.dev/v1beta1"
+
+// betaAPIVersionLine is the top-level apiVersion line of a v1beta1 document, quoted or not.
+var betaAPIVersionLine = regexp.MustCompile(`(?m)^apiVersion:[ \t]*["']?network\.hypersurgery\.dev/v1beta1["']?([ \t]+#.*)?[ \t]*$`)
+
+// toV1 moves a v1beta1 document to v1 by rewriting its apiVersion line, so its comments and
+// layout survive. A v1beta1 List, or anything else the line cannot be found in, is refused
+// rather than half converted.
+func toV1(doc []byte, kind string) ([]byte, bool, Notes, error) {
+	switch kind {
+	case kindNetworkScope, kindSubnetClaim, kindResourceImport, kindSheetExport, "Network", "Subnet":
+	default:
+		return nil, false, nil, fmt.Errorf("%s %s is not a kind of that group", betaAPIVersion, kind)
+	}
+	if len(betaAPIVersionLine.FindAllIndex(doc, -1)) != 1 {
+		return nil, false, nil, fmt.Errorf("%s %s: the top-level apiVersion line was not found; change it by hand",
+			betaAPIVersion, kind)
+	}
+	return betaAPIVersionLine.ReplaceAll(doc, []byte("apiVersion: network.hypersurgery.dev/v1${1}")), true, nil, nil
 }

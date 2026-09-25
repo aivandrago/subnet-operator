@@ -24,14 +24,19 @@ import (
 // SubnetSpec identifies the observed subnet. It is written by the operator, not by users.
 type SubnetSpec struct {
 	// provider is the provider of the scope that discovered the subnet.
+	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Provider",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
 	Provider Provider `json:"provider"`
 	// id is the provider's ID of the subnet; for AWS the subnet ID.
+	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="ID",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
 	ID string `json:"id"`
 	// networkID is the ID of the network the subnet belongs to; for AWS the VPC ID.
+	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Network ID",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
 	NetworkID string `json:"networkID"`
 	// account is the account that owns the subnet.
+	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Account",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
 	Account string `json:"account"`
 	// region of the subnet.
+	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Region",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
 	Region string `json:"region"`
 }
 
@@ -52,12 +57,15 @@ type AWSSubnetStatus struct {
 type SubnetStatus struct {
 	// name is the value of the Name tag.
 	// +optional
+	// +operator-sdk:csv:customresourcedefinitions:type=status,displayName="Name",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
 	Name string `json:"name,omitempty"`
 	// state is the provider's state of the subnet.
 	// +optional
+	// +operator-sdk:csv:customresourcedefinitions:type=status,displayName="State",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
 	State string `json:"state,omitempty"`
 	// cidrBlock is the IPv4 CIDR block.
 	// +optional
+	// +operator-sdk:csv:customresourcedefinitions:type=status,displayName="CIDR Block",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
 	CIDRBlock string `json:"cidrBlock,omitempty"`
 	// ipv6CIDRBlocks are the associated IPv6 CIDR blocks.
 	// +listType=atomic
@@ -66,6 +74,7 @@ type SubnetStatus struct {
 	// zone is the zone of a zonal subnet, e.g. the AWS availability zone eu-central-1a. Empty
 	// for providers whose subnets are regional.
 	// +optional
+	// +operator-sdk:csv:customresourcedefinitions:type=status,displayName="Zone",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
 	Zone string `json:"zone,omitempty"`
 	// totalIPs is the number of usable IPv4 addresses, as the provider counts them (AWS
 	// reserves 5 per subnet). Unset when unknown.
@@ -74,12 +83,15 @@ type SubnetStatus struct {
 	// availableIPs is the number of free IPv4 addresses. Unset when the provider could not
 	// report it, which is not the same as zero.
 	// +optional
+	// +operator-sdk:csv:customresourcedefinitions:type=status,displayName="Free IPs",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:number"}
 	AvailableIPs *int64 `json:"availableIPs,omitempty"`
 	// utilizationPercent is the share of used IPv4 addresses, 0-100. Unset when unknown.
 	// +optional
+	// +operator-sdk:csv:customresourcedefinitions:type=status,displayName="Utilization (%)",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:number"}
 	UtilizationPercent *int32 `json:"utilizationPercent,omitempty"`
 	// owner is read from the owner tag configured in the NetworkScope.
 	// +optional
+	// +operator-sdk:csv:customresourcedefinitions:type=status,displayName="Owner",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
 	Owner string `json:"owner,omitempty"`
 	// env is read from the env tag configured in the NetworkScope.
 	// +optional
@@ -98,6 +110,7 @@ type SubnetStatus struct {
 	// missingTags lists required tag keys that are absent or empty.
 	// +listType=atomic
 	// +optional
+	// +operator-sdk:csv:customresourcedefinitions:type=status,displayName="Missing Tags"
 	MissingTags []string `json:"missingTags,omitempty"`
 	// aws holds what only an AWS subnet has.
 	// +optional
@@ -105,6 +118,7 @@ type SubnetStatus struct {
 }
 
 // +kubebuilder:object:root=true
+// +kubebuilder:deprecatedversion:warning="network.hypersurgery.dev/v1beta1 is deprecated: use network.hypersurgery.dev/v1, which has the same fields. v1beta1 is served until at least 1.2 and six months after 1.0"
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Cluster,shortName=hssubnet,categories=hypersurgery
 // +kubebuilder:printcolumn:name="Network",type=string,JSONPath=`.spec.networkID`
@@ -121,6 +135,7 @@ type SubnetStatus struct {
 // +kubebuilder:printcolumn:name="Env",type=string,JSONPath=`.status.env`,priority=1
 // +kubebuilder:printcolumn:name="Tier",type=string,JSONPath=`.status.tier`,priority=1
 // +kubebuilder:printcolumn:name="Missing tags",type=string,JSONPath=`.status.missingTags`,priority=1
+// +operator-sdk:csv:customresourcedefinitions:displayName="Subnet"
 
 // Subnet is a subnet discovered by a NetworkScope. It is read-only for users. On AWS the
 // object is named after the subnet ID.

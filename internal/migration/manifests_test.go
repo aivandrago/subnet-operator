@@ -25,7 +25,7 @@ import (
 	"testing"
 )
 
-var update = flag.Bool("update", false, "rewrite the golden files in testdata/v1beta1")
+var update = flag.Bool("update", false, "rewrite the golden files in testdata/v1")
 
 // The fixtures in testdata/v1alpha1 are the examples of the last release with the old group,
 // plus what a dump of a running cluster looks like. Their conversion is compared with golden
@@ -49,7 +49,7 @@ func TestManifestsGolden(t *testing.T) {
 			if notes.Len() > 0 {
 				got += "# notes:\n# " + strings.ReplaceAll(strings.TrimSpace(notes.String()), "\n", "\n# ") + "\n"
 			}
-			golden := filepath.Join("testdata", "v1beta1", filepath.Base(fixture))
+			golden := filepath.Join("testdata", "v1", filepath.Base(fixture))
 			if *update {
 				if err := os.WriteFile(golden, []byte(got), 0o600); err != nil {
 					t.Fatal(err)
@@ -101,6 +101,39 @@ func TestManifestsRefusesWhatItCannotConvert(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			var out, notes bytes.Buffer
+			if err := Manifests(strings.NewReader(in), &out, &notes); err == nil {
+				t.Errorf("converted without complaint:\n%s", out.String())
+			}
+		})
+	}
+}
+
+// A v1beta1 manifest only needs its apiVersion changed; everything else, comments included,
+// stays as it was written.
+func TestManifestsMovesV1beta1DocumentsToV1(t *testing.T) {
+	in := "# the payments scope\napiVersion: network.hypersurgery.dev/v1beta1  # old\nkind: NetworkScope\n" +
+		"metadata:\n  name: payments # kept as written\nspec:\n  provider: AWS\n" +
+		"---\napiVersion: \"network.hypersurgery.dev/v1beta1\"\nkind: SubnetClaim\nmetadata:\n  name: c\n"
+	want := "# the payments scope\napiVersion: network.hypersurgery.dev/v1  # old\nkind: NetworkScope\n" +
+		"metadata:\n  name: payments # kept as written\nspec:\n  provider: AWS\n" +
+		"---\napiVersion: network.hypersurgery.dev/v1\nkind: SubnetClaim\nmetadata:\n  name: c\n"
+	var out, notes bytes.Buffer
+	if err := Manifests(strings.NewReader(in), &out, &notes); err != nil {
+		t.Fatal(err)
+	}
+	if out.String() != want {
+		t.Errorf("got\n%s\nwant\n%s", out.String(), want)
+	}
+	if notes.Len() != 0 {
+		t.Errorf("notes = %q", notes.String())
+	}
+
+	for name, in := range map[string]string{
+		"a kind the group lacks": "apiVersion: network.hypersurgery.dev/v1beta1\nkind: Gateway\nmetadata:\n  name: x\n",
+		"a flow-style document":  "{apiVersion: network.hypersurgery.dev/v1beta1, kind: SubnetClaim, metadata: {name: x}}\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			out.Reset()
 			if err := Manifests(strings.NewReader(in), &out, &notes); err == nil {
 				t.Errorf("converted without complaint:\n%s", out.String())
 			}
