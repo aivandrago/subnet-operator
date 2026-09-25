@@ -32,21 +32,19 @@ const (
 // AnnotationCreatedBy carries the Kubernetes user that created a SubnetClaim or a
 // ResourceImport, as the API server authenticated it. The operator's admission webhooks write
 // it on creation, whatever the object carried, and refuse any later change to it, so unlike
-// spec.requestedBy or spec.owner it cannot name somebody else.
-//
-// There is one exception, for the migration from aws.hypersurgery/v1alpha1: an object the
-// operator itself creates with AnnotationMigratedFrom keeps the created-by value it copied from
-// the old object, because the old group's webhooks guarded that value the same way.
+// spec.requestedBy or spec.owner it cannot name somebody else. (0.8 made one exception, for its
+// migration from aws.hypersurgery/v1alpha1, which copied the old object's value; 0.9 does not
+// migrate and makes none.)
 const AnnotationCreatedBy = "network.hypersurgery.dev/created-by"
 
 // AnnotationReason says why the auto-import policy created a ResourceImport.
 const AnnotationReason = "network.hypersurgery.dev/reason"
 
-// AnnotationMigratedFrom is set on an object the operator created by migrating an
-// aws.hypersurgery/v1alpha1 object. Its value is the old object's apiVersion.
+// AnnotationMigratedFrom is on an object 0.8 created by migrating an aws.hypersurgery/v1alpha1
+// object. Its value is the old object's apiVersion. It is a record and grants nothing.
 const AnnotationMigratedFrom = "network.hypersurgery.dev/migrated-from"
 
-// AnnotationMigratedTo is set on an aws.hypersurgery/v1alpha1 object once it has been migrated.
-// Its value is the name of the network.hypersurgery.dev object that replaces it, which from then
-// on is the only one reconciled.
+// AnnotationMigratedTo is on an aws.hypersurgery/v1alpha1 object that 0.8 migrated. Its value
+// is the name of the network.hypersurgery.dev object that replaces it. The operator does not
+// start its controllers while an old object without it exists.
 const AnnotationMigratedTo = "network.hypersurgery.dev/migrated-to"

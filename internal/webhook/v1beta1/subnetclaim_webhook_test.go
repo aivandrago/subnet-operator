@@ -24,6 +24,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
+	"hypersurgery.dev/subnet-operator/internal/provider"
 )
 
 const (
@@ -169,17 +170,24 @@ var _ = Describe("SubnetClaim webhook", func() {
 		obj := claimIn("not-discovered-yet", 24)
 		obj.Spec.NetworkID = "vpc-0ddd4"
 
-		validator := &SubnetClaimValidator{Client: k8sClient, WritesEnabled: true}
+		validator := &SubnetClaimValidator{Client: k8sClient, Providers: testProviders, WritesEnabled: true}
 		warnings, err := validator.ValidateCreate(ctx, obj)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(warnings).To(ContainElement(ContainSubstring("not in the inventory")))
+	})
+
+	It("refuses a claim whose scope's provider the operator does not run", func() {
+		obj := claimIn("provider-off", 24)
+		validator := &SubnetClaimValidator{Client: k8sClient, Providers: provider.MustRegistry(), WritesEnabled: true}
+		_, err := validator.ValidateCreate(ctx, obj)
+		Expect(err).To(MatchError(ContainSubstring(`provider "AWS" is not enabled in this operator`)))
 	})
 
 	It("warns that a read-only operator will not create the subnets", func() {
 		obj := claimIn("read-only-operator", 24)
 		obj.Spec.Mode = networkv1beta1.ClaimModeCreate
 
-		validator := &SubnetClaimValidator{Client: k8sClient, WritesEnabled: false}
+		validator := &SubnetClaimValidator{Client: k8sClient, Providers: testProviders, WritesEnabled: false}
 		warnings, err := validator.ValidateCreate(ctx, obj)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(warnings).To(ContainElement(ContainSubstring("--enable-writes")))
@@ -192,7 +200,7 @@ var _ = Describe("SubnetClaim webhook", func() {
 		}
 		newObj := claimIn("dropped-zone", 24, claimRegion+"a")
 
-		validator := &SubnetClaimValidator{Client: k8sClient, WritesEnabled: true}
+		validator := &SubnetClaimValidator{Client: k8sClient, Providers: testProviders, WritesEnabled: true}
 		warnings, err := validator.ValidateUpdate(ctx, oldObj, newObj)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(warnings).To(ContainElement(ContainSubstring("subnet-0eee5")))

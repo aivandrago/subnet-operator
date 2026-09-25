@@ -123,7 +123,7 @@ func TestDiscoverTarget(t *testing.T) {
 	}
 
 	target := inventory.Target{Account: "111111111111", Region: "eu-central-1",
-		VPCTagSelector: map[string]string{"hs/managed": "true", "team": ""}}
+		NetworkSelector: map[string]string{"hs/managed": "true", "team": ""}}
 	snap, err := DiscoverTarget(context.Background(), api, target)
 	if err != nil {
 		t.Fatal(err)
@@ -138,17 +138,17 @@ func TestDiscoverTarget(t *testing.T) {
 		t.Errorf("subnets must be filtered by the selected VPC IDs, got %+v", api.subnetFilters)
 	}
 
-	if len(snap.VPCs) != 2 {
-		t.Fatalf("want 2 VPCs across pages, got %d", len(snap.VPCs))
+	if len(snap.Networks) != 2 {
+		t.Fatalf("want 2 VPCs across pages, got %d", len(snap.Networks))
 	}
-	a := snap.VPCs[0]
+	a := snap.Networks[0]
 	if want := []string{"10.0.0.0/16", "100.64.0.0/16"}; len(a.CIDRBlocks) != 2 || a.CIDRBlocks[0] != want[0] || a.CIDRBlocks[1] != want[1] {
 		t.Errorf("CIDR blocks = %v, want %v", a.CIDRBlocks, want)
 	}
 	if a.Account != target.Account || a.Region != target.Region || a.Tags["hs/managed"] != "true" {
 		t.Errorf("unexpected VPC %+v", a)
 	}
-	if !snap.VPCs[1].IsDefault {
+	if !snap.Networks[1].AWS.IsDefault {
 		t.Error("vpc-b must be the default VPC")
 	}
 
@@ -157,10 +157,11 @@ func TestDiscoverTarget(t *testing.T) {
 		byID[s.ID] = s
 	}
 	pub, priv := byID["subnet-public"], byID["subnet-private"]
-	if !pub.Public || pub.RouteTableID != "rtb-public" || pub.AvailableIPs != 200 || pub.AvailabilityZoneID != "euc1-az2" || pub.Tags["hs/owner"] != "team-a" {
+	if !pub.AWS.Public || pub.AWS.RouteTableID != "rtb-public" || pub.AvailableIPs == nil || *pub.AvailableIPs != 200 ||
+		pub.AWS.AvailabilityZoneID != "euc1-az2" || pub.Tags["hs/owner"] != "team-a" {
 		t.Errorf("unexpected public subnet %+v", pub)
 	}
-	if priv.Public || priv.RouteTableID != "rtb-main" {
+	if priv.AWS.Public || priv.AWS.RouteTableID != "rtb-main" {
 		t.Errorf("subnet without association must use the main route table and be private: %+v", priv)
 	}
 }

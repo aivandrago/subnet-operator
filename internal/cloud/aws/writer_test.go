@@ -26,6 +26,7 @@ import (
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/smithy-go"
 
+	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
 	"hypersurgery.dev/subnet-operator/internal/inventory"
 )
 
@@ -62,8 +63,8 @@ func (f *fakeEC2Writer) AssociateRouteTable(_ context.Context, in *ec2.Associate
 
 func request() inventory.CreateSubnetRequest {
 	return inventory.CreateSubnetRequest{
-		VPCID: "vpc-1", CIDRBlock: "10.0.5.0/24", AvailabilityZone: "eu-central-1a",
-		RouteTableID: "rtb-private", MapPublicIPOnLaunch: true,
+		NetworkID: "vpc-1", CIDRBlock: "10.0.5.0/24", Zone: "eu-central-1a",
+		AWS:  &networkv1beta1.AWSClaimOptions{RouteTableID: "rtb-private", MapPublicIPOnLaunch: true},
 		Tags: map[string]string{"hs/owner": "team-a", "Name": "claim-a", "cost-center": "cc-42"},
 	}
 }
@@ -97,7 +98,7 @@ func TestCreateSubnetAppliesEverything(t *testing.T) {
 func TestCreateSubnetSkipsOptionalSteps(t *testing.T) {
 	api := &fakeEC2Writer{}
 	req := request()
-	req.RouteTableID, req.MapPublicIPOnLaunch, req.Tags = "", false, nil
+	req.AWS, req.Tags = nil, nil
 	if _, err := CreateSubnet(context.Background(), api, req); err != nil {
 		t.Fatal(err)
 	}

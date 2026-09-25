@@ -24,6 +24,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
+	"hypersurgery.dev/subnet-operator/internal/provider"
 )
 
 // scope builds a NetworkScope over one account and region that every namespace may use.
@@ -116,17 +117,24 @@ var _ = Describe("NetworkScope webhook", func() {
 		obj := scope("scope-external-id", "100000000010", "eu-central-1")
 		awsOf(&obj.Spec.Accounts[0]).ExternalID = "shared-secret"
 
-		validator := &NetworkScopeValidator{Client: k8sClient}
+		validator := &NetworkScopeValidator{Client: k8sClient, Providers: testProviders}
 		warnings, err := validator.ValidateCreate(ctx, obj)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(warnings).To(ContainElement(ContainSubstring("aws.externalID but no aws.roleARN")))
+	})
+
+	It("refuses a scope whose provider the operator does not run", func() {
+		obj := scope("scope-provider-off", "100000000012", "eu-central-1")
+		validator := &NetworkScopeValidator{Client: k8sClient, Providers: provider.MustRegistry()}
+		_, err := validator.ValidateCreate(ctx, obj)
+		Expect(err).To(MatchError(ContainSubstring(`spec.provider: Unsupported value: "AWS"`)))
 	})
 
 	It("warns that auto-import in Apply mode tags resources in AWS", func() {
 		obj := scope("scope-auto-import", "100000000011", "eu-central-1")
 		obj.Spec.AutoImport = &networkv1beta1.AutoImportPolicy{Mode: networkv1beta1.AutoImportApply}
 
-		validator := &NetworkScopeValidator{Client: k8sClient}
+		validator := &NetworkScopeValidator{Client: k8sClient, Providers: testProviders}
 		warnings, err := validator.ValidateCreate(ctx, obj)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(warnings).To(ContainElement(ContainSubstring("auto-import is in Apply mode")))

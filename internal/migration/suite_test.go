@@ -32,13 +32,13 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	awsv1alpha1 "hypersurgery.dev/subnet-operator/api/v1alpha1"
 	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
 )
 
-// The migration specs run against a real API server with both groups' CRDs, and call the
-// reconcilers directly: what is tested is what they write, and that the new group's schema
-// accepts it.
+// The specs run against a real API server with the CRDs of this release and, as a cluster
+// upgraded from 0.8 still has them, the CRDs of the old group that 0.8 shipped
+// (testdata/crds-0.8): the converted manifests must be accepted by the new group's schema, and
+// the guard must find the old objects 0.8 left unmigrated.
 
 var (
 	ctx       context.Context
@@ -57,11 +57,13 @@ var _ = BeforeSuite(func() {
 	logf.SetLogger(zap.New(zap.WriteTo(GinkgoWriter), zap.UseDevMode(true)))
 	ctx, cancel = context.WithCancel(context.TODO())
 
-	Expect(awsv1alpha1.AddToScheme(scheme.Scheme)).To(Succeed())
 	Expect(networkv1beta1.AddToScheme(scheme.Scheme)).To(Succeed())
 
 	testEnv = &envtest.Environment{
-		CRDDirectoryPaths:     []string{filepath.Join("..", "..", "config", "crd", "bases")},
+		CRDDirectoryPaths: []string{
+			filepath.Join("..", "..", "config", "crd", "bases"),
+			filepath.Join("testdata", "crds-0.8"),
+		},
 		ErrorIfCRDPathMissing: true,
 	}
 	if dir := firstEnvTestBinaryDir(); dir != "" {

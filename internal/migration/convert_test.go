@@ -24,8 +24,8 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	awsv1alpha1 "hypersurgery.dev/subnet-operator/api/v1alpha1"
 	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
+	awsv1alpha1 "hypersurgery.dev/subnet-operator/internal/migration/v1alpha1"
 )
 
 func oldScope() *awsv1alpha1.NetworkScope {
@@ -60,7 +60,7 @@ func oldScope() *awsv1alpha1.NetworkScope {
 }
 
 func TestNetworkScope(t *testing.T) {
-	scope, notes := NetworkScope(oldScope(), ForCluster)
+	scope, notes := NetworkScope(oldScope())
 	s := scope.Spec
 
 	if s.Provider != networkv1beta1.ProviderAWS {
@@ -104,25 +104,19 @@ func TestNetworkScope(t *testing.T) {
 
 }
 
-func TestNetworkScopeStatus(t *testing.T) {
-	scope, _ := NetworkScope(oldScope(), ForCluster)
-	st := scope.Status
-	if st.ObservedGeneration != 0 {
-		t.Errorf("observedGeneration = %d; the copy must sync in full at once", st.ObservedGeneration)
-	}
-	if st.Networks != 3 || st.Subnets != 9 || st.Unmanaged != 2 || st.LastSyncTime == nil {
-		t.Errorf("status = %+v", st)
-	}
-	if tg := st.Targets[0]; tg.Networks != 3 || tg.UnmanagedNetworks != 1 ||
-		!reflect.DeepEqual(tg.UnmanagedIDs, []string{"subnet-2", "vpc-1"}) {
-		t.Errorf("target = %+v; the known unmanaged resources must carry over", tg)
+// A manifest carries no state: whatever status the old document had (a `kubectl get -o yaml`
+// export has one) is not converted, since apply ignores it and 0.9 has nothing to copy it into.
+func TestNetworkScopeLeavesStatusOut(t *testing.T) {
+	scope, _ := NetworkScope(oldScope())
+	if !reflect.DeepEqual(scope.Status, networkv1beta1.NetworkScopeStatus{}) {
+		t.Errorf("status = %+v, want none", scope.Status)
 	}
 }
 
 func TestNetworkScopeKeepsASelector(t *testing.T) {
 	old := oldScope()
 	old.Spec.NamespaceSelector = &metav1.LabelSelector{MatchLabels: map[string]string{"team": "payments"}}
-	scope, notes := NetworkScope(old, ForCluster)
+	scope, notes := NetworkScope(old)
 	if !reflect.DeepEqual(scope.Spec.NamespaceSelector, old.Spec.NamespaceSelector) {
 		t.Errorf("namespaceSelector = %+v", scope.Spec.NamespaceSelector)
 	}
@@ -130,7 +124,7 @@ func TestNetworkScopeKeepsASelector(t *testing.T) {
 		t.Errorf("nothing to say about a scope that had a selector, got %q", notes)
 	}
 	old.Spec.NamespaceSelector = &metav1.LabelSelector{}
-	if scope, _ := NetworkScope(old, ForCluster); scope.Spec.NamespaceSelector == nil {
+	if scope, _ := NetworkScope(old); scope.Spec.NamespaceSelector == nil {
 		t.Error("an explicit {} stays {}")
 	}
 }
@@ -154,7 +148,7 @@ func TestSubnetClaim(t *testing.T) {
 			Conditions: []metav1.Condition{{Type: "Ready", Status: metav1.ConditionFalse, Reason: "CreateFailed"}},
 		},
 	}
-	claim, _ := SubnetClaim(old, ForCluster)
+	claim, _ := SubnetClaim(old)
 	s := claim.Spec
 	if s.NetworkID != "vpc-0abc" || !reflect.DeepEqual(s.Zones, old.Spec.AvailabilityZones) ||
 		s.Mode != networkv1beta1.ClaimModeCreate || s.NamePrefix != "payments-db" || s.Tags["cost-center"] != "42" {
@@ -163,29 +157,18 @@ func TestSubnetClaim(t *testing.T) {
 	if s.AWS == nil || s.AWS.RouteTableID != "rtb-0abc" || !s.AWS.MapPublicIPOnLaunch {
 		t.Errorf("aws = %+v", s.AWS)
 	}
-	want := []networkv1beta1.SubnetAllocation{
-		{Name: "payments-db-a", Zone: "eu-central-1a", CIDRBlock: "10.0.0.0/24", SubnetID: "subnet-a", State: "Created"},
-		{Name: "payments-db-b", Zone: "eu-central-1b", CIDRBlock: "10.0.1.0/24", State: "Failed", Error: "boom"},
-	}
-	if !reflect.DeepEqual(claim.Status.Allocations, want) {
-		t.Errorf("allocations = %+v, want %+v", claim.Status.Allocations, want)
-	}
-	if len(claim.Status.Conditions) != 1 {
-		t.Errorf("conditions = %+v", claim.Status.Conditions)
+	if len(claim.Status.Allocations) != 0 || len(claim.Status.Conditions) != 0 {
+		t.Errorf("status = %+v; a manifest carries no reservations", claim.Status)
 	}
 
-	// Without a prefix, the operator named the subnets after the claim.
-	old.Spec.NamePrefix, old.Spec.RouteTableID, old.Spec.MapPublicIPOnLaunch = "", "", false
-	claim, _ = SubnetClaim(old, ForCluster)
-	if claim.Status.Allocations[0].Name != "payments-a" {
-		t.Errorf("allocation name = %q, want payments-a", claim.Status.Allocations[0].Name)
-	}
+	old.Spec.RouteTableID, old.Spec.MapPublicIPOnLaunch = "", false
+	claim, _ = SubnetClaim(old)
 	if claim.Spec.AWS != nil {
 		t.Errorf("no AWS options, no aws member; got %+v", claim.Spec.AWS)
 	}
 }
 
-func TestResourceImportAndSheetExportKeepTheirHistory(t *testing.T) {
+func TestResourceImportAndSheetExport(t *testing.T) {
 	applied := metav1.NewTime(time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC))
 	imp, _ := ResourceImport(&awsv1alpha1.ResourceImport{
 		ObjectMeta: metav1.ObjectMeta{Name: "i", Namespace: "n"},
@@ -193,9 +176,9 @@ func TestResourceImportAndSheetExportKeepTheirHistory(t *testing.T) {
 			ResourceID: "vpc-1", Tags: map[string]string{"hs/owner": "a"}, RequestedBy: "jane", DryRun: true},
 		Status: awsv1alpha1.ResourceImportStatus{State: "Applied", AppliedTags: map[string]string{"hs/owner": "a"},
 			AppliedTime: &applied},
-	}, ForCluster)
+	})
 	if imp.Spec.ResourceID != "vpc-1" || imp.Spec.RequestedBy != "jane" || !imp.Spec.DryRun ||
-		imp.Status.State != "Applied" || !imp.Status.AppliedTime.Equal(&applied) {
+		imp.Status.State != "" || imp.Status.AppliedTime != nil {
 		t.Errorf("import = %+v", imp)
 	}
 
@@ -205,8 +188,8 @@ func TestResourceImportAndSheetExportKeepTheirHistory(t *testing.T) {
 			CredentialsSecretRef: awsv1alpha1.SecretKeyRef{Name: "g", Namespace: "ns", Key: "k"},
 			ExtraTagColumns:      []string{"cc"}},
 		Status: awsv1alpha1.SheetExportStatus{Rows: 12, URL: "https://example.com", LastExportTime: &applied},
-	}, ForCluster)
-	if exp.Spec.CredentialsSecretRef.Key != "k" || exp.Spec.ExtraTagColumns[0] != "cc" || exp.Status.Rows != 12 {
+	})
+	if exp.Spec.CredentialsSecretRef.Key != "k" || exp.Spec.ExtraTagColumns[0] != "cc" || exp.Status.Rows != 0 {
 		t.Errorf("export = %+v", exp)
 	}
 }
@@ -230,28 +213,28 @@ func TestMetadata(t *testing.T) {
 		},
 	}
 
-	cluster := objectMeta(old, ForCluster)
+	// A manifest keeps what its author wrote, tool metadata included, with the old group's keys
+	// renamed. It is not marked as a copy the operator made: it is applied by a person or a
+	// GitOps tool, whose own name is the creator.
+	manifest := objectMeta(old)
 	wantLabels := map[string]string{
-		networkv1beta1.LabelScope:   "org",
-		networkv1beta1.LabelNetwork: "vpc-1",
-		"team":                      "payments",
+		networkv1beta1.LabelScope:    "org",
+		networkv1beta1.LabelNetwork:  "vpc-1",
+		"app.kubernetes.io/instance": "payments-app",
+		"team":                       "payments",
 	}
-	if !reflect.DeepEqual(cluster.Labels, wantLabels) {
-		t.Errorf("labels = %v, want %v", cluster.Labels, wantLabels)
+	if !reflect.DeepEqual(manifest.Labels, wantLabels) {
+		t.Errorf("labels = %v, want %v", manifest.Labels, wantLabels)
 	}
 	wantAnnotations := map[string]string{
-		networkv1beta1.AnnotationCreatedBy:    "jane@example.com",
-		networkv1beta1.AnnotationReason:       "tags from creator rule",
-		networkv1beta1.AnnotationMigratedFrom: OldAPIVersion,
-		"note":                                "kept",
+		networkv1beta1.AnnotationCreatedBy: "jane@example.com",
+		networkv1beta1.AnnotationReason:    "tags from creator rule",
+		"argocd.argoproj.io/tracking-id":   "app:group/kind:ns/name",
+		"note":                             "kept",
 	}
-	if !reflect.DeepEqual(cluster.Annotations, wantAnnotations) {
-		t.Errorf("annotations = %v, want %v", cluster.Annotations, wantAnnotations)
+	if !reflect.DeepEqual(manifest.Annotations, wantAnnotations) {
+		t.Errorf("annotations = %v, want %v", manifest.Annotations, wantAnnotations)
 	}
-
-	// A manifest keeps what its author wrote, and is not marked as the operator's copy: it is
-	// applied by a person or a GitOps tool, whose own name is the creator.
-	manifest := objectMeta(old, ForManifest)
 	if manifest.Labels["app.kubernetes.io/instance"] != "payments-app" {
 		t.Errorf("a manifest keeps its labels, got %v", manifest.Labels)
 	}

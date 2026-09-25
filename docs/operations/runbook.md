@@ -9,9 +9,15 @@ Two facts worth knowing before reading any entry:
 - **Every inventory gauge is rebuilt from scratch on each sync** (`forgetSeries` +
   `SetScope`). A series that disappears means "the operator no longer reports this", not
   "the value is zero".
-- **Free-IP counts are not event-driven.** `internal/events/events.go` deliberately ignores
-  ENI churn, so `hs_aws_subnet_available_ips` is only as fresh as the last full resync
+- **Free-IP counts are not event-driven.** `internal/cloud/aws/events/events.go` deliberately ignores
+  ENI churn, so `hs_subnet_available_ips` is only as fresh as the last full resync
   (`resyncInterval`, 10m by default).
+
+Every metric here carries a `provider` label (`aws`), and names a network `network_id` and an
+availability zone `zone`, so alerts carry those labels too. 0.9 renamed the `hs_aws_` metrics
+of 0.8 (with `vpc_id` and `az`) and the alert `VPCCIDROverlap`, and no longer exports the old
+names; [upgrades.md](upgrades.md#upgrading-from-08-to-09) has the mapping for rules, routes and
+silences of your own.
 
 Conventions used below: `NS` is the release namespace
 (`subnet-operator-system` by default), `<fullname>` the name of the release's objects
@@ -26,7 +32,7 @@ others, and `<release>-aws-subnet-operator` before 0.8), `<scope>` a `NetworkSco
 | [SubnetInventoryTargetDown](#subnetinventorytargetdown) | warning | ticket |
 | [SubnetInventoryTargetThrottled](#subnetinventorytargetthrottled) | warning | ticket |
 | [SubnetInventoryStale](#subnetinventorystale) | warning | ticket |
-| [VPCCIDROverlap](#vpccidroverlap) | warning | ticket |
+| [NetworkCIDROverlap](#networkcidroverlap) | warning | ticket |
 | [UnmanagedNetworkResource](#unmanagednetworkresource) | warning | ticket |
 | [SubnetClaimNotReady](#subnetclaimnotready) | warning | ticket |
 | [ResourceImportNotSettled](#resourceimportnotsettled) | warning | ticket |
@@ -74,11 +80,16 @@ run and the scrape fails, which is a different problem from pods that do not run
 2. **CrashLoopBackOff.** The previous container's log says why. The usual causes: the webhook
    certificate Secret is missing and `--webhook-cert-path` was set explicitly (without it the
    operator carries on with webhooks off), or the AWS credentials cannot be loaded at all.
-3. **Pods Running, scrape failing.** The metrics endpoint is HTTPS with authn/authz by default
+3. **Pods Running but not Ready, and the log says `aws.hypersurgery/v1alpha1 object(s) were
+   never migrated`.** Since 0.9 the operator does not start its controllers next to an
+   old-group object 0.8 never migrated, and a pod that is not ready is not scraped through the
+   Service. The log and a `MigrationPending` Event on each object name them; the
+   [upgrade guide](upgrades.md#objects-08-never-migrated) has what to do.
+4. **Pods Running, scrape failing.** The metrics endpoint is HTTPS with authn/authz by default
    (`metrics.secure`). A rotated serving certificate, a changed `ServiceMonitor`, or a
    NetworkPolicy that does not allow the Prometheus namespace in on the metrics port all
    produce this. Fix the scrape; the operator itself is fine.
-4. Nothing in AWS is touched while the operator is down, and nothing is lost: the next
+5. Nothing in AWS is touched while the operator is down, and nothing is lost: the next
    reconcile after it comes back is a full sync.
 
 **Safe to ignore when.** You scaled the operator to zero on purpose. Silence it for the
@@ -89,7 +100,7 @@ duration rather than disabling it — the next time it fires will not be on purp
 ## SubnetFull
 
 ```promql
-hs_aws_subnet_available_ips == 0
+hs_subnet_available_ips == 0
 ```
 `for: 15m`, severity `critical`.
 
@@ -133,12 +144,12 @@ keyed on `subnet_id`, `tier` or `owner`, all of which are metric labels.
 ## SubnetNearlyFull
 
 ```promql
-1 - hs_aws_subnet_available_ips / hs_aws_subnet_total_ips >= 0.85   # prometheusRule.thresholds.subnetUsedRatio
+1 - hs_subnet_available_ips / hs_subnet_total_ips >= 0.85   # prometheusRule.thresholds.subnetUsedRatio
 ```
 `for: 15m`, severity `warning`.
 
 **What it means.** Less than 15% of the subnet's usable IPv4 addresses are free.
-`hs_aws_subnet_total_ips` is *usable* addresses — the CIDR size minus the five AWS reserves —
+`hs_subnet_total_ips` is *usable* addresses — the CIDR size minus the five AWS reserves —
 so the ratio matches what you would compute by hand, and `status.utilizationPercent` on the
 `Subnet` object is the same number rounded down.
 
@@ -146,7 +157,7 @@ so the ratio matches what you would compute by hand, and `status.utilizationPerc
 shipped Grafana dashboard.
 
 ```promql
-topk(20, 1 - hs_aws_subnet_available_ips / hs_aws_subnet_total_ips)
+topk(20, 1 - hs_subnet_available_ips / hs_subnet_total_ips)
 ```
 
 **Do.** Plan capacity before it becomes `SubnetFull`: allocate the next subnet now
@@ -168,14 +179,14 @@ the ratio is always defined.
 ## SubnetInventoryTargetDown
 
 ```promql
-hs_aws_target_up == 0
+hs_target_up == 0
 ```
 `for: 15m`, severity `warning`.
 
 **What it means.** The last discovery of one account/region pair failed for a reason other than
 throttling. The gauge is set from the per-target status (`metricTargets` →
 `TargetStatus.Error != ""`), so it is exactly as truthful as `kubectl get nscope <scope> -o
-yaml`. A target that AWS throttled answered, only not fast enough: it keeps `hs_aws_target_up`
+yaml`. A target that AWS throttled answered, only not fast enough: it keeps `hs_target_up`
 at 1 and has [its own alert](#subnetinventorytargetthrottled). The inventory for that target is
 **stale, not gone** — see [failure modes](failure-modes.md#a-spoke-account-whose-role-cannot-be-assumed).
 
@@ -222,7 +233,7 @@ deletes).
 ## SubnetInventoryTargetThrottled
 
 ```promql
-hs_aws_target_throttled == 1
+hs_target_throttled == 1
 ```
 `for: 30m` (`prometheusRule.thresholds.throttledFor`), severity `warning`.
 
@@ -243,14 +254,14 @@ target are sequential), so it is rarely the cause on its own; it is the caller t
    backoff capped at 20 s, and a client-side rate limiter that slows the operator's
    requests to that account/region down after a throttle and remembers it across syncs
    (`internal/cloud/aws/discoverer.go`). Each throttled attempt counts in
-   `hs_aws_api_throttled_total`, whether or not a retry then got through.
+   `hs_api_throttled_total`, whether or not a retry then got through.
 2. When a discovery is still throttled after those attempts, the target is **backed off**
    (`internal/controller/backoff.go`): it is left out of full syncs and ignores change events,
    and is retried on its own after about 1 minute, then 2, 4, 8, 16, and every 30 minutes at
    most. Each delay is jittered between half and all of it, so targets throttled together do
    not come back together.
 3. The first discovery that gets through resets the backoff; the target is back on the scope's
-   normal cadence, `hs_aws_target_throttled` drops to 0 and the alert resolves on its own.
+   normal cadence, `hs_target_throttled` drops to 0 and the alert resolves on its own.
 
 **Confirm.**
 
@@ -264,7 +275,7 @@ The `Ready` condition has reason `Throttled` when throttling is all that is wron
 wins when some target is also unreachable). To see which calls are throttled and how hard:
 
 ```promql
-sum by (account, region, operation) (rate(hs_aws_api_throttled_total[15m]))
+sum by (account, region, operation) (rate(hs_api_throttled_total[15m]))
 ```
 
 **Do.**
@@ -297,7 +308,7 @@ next full sync before it is backed off again.
 ## SubnetInventoryStale
 
 ```promql
-time() - hs_aws_scope_last_sync_timestamp_seconds > 3600   # prometheusRule.thresholds.staleSyncSeconds
+time() - hs_scope_last_sync_timestamp_seconds > 3600   # prometheusRule.thresholds.staleSyncSeconds
 ```
 `for: 10m`, severity `warning`.
 
@@ -342,15 +353,21 @@ cluster upgrade that drains the node — expect it back within a resync interval
 
 ---
 
-## VPCCIDROverlap
+## NetworkCIDROverlap
 
 ```promql
-hs_aws_vpc_cidr_overlaps > 0
+hs_network_cidr_overlaps > 0
 ```
 `for: 30m`, severity `warning`.
 
-**What it means.** At least one other VPC **in the same `NetworkScope`** has a CIDR that
-overlaps this one. Overlaps are computed in `updateOverlaps` across every `VPC` object of the
+Called `VPCCIDROverlap` up to 0.8: routes, inhibitions and silences that match on the old
+`alertname` need the new one ([upgrades.md](upgrades.md#upgrading-from-08-to-09)). It covers
+networks of every provider. Labels: `provider`, `scope`, `account`, `region`, `network_id`,
+`name`, `owner`, `env`.
+
+**What it means.** At least one other network (a VPC on AWS) **in the same `NetworkScope`**
+has a CIDR that overlaps this one. Overlaps are computed in `updateOverlaps` across every
+`Network` object of the
 scope — across accounts and regions — using `inventory.Overlaps`, which compares all
 associated IPv4 and IPv6 prefixes. Overlapping ranges cannot be joined by VPC peering and
 break Transit Gateway routing.
@@ -358,7 +375,7 @@ break Transit Gateway routing.
 **Confirm.**
 
 ```sh
-kubectl get hsnet <vpc-id> -o jsonpath='{.status.cidrBlocks}{"\n"}{.status.overlapsWith}{"\n"}'
+kubectl get hsnet <network-id> -o jsonpath='{.status.cidrBlocks}{"\n"}{.status.overlapsWith}{"\n"}'
 ```
 
 `status.overlapsWith` lists the counterparts as `account/region/vpc-id`.
@@ -375,16 +392,25 @@ same routing domain. The operator reports and never renumbers anything.
   invisible here.
 
 **Safe to ignore when.** The overlap is intentional and isolated — sandbox accounts that use
-the same `10.0.0.0/16` by convention and are never peered. Silence by `vpc_id` or `env`.
+the same `10.0.0.0/16` by convention and are never peered. Silence by `network_id` or `env`
+(`vpc_id` before 0.9).
 
 ---
 
 ## UnmanagedNetworkResource
 
 ```promql
-increase(hs_aws_unmanaged_resources_total[10m]) > 0
+increase(hs_unmanaged_resources_total[30m]) > 0
 ```
 `for: 10m`, severity `warning`, `runbook_url: https://hypersurgery.dev/docs/#unmanaged`.
+Labels: `provider`, `scope`, `account`, `region`, `kind` (`network` or `subnet`).
+
+It fires ten minutes after a resource first turns up and resolves about half an hour after.
+Up to 0.8 the window was `[10m]`, as long as the `for`, and one new resource — the usual case —
+raised the increase for one evaluation less than the `for` needed, so the alert never fired
+for it; only a steady stream of new resources did. The counter also exists at zero from a
+target's first sync now, so that the first resource after a restart is a rise Prometheus can
+see, not a series that starts at one.
 
 **What it means.** A VPC or subnet without the managed tag was seen **for the first time**.
 The counter rises once per resource ID, not once per resync: `internal/metrics/metrics.go`
@@ -400,7 +426,7 @@ kubectl get nscope <scope> -o jsonpath='{range .status.targets[*]}{.account}/{.r
 ```
 
 ```promql
-hs_aws_unmanaged_resources{account="…",region="…"}   # how many there are right now
+hs_unmanaged_resources{account="…",region="…"}   # how many there are right now
 ```
 
 The identities are not in the metrics (only counts, by `kind`). The scope's status has them,
@@ -444,7 +470,7 @@ A scope that is deleted and recreated starts with an empty status, so its first 
 everything unmanaged as new, exactly as a first install does.
 
 **Safe to ignore when.** The resources are known and deliberately unmanaged — default VPCs,
-another team's account. They keep being *counted* in `hs_aws_unmanaged_resources` (that gauge
+another team's account. They keep being *counted* in `hs_unmanaged_resources` (that gauge
 is a current census, by design), but the counter behind this alert will not rise for them
 again, across restarts too. If you have an auto-import policy, a `skip` rule by tag or
 by creating principal is the durable way to say "not ours".
@@ -454,10 +480,11 @@ by creating principal is the durable way to say "not ours".
 ## SubnetClaimNotReady
 
 ```promql
-hs_aws_subnet_claim_ready == 0
+hs_subnet_claim_ready == 0
 ```
-`for: 30m` (`prometheusRule.thresholds.notReadyFor`), severity `warning`. Labels: `namespace`,
-`name`, `reason` — the reason of the claim's `Ready` condition.
+`for: 30m` (`prometheusRule.thresholds.notReadyFor`), severity `warning`. Labels: `provider`
+(the scope's; empty while the scope does not exist), `namespace`, `name`, `reason` — the
+reason of the claim's `Ready` condition.
 
 **What it means.** Somebody asked for subnets and has not got them for half an hour. The gauge
 is written from the status the controller has just saved, so its reason and the object's
@@ -491,10 +518,10 @@ to page; allocations it reserved are released, and no subnet is ever deleted by 
 ## ResourceImportNotSettled
 
 ```promql
-hs_aws_resource_import_ready == 0
+hs_resource_import_ready == 0
 ```
-`for: 30m`, severity `warning`. Labels: `namespace`, `name`, `state` (`Pending`, `Failed`),
-`reason`.
+`for: 30m`, severity `warning`. Labels: `provider` (the scope's; empty while the scope does
+not exist), `namespace`, `name`, `state` (`Pending`, `Failed`), `reason`.
 
 **What it means.** Tags someone asked for — or the auto-import policy asked for — have not
 reached AWS for half an hour. A dry run is settled by definition and never fires this.
@@ -519,7 +546,7 @@ records decisions, this gauge records what happened to them.
 ## AutoImportedResources
 
 ```promql
-increase(hs_aws_auto_imports_total{result="applied"}[24h]) > 0
+increase(hs_auto_imports_total{result="applied"}[24h]) > 0
 ```
 No `for:`, severity `info`.
 
@@ -528,6 +555,11 @@ objects in `Apply` mode. It is a digest, not an incident: route it to a chat cha
 a pager. The other `result` values are `dryrun`, `skipped` (a `skip` rule matched) and
 `no_owner` (no rule could resolve the required tags, so the resource was deliberately left
 alone — those show up as `UnmanagedNetworkResource` instead).
+
+All four `result` series exist at zero for every target of a scope that runs the policy (mode
+`DryRun` or `Apply`), from its first sync on. That is what lets the first import after a
+restart or a change of leader count: a series that first appeared at 1, as it did up to 0.8,
+had not increased as far as `increase()` could tell, and the digest left that import out.
 
 **Confirm.**
 
@@ -548,7 +580,7 @@ AWS — the operator will not remove a tag it applied (or any other).
 
 **What this metric does not tell you.** It counts *decisions that became objects*, not tags
 that reached AWS. An import whose `CreateTags` failed still counted here; its state is
-`Failed` with the error in `status.error`, and `hs_aws_resource_import_ready` is the metric for
+`Failed` with the error in `status.error`, and `hs_resource_import_ready` is the metric for
 that outcome — [ResourceImportNotSettled](#resourceimportnotsettled) pages on it.
 
 **Safe to ignore when.** Always, as an alert. The one case worth acting on is seeing
@@ -563,10 +595,11 @@ Worth adding locally; the metrics exist, the rules do not. (Operator down used t
 
 | Condition | Expression |
 |---|---|
-| A target failing repeatedly rather than once | `increase(hs_aws_target_sync_errors_total[1h]) > 3` (throttled discoveries do not count here) |
-| Throttling pressure before anything goes stale | `sum by (account, region) (rate(hs_aws_api_throttled_total[15m])) > 0.05` |
-| Subnets missing required tags | `hs_aws_subnet_missing_required_tags > 0` |
-| Policy cannot attribute anything | `increase(hs_aws_auto_imports_total{result="no_owner"}[24h]) > 0` |
+| A target failing repeatedly rather than once | `increase(hs_target_sync_errors_total[1h]) > 3` (throttled discoveries do not count here) |
+| Throttling pressure before anything goes stale | `sum by (account, region) (rate(hs_api_throttled_total[15m])) > 0.05` |
+| Subnets missing required tags | `hs_subnet_missing_required_tags > 0` |
+| Policy cannot attribute anything | `increase(hs_auto_imports_total{result="no_owner"}[24h]) > 0` |
+| Old-group objects nothing migrates (a GitOps tool re-applying an unconverted manifest after 0.9) | `sum(hs_migration_pending_objects) > 0` |
 
 `ResourceImport` and `SubnetClaim` failures used to have no metric at all; they have
 [SubnetClaimNotReady](#subnetclaimnotready) and [ResourceImportNotSettled](#resourceimportnotsettled)

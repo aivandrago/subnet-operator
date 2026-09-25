@@ -23,4 +23,4 @@ metadata:
   name: team-payments
 # notes:
 # document 1: VPC vpc-0aa11bb2cc33dd44e: left out; the operator discovers it again as a network.hypersurgery.dev object
-# document 2: SubnetClaim default/payments: status.allocations are not written to a manifest; the migration controller copies them in the cluster
+# document 2: SubnetClaim default/payments: status.allocations are not written to a manifest: a claim applied from it starts without these reservations. Only 0.8 migrated them, in the cluster

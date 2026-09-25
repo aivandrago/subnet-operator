@@ -138,7 +138,7 @@ func scaleInventory(c scaleConfig) (targets []inventory.TargetKey, snapshots map
 					cidr = "10.200.0.0/16"
 				}
 				vpcIndex++
-				snap.VPCs = append(snap.VPCs, inventory.VPC{
+				snap.Networks = append(snap.Networks, inventory.Network{
 					ID: fmt.Sprintf("vpc-%s%s%02d", account[6:], regionCode(region), v), Account: account,
 					Region: region, State: "available", CIDRBlocks: []string{cidr},
 					Tags: map[string]string{
@@ -149,7 +149,7 @@ func scaleInventory(c scaleConfig) (targets []inventory.TargetKey, snapshots map
 				})
 			}
 			for s := range nSubnets {
-				vpc := snap.VPCs[s%nVPCs]
+				vpc := snap.Networks[s%nVPCs]
 				prefix := strings.Split(vpc.CIDRBlocks[0], ".")
 				third, _ := strconv.Atoi(prefix[2])
 				tags := map[string]string{
@@ -164,22 +164,26 @@ func scaleInventory(c scaleConfig) (targets []inventory.TargetKey, snapshots map
 					tags["hs/owner"] = vpc.Tags["hs/owner"]
 				}
 				snap.Subnets = append(snap.Subnets, inventory.Subnet{
-					ID: fmt.Sprintf("subnet-%s%s%02d", account[6:], regionCode(region), s), VPCID: vpc.ID,
+					ID: fmt.Sprintf("subnet-%s%s%02d", account[6:], regionCode(region), s), NetworkID: vpc.ID,
 					Account: account, Region: region, State: "available",
-					CIDRBlock:        fmt.Sprintf("%s.%s.%d.0/24", prefix[0], prefix[1], third+s/nVPCs),
-					AvailabilityZone: region + string(rune('a'+s%3)), AvailabilityZoneID: fmt.Sprintf("az%d", s%3+1),
-					AvailableIPs: int64(100 + s), Public: s%3 == 0,
-					RouteTableID: fmt.Sprintf("rtb-%s%s%02d", account[6:], regionCode(region), s%nVPCs), Tags: tags,
+					CIDRBlock: fmt.Sprintf("%s.%s.%d.0/24", prefix[0], prefix[1], third+s/nVPCs),
+					Zone:      region + string(rune('a'+s%3)),
+					TotalIPs:  new(int64(251)), AvailableIPs: new(int64(100 + s)),
+					OwnershipSource: networkv1beta1.OwnershipSourceSubnet,
+					AWS: &networkv1beta1.AWSSubnetStatus{AvailabilityZoneID: fmt.Sprintf("az%d", s%3+1), Public: s%3 == 0,
+						RouteTableID: fmt.Sprintf("rtb-%s%s%02d", account[6:], regionCode(region), s%nVPCs)},
+					Tags: tags,
 				})
 			}
-			def := inventory.VPC{ID: fmt.Sprintf("vpc-%s%sdf", account[6:], regionCode(region)), Account: account,
-				Region: region, State: "available", IsDefault: true, CIDRBlocks: []string{"172.31.0.0/16"}}
-			snap.UnmanagedVPCs = []inventory.VPC{def}
+			def := inventory.Network{ID: fmt.Sprintf("vpc-%s%sdf", account[6:], regionCode(region)), Account: account,
+				Region: region, State: "available", CIDRBlocks: []string{"172.31.0.0/16"},
+				AWS: &networkv1beta1.AWSNetworkStatus{IsDefault: true}}
+			snap.UnmanagedNetworks = []inventory.Network{def}
 			for z := range 3 {
 				snap.UnmanagedSubnets = append(snap.UnmanagedSubnets, inventory.Subnet{
-					ID: fmt.Sprintf("subnet-%s%sd%d", account[6:], regionCode(region), z), VPCID: def.ID,
+					ID: fmt.Sprintf("subnet-%s%sd%d", account[6:], regionCode(region), z), NetworkID: def.ID,
 					Account: account, Region: region, State: "available",
-					CIDRBlock: fmt.Sprintf("172.31.%d.0/20", z*16), AvailableIPs: 4091,
+					CIDRBlock: fmt.Sprintf("172.31.%d.0/20", z*16), TotalIPs: new(int64(4091)), AvailableIPs: new(int64(4091)),
 				})
 			}
 			snapshots[key] = snap
@@ -256,8 +260,8 @@ func (d *scaleDiscoverer) discovered() (targets int, wall time.Duration) {
 }
 
 func copySnapshot(s *inventory.Snapshot) *inventory.Snapshot {
-	out := &inventory.Snapshot{VPCs: slices.Clone(s.VPCs), Subnets: slices.Clone(s.Subnets),
-		UnmanagedVPCs: slices.Clone(s.UnmanagedVPCs), UnmanagedSubnets: slices.Clone(s.UnmanagedSubnets)}
+	out := &inventory.Snapshot{Networks: slices.Clone(s.Networks), Subnets: slices.Clone(s.Subnets),
+		UnmanagedNetworks: slices.Clone(s.UnmanagedNetworks), UnmanagedSubnets: slices.Clone(s.UnmanagedSubnets)}
 	return out
 }
 
@@ -327,7 +331,7 @@ type roundTripperFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
-// resourceOf turns /apis/aws.hypersurgery/v1alpha1/subnets/subnet-1/status into
+// resourceOf turns /apis/network.hypersurgery.dev/v1beta1/subnets/subnet-1/status into
 // "subnets/status" and a list into "subnets".
 func resourceOf(path string) string {
 	parts := strings.Split(strings.Trim(path, "/"), "/")
@@ -492,7 +496,7 @@ var _ = Describe("NetworkScope at the documented capacity", Label("scale"), Orde
 		shape = scaleConfigFromEnv()
 		keys, snapshots = scaleInventory(shape)
 		for _, s := range snapshots {
-			nVPCs += len(s.VPCs)
+			nVPCs += len(s.Networks)
 			nSubnets += len(s.Subnets)
 		}
 		report = append(report, fmt.Sprintf("%d targets (%d accounts × %d regions), %d VPCs, %d subnets, "+
@@ -527,8 +531,8 @@ var _ = Describe("NetworkScope at the documented capacity", Label("scale"), Orde
 
 		clk = clocktesting.NewFakeClock(time.Now().Truncate(time.Second))
 		reconciler = &NetworkScopeReconciler{Client: mgr.GetClient(), APIReader: mgr.GetAPIReader(),
-			Scheme: mgr.GetScheme(), Discoverer: discoverer, Concurrency: shape.concurrency, Clock: clk,
-			Recorder: mgr.GetEventRecorder("aws.hypersurgery/networkscope")}
+			Scheme: mgr.GetScheme(), Providers: awsProviders(discoverer, nil, nil), Concurrency: shape.concurrency, Clock: clk,
+			Recorder: mgr.GetEventRecorder("network.hypersurgery.dev/networkscope")}
 		// The top of each delay, so the retry below lands exactly when the backoff says.
 		reconciler.backoff.jitter = func() float64 { return 0.999999 }
 
@@ -600,9 +604,9 @@ var _ = Describe("NetworkScope at the documented capacity", Label("scale"), Orde
 			snap := discoverer.snapshots[k]
 			for i := range snap.Subnets {
 				if float64((i*37+len(k.Account))%100) < shape.churnFraction*100 {
-					snap.Subnets[i].AvailableIPs--
+					snap.Subnets[i].AvailableIPs = new(*snap.Subnets[i].AvailableIPs - 1)
 					changedSubnets++
-					changedVPCs[snap.Subnets[i].VPCID] = true
+					changedVPCs[snap.Subnets[i].NetworkID] = true
 				}
 			}
 		}

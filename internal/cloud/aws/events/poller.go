@@ -42,7 +42,7 @@ type Sink func(ctx context.Context, changed []inventory.TargetKey) error
 // CreationSink receives newly created resources and who created them. It is called as the
 // events arrive rather than on the debounce tick, because the attribution is what makes the
 // resync that follows useful.
-type CreationSink func(ctx context.Context, created []Creation)
+type CreationSink func(ctx context.Context, created []inventory.Creation)
 
 // Poller long-polls an SQS queue fed by EventBridge and flushes changed targets to the sink
 // every Debounce interval, so a burst of API calls causes one resync per target.
@@ -137,7 +137,7 @@ func (p *Poller) receiveOnce(ctx context.Context) ([]inventory.TargetKey, error)
 		return nil, err
 	}
 	var keys []inventory.TargetKey
-	var created []Creation
+	var created []inventory.Creation
 	var entries []sqstypes.DeleteMessageBatchRequestEntry
 	for i, m := range out.Messages {
 		key, creation, ok, err := ParseWithCreation(aws.ToString(m.Body))

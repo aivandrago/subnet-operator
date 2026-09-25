@@ -33,6 +33,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
+	awscloud "hypersurgery.dev/subnet-operator/internal/cloud/aws"
+	"hypersurgery.dev/subnet-operator/internal/inventory"
+	"hypersurgery.dev/subnet-operator/internal/provider"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -46,6 +49,13 @@ var (
 	cfg       *rest.Config
 	k8sClient client.Client
 )
+
+// awsProviders is the operator's provider set, AWS alone, with fakes in place of EC2: the
+// controllers see the provider's real rules (identities, claim and import checks,
+// capabilities) and the test's discovery and writes.
+func awsProviders(d inventory.Discoverer, w inventory.SubnetWriter, o inventory.OwnershipWriter) *provider.Registry {
+	return provider.MustRegistry(awscloud.NewProvider(awscloud.Clients{Discoverer: d, SubnetWriter: w, OwnershipWriter: o}, nil))
+}
 
 func TestControllers(t *testing.T) {
 	RegisterFailHandler(Fail)

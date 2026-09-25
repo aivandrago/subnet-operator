@@ -22,12 +22,11 @@ import (
 	"testing"
 	"time"
 
-	"hypersurgery.dev/subnet-operator/internal/events"
 	"hypersurgery.dev/subnet-operator/internal/inventory"
 )
 
-func creation(id, principal string) events.Creation {
-	return events.Creation{
+func creation(id, principal string) inventory.Creation {
+	return inventory.Creation{
 		Target:     inventory.TargetKey{Account: "111111111111", Region: "eu-central-1"},
 		ResourceID: id, Principal: principal, EventName: "CreateSubnet",
 	}
@@ -35,7 +34,7 @@ func creation(id, principal string) events.Creation {
 
 func TestCreatorCacheRecordsAndLooksUp(t *testing.T) {
 	c := &CreatorCache{}
-	c.Record(context.Background(), []events.Creation{creation("subnet-1", "assumed-role/payments/maria.k")})
+	c.Record(context.Background(), []inventory.Creation{creation("subnet-1", "assumed-role/payments/maria.k")})
 
 	if got := c.Lookup("subnet-1"); got != "assumed-role/payments/maria.k" {
 		t.Errorf("lookup = %q", got)
@@ -47,7 +46,7 @@ func TestCreatorCacheRecordsAndLooksUp(t *testing.T) {
 
 func TestCreatorCacheIgnoresIncompleteEvents(t *testing.T) {
 	c := &CreatorCache{}
-	c.Record(context.Background(), []events.Creation{
+	c.Record(context.Background(), []inventory.Creation{
 		creation("", "assumed-role/x"),
 		creation("subnet-2", ""),
 	})
@@ -59,7 +58,7 @@ func TestCreatorCacheIgnoresIncompleteEvents(t *testing.T) {
 func TestCreatorCacheExpires(t *testing.T) {
 	now := time.Now()
 	c := &CreatorCache{now: func() time.Time { return now }}
-	c.Record(context.Background(), []events.Creation{creation("subnet-3", "assumed-role/ops/anton")})
+	c.Record(context.Background(), []inventory.Creation{creation("subnet-3", "assumed-role/ops/anton")})
 
 	now = now.Add(creatorCacheTTL + time.Minute)
 	if got := c.Lookup("subnet-3"); got != "" {
@@ -67,7 +66,7 @@ func TestCreatorCacheExpires(t *testing.T) {
 	}
 
 	// The next write sweeps the expired entry out rather than letting the map grow.
-	c.Record(context.Background(), []events.Creation{creation("subnet-4", "assumed-role/ops/anton")})
+	c.Record(context.Background(), []inventory.Creation{creation("subnet-4", "assumed-role/ops/anton")})
 	if _, ok := c.entries["subnet-3"]; ok {
 		t.Error("the expired entry is still in the map")
 	}
@@ -80,7 +79,7 @@ func TestCreatorCacheStaysBounded(t *testing.T) {
 	// Fill past the limit, each entry a second newer than the last.
 	for i := range creatorCacheSize + 50 {
 		now = now.Add(time.Second)
-		c.Record(context.Background(), []events.Creation{creation(fmt.Sprintf("subnet-%d", i), "assumed-role/ops/anton")})
+		c.Record(context.Background(), []inventory.Creation{creation(fmt.Sprintf("subnet-%d", i), "assumed-role/ops/anton")})
 	}
 
 	if len(c.entries) > creatorCacheSize {

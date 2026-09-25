@@ -20,6 +20,7 @@ package metrics
 
 import (
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -28,94 +29,139 @@ import (
 	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 
 	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
+	"hypersurgery.dev/subnet-operator/internal/audit"
 )
 
+// Every metric is named hs_<name> and carries a provider label; it names what it measures in
+// words every cloud shares: network_id and zone (ADR 0002 §7). The hs_aws_* names 0.8 exported
+// were removed in 0.9 (docs/operations/upgrades.md has the mapping).
 const (
-	namespace = "hs_aws"
+	prefix = "hs_"
 
-	labelScope   = "scope"
-	labelAccount = "account"
-	labelRegion  = "region"
-	labelVPC     = "vpc_id"
-	labelName    = "name"
-	labelOwner   = "owner"
-	labelEnv     = "env"
-	labelKind    = "kind"
+	labelProvider = "provider"
+	labelScope    = "scope"
+	labelAccount  = "account"
+	labelRegion   = "region"
+	labelNetwork  = "network_id"
+	labelSubnet   = "subnet_id"
+	labelZone     = "zone"
+	labelName     = "name"
+	labelOwner    = "owner"
+	labelEnv      = "env"
+	labelKind     = "kind"
+	labelReason   = "reason"
+	labelResult   = "result"
 	// labelNamespace is the Kubernetes namespace of a claim or an import, not the metric prefix.
 	labelNamespace = "namespace"
 )
 
+// Kinds of unmanaged resource, the values of the kind label.
+const (
+	KindNetwork = "network"
+	KindSubnet  = "subnet"
+)
+
+// autoImportResults are the values of hs_auto_imports_total's result label: the audit log's
+// results for a policy verdict, so a metric and the audit lines behind it use one word.
+var autoImportResults = []string{audit.ResultApplied, audit.ResultDryRun, audit.ResultSkipped, audit.ResultNoOwner}
+
+// family describes one metric: its name without the prefix, its help text and its labels.
+type family struct {
+	name, help string
+	labels     []string
+}
+
+// gauge is a gauge vector with the family it was built from.
+type gauge struct {
+	family
+	vec *prometheus.GaugeVec
+}
+
+func newGauge(f family) *gauge {
+	return &gauge{family: f,
+		vec: prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: prefix + f.name, Help: f.help}, f.labels)}
+}
+
+func (g *gauge) set(l prometheus.Labels, v float64) { g.vec.With(l).Set(v) }
+
+func (g *gauge) deletePartialMatch(l prometheus.Labels) { g.vec.DeletePartialMatch(l) }
+
+// counter is a counter vector with the family it was built from.
+type counter struct {
+	family
+	vec *prometheus.CounterVec
+}
+
+func newCounter(f family) *counter {
+	return &counter{family: f,
+		vec: prometheus.NewCounterVec(prometheus.CounterOpts{Name: prefix + f.name, Help: f.help}, f.labels)}
+}
+
+func (c *counter) inc(l prometheus.Labels) { c.vec.With(l).Inc() }
+
+// touch makes sure the series exists, at 0 if nothing was counted yet. increase() needs a
+// sample before the first rise to see it: a series that first appears at 1 has not increased
+// as far as Prometheus can tell, and an alert on the increase stays silent.
+func (c *counter) touch(l prometheus.Labels) { c.vec.With(l) }
+
 var (
-	subnetLabels = []string{labelScope, labelAccount, labelRegion, labelVPC, "subnet_id", labelName,
-		"cidr", "az", labelOwner, labelEnv, "tier", "public"}
-	vpcLabels    = []string{labelScope, labelAccount, labelRegion, labelVPC, labelName, labelOwner, labelEnv}
-	targetLabels = []string{labelScope, labelAccount, labelRegion}
+	subnetLabels = []string{labelProvider, labelScope, labelAccount, labelRegion, labelNetwork, labelSubnet,
+		labelName, "cidr", labelZone, labelOwner, labelEnv, "tier", "public"}
+	networkLabels = []string{labelProvider, labelScope, labelAccount, labelRegion, labelNetwork, labelName,
+		labelOwner, labelEnv}
+	targetLabels = []string{labelProvider, labelScope, labelAccount, labelRegion}
 
-	subnetAvailableIPs = prometheus.NewGaugeVec(prometheus.GaugeOpts{
-		Namespace: namespace, Name: "subnet_available_ips",
-		Help: "Free IPv4 addresses in the subnet.",
-	}, subnetLabels)
-	subnetTotalIPs = prometheus.NewGaugeVec(prometheus.GaugeOpts{
-		Namespace: namespace, Name: "subnet_total_ips",
-		Help: "Usable IPv4 addresses in the subnet (CIDR size minus the 5 addresses AWS reserves).",
-	}, subnetLabels)
-	subnetMissingTags = prometheus.NewGaugeVec(prometheus.GaugeOpts{
-		Namespace: namespace, Name: "subnet_missing_required_tags",
-		Help: "Number of required tags that are absent or empty on the subnet.",
-	}, subnetLabels)
-	vpcOverlaps = prometheus.NewGaugeVec(prometheus.GaugeOpts{
-		Namespace: namespace, Name: "vpc_cidr_overlaps",
-		Help: "Number of other VPCs in the scope whose CIDRs overlap this VPC.",
-	}, vpcLabels)
-	targetUp = prometheus.NewGaugeVec(prometheus.GaugeOpts{
-		Namespace: namespace, Name: "target_up",
-		Help: "1 if the account/region is reachable: its last discovery succeeded or was only throttled. 0 otherwise.",
-	}, targetLabels)
-	targetSyncErrors = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Namespace: namespace, Name: "target_sync_errors_total",
-		Help: "Failed discoveries of the account/region, not counting throttled ones.",
-	}, targetLabels)
+	subnetAvailableIPs = newGauge(family{name: "subnet_available_ips",
+		help: "Free IPv4 addresses in the subnet.", labels: subnetLabels})
+	subnetTotalIPs = newGauge(family{name: "subnet_total_ips",
+		help:   "Usable IPv4 addresses in the subnet: the CIDR size minus the addresses the provider reserves (5 on AWS).",
+		labels: subnetLabels})
+	subnetMissingTags = newGauge(family{name: "subnet_missing_required_tags",
+		help: "Number of required tags that are absent or empty on the subnet.", labels: subnetLabels})
+	// The name follows the kind, Network, rather than 0.8's VPC.
+	networkOverlaps = newGauge(family{name: "network_cidr_overlaps",
+		help: "Number of other networks in the scope whose CIDRs overlap this network.", labels: networkLabels})
+	targetUp = newGauge(family{name: "target_up",
+		help:   "1 if the account/region is reachable: its last discovery succeeded or was only throttled. 0 otherwise.",
+		labels: targetLabels})
+	targetSyncErrors = newCounter(family{name: "target_sync_errors_total",
+		help: "Failed discoveries of the account/region, not counting throttled ones.", labels: targetLabels})
 	// A throttled target is reachable but stale. It gets its own gauge rather than target_up
-	// == 0, because the cause and the fix differ: an unreachable account needs its IAM fixed,
-	// a throttled one needs less load, and it recovers on its own.
-	targetThrottled = prometheus.NewGaugeVec(prometheus.GaugeOpts{
-		Namespace: namespace, Name: "target_throttled",
-		Help: "1 while the account/region is backed off because its last discovery was throttled, 0 otherwise.",
-	}, targetLabels)
-	apiThrottled = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Namespace: namespace, Name: "api_throttled_total",
-		Help: "Cloud API calls throttled for the account/region, counted per attempt, including attempts that were retried successfully.",
-	}, []string{labelScope, labelAccount, labelRegion, "operation"})
-	scopeLastSync = prometheus.NewGaugeVec(prometheus.GaugeOpts{
-		Namespace: namespace, Name: "scope_last_sync_timestamp_seconds",
-		Help: "Unix time of the last finished sync of the scope.",
-	}, []string{labelScope})
+	// == 0, because the cause and the fix differ: an unreachable account needs its credentials
+	// fixed, a throttled one needs less load, and it recovers on its own.
+	targetThrottled = newGauge(family{name: "target_throttled",
+		help:   "1 while the account/region is backed off because its last discovery was throttled, 0 otherwise.",
+		labels: targetLabels})
+	apiThrottled = newCounter(family{name: "api_throttled_total",
+		help:   "Cloud API calls throttled for the account/region, counted per attempt, including attempts that were retried successfully.",
+		labels: []string{labelProvider, labelScope, labelAccount, labelRegion, "operation"}})
+	scopeLastSync = newGauge(family{name: "scope_last_sync_timestamp_seconds",
+		help: "Unix time of the last finished sync of the scope.", labels: []string{labelProvider, labelScope}})
 
-	unmanagedLabels  = []string{labelScope, labelAccount, labelRegion, labelKind}
-	unmanagedCurrent = prometheus.NewGaugeVec(prometheus.GaugeOpts{
-		Namespace: namespace, Name: "unmanaged_resources",
-		Help: "Discovered resources without the managed tag: nobody has taken responsibility for them.",
-	}, unmanagedLabels)
-	unmanagedSeen = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Namespace: namespace, Name: "unmanaged_resources_total",
-		Help: "Unmanaged resources seen for the first time. Alert on an increase: something appeared that nobody owns.",
-	}, unmanagedLabels)
-	autoImports = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Namespace: namespace, Name: "auto_imports_total",
-		Help: "Decisions the auto-import policy took, by result: applied, dryrun, skipped or no_owner.",
-	}, []string{labelScope, labelAccount, labelRegion, "result"})
+	unmanagedLabels  = []string{labelProvider, labelScope, labelAccount, labelRegion, labelKind}
+	unmanagedCurrent = newGauge(family{name: "unmanaged_resources",
+		help:   "Discovered resources without the managed tag: nobody has taken responsibility for them.",
+		labels: unmanagedLabels})
+	unmanagedSeen = newCounter(family{name: "unmanaged_resources_total",
+		help:   "Unmanaged resources seen for the first time. Alert on an increase: something appeared that nobody owns.",
+		labels: unmanagedLabels})
+	autoImports = newCounter(family{name: "auto_imports_total",
+		help:   "Decisions the auto-import policy took, by result: applied, dryrun, skipped or no_owner.",
+		labels: []string{labelProvider, labelScope, labelAccount, labelRegion, labelResult}})
 
 	// Claims and imports are requests someone made and is waiting on. Without these a claim
-	// stuck on NoSpace or an import that AWS refused was visible only in the object's status,
-	// so nothing could page on it.
-	claimReady = prometheus.NewGaugeVec(prometheus.GaugeOpts{
-		Namespace: namespace, Name: "subnet_claim_ready",
-		Help: "1 when the SubnetClaim is fulfilled, 0 while it is not; reason is the Ready condition's.",
-	}, []string{labelNamespace, labelName, "reason"})
-	importReady = prometheus.NewGaugeVec(prometheus.GaugeOpts{
-		Namespace: namespace, Name: "resource_import_ready",
-		Help: "1 when the ResourceImport is settled (applied, or recorded as a dry run), 0 while it is not.",
-	}, []string{labelNamespace, labelName, "state", "reason"})
+	// stuck on NoSpace or an import the cloud refused was visible only in the object's status,
+	// so nothing could page on it. provider is their scope's, empty while the scope is missing.
+	claimReady = newGauge(family{name: "subnet_claim_ready",
+		help:   "1 when the SubnetClaim is fulfilled, 0 while it is not; reason is the Ready condition's.",
+		labels: []string{labelProvider, labelNamespace, labelName, labelReason}})
+	importReady = newGauge(family{name: "resource_import_ready",
+		help:   "1 when the ResourceImport is settled (applied, or recorded as a dry run), 0 while it is not.",
+		labels: []string{labelProvider, labelNamespace, labelName, "state", labelReason}})
+
+	gauges = []*gauge{subnetAvailableIPs, subnetTotalIPs, subnetMissingTags, networkOverlaps, targetUp,
+		targetThrottled, scopeLastSync, unmanagedCurrent, claimReady, importReady}
+	counters = []*counter{targetSyncErrors, apiThrottled, unmanagedSeen, autoImports}
 )
 
 // seenUnmanaged remembers which resources have already been counted, per scope, so the
@@ -126,9 +172,18 @@ var seenUnmanaged = struct {
 }{m: map[string]map[string]bool{}}
 
 func init() {
-	ctrlmetrics.Registry.MustRegister(subnetAvailableIPs, subnetTotalIPs, subnetMissingTags,
-		vpcOverlaps, targetUp, targetSyncErrors, targetThrottled, apiThrottled, scopeLastSync,
-		unmanagedCurrent, unmanagedSeen, autoImports, claimReady, importReady)
+	for _, g := range gauges {
+		ctrlmetrics.Registry.MustRegister(g.vec)
+	}
+	for _, c := range counters {
+		ctrlmetrics.Registry.MustRegister(c.vec)
+	}
+}
+
+// ProviderLabel is the value of the provider label for a provider: lowercase, like other label
+// values ("aws", later "gcp" and "azure").
+func ProviderLabel(p networkv1beta1.Provider) string {
+	return strings.ToLower(string(p))
 }
 
 // TargetResult is the state of one account/region after a sync.
@@ -145,14 +200,16 @@ type TargetResult struct {
 
 // SetScope replaces every inventory series of the scope with the given objects,
 // so renamed, retagged or removed subnets do not leave stale series behind.
-func SetScope(scope string, vpcs []networkv1beta1.Network, subnets []networkv1beta1.Subnet, targets []TargetResult, lastSync float64) {
+func SetScope(scope string, provider networkv1beta1.Provider, networks []networkv1beta1.Network,
+	subnets []networkv1beta1.Subnet, targets []TargetResult, lastSync float64) {
 	forgetSeries(scope)
+	p := ProviderLabel(provider)
 	for _, s := range subnets {
 		l := prometheus.Labels{
-			labelScope: scope, labelAccount: s.Spec.Account, labelRegion: s.Spec.Region, labelVPC: s.Spec.NetworkID,
-			"subnet_id": s.Spec.ID, labelName: s.Status.Name, "cidr": s.Status.CIDRBlock,
-			"az": s.Status.Zone, labelOwner: s.Status.Owner, labelEnv: s.Status.Env,
-			"tier": s.Status.Tier, "public": strconv.FormatBool(s.Status.AWSStatus().Public),
+			labelProvider: p, labelScope: scope, labelAccount: s.Spec.Account, labelRegion: s.Spec.Region,
+			labelNetwork: s.Spec.NetworkID, labelSubnet: s.Spec.ID, labelName: s.Status.Name,
+			"cidr": s.Status.CIDRBlock, labelZone: s.Status.Zone, labelOwner: s.Status.Owner,
+			labelEnv: s.Status.Env, "tier": s.Status.Tier, "public": strconv.FormatBool(s.Status.AWSStatus().Public),
 		}
 		// IPv4 capacity only exists for a subnet that has an IPv4 CIDR. An IPv6-only subnet
 		// reports zero usable and zero free IPv4 addresses, which reads as "full" to anything
@@ -162,34 +219,34 @@ func SetScope(scope string, vpcs []networkv1beta1.Network, subnets []networkv1be
 		// The same goes for a provider that could not say how many addresses are free: no
 		// series is the truth, zero would be a full subnet.
 		if s.Status.CIDRBlock != "" && s.Status.AvailableIPs != nil && s.Status.TotalIPs != nil {
-			subnetAvailableIPs.With(l).Set(float64(*s.Status.AvailableIPs))
-			subnetTotalIPs.With(l).Set(float64(*s.Status.TotalIPs))
+			subnetAvailableIPs.set(l, float64(*s.Status.AvailableIPs))
+			subnetTotalIPs.set(l, float64(*s.Status.TotalIPs))
 		}
-		subnetMissingTags.With(l).Set(float64(len(s.Status.MissingTags)))
+		subnetMissingTags.set(l, float64(len(s.Status.MissingTags)))
 	}
-	for _, v := range vpcs {
-		vpcOverlaps.With(prometheus.Labels{
-			labelScope: scope, labelAccount: v.Spec.Account, labelRegion: v.Spec.Region, labelVPC: v.Spec.ID,
-			labelName: v.Status.Name, labelOwner: v.Status.Owner, labelEnv: v.Status.Env,
-		}).Set(float64(len(v.Status.OverlapsWith)))
+	for _, n := range networks {
+		networkOverlaps.set(prometheus.Labels{
+			labelProvider: p, labelScope: scope, labelAccount: n.Spec.Account, labelRegion: n.Spec.Region,
+			labelNetwork: n.Spec.ID, labelName: n.Status.Name, labelOwner: n.Status.Owner, labelEnv: n.Status.Env,
+		}, float64(len(n.Status.OverlapsWith)))
 	}
 	for _, t := range targets {
-		l := prometheus.Labels{labelScope: scope, labelAccount: t.Account, labelRegion: t.Region}
+		l := prometheus.Labels{labelProvider: p, labelScope: scope, labelAccount: t.Account, labelRegion: t.Region}
+		up, throttled := 0.0, 0.0
 		if t.OK {
-			targetUp.With(l).Set(1)
-		} else {
-			targetUp.With(l).Set(0)
+			up = 1
 		}
 		if t.Throttled {
-			targetThrottled.With(l).Set(1)
-		} else {
-			targetThrottled.With(l).Set(0)
+			throttled = 1
 		}
+		targetUp.set(l, up)
+		targetThrottled.set(l, throttled)
+		targetSyncErrors.touch(l)
 		if t.Synced && !t.OK {
-			targetSyncErrors.With(l).Inc()
+			targetSyncErrors.inc(l)
 		}
 	}
-	scopeLastSync.With(prometheus.Labels{labelScope: scope}).Set(lastSync)
+	scopeLastSync.set(prometheus.Labels{labelProvider: p, labelScope: scope}, lastSync)
 }
 
 // Forget removes every series of the scope and what it remembered, for a scope that is gone.
@@ -207,7 +264,7 @@ func Forget(scope string) {
 // of resources already seen is left alone, because the counter beside the gauge must rise once
 // per resource rather than once per resync.
 func ClearUnmanaged(scope string) {
-	unmanagedCurrent.DeletePartialMatch(prometheus.Labels{labelScope: scope})
+	unmanagedCurrent.deletePartialMatch(prometheus.Labels{labelScope: scope})
 }
 
 // forgetSeries drops the gauges so a sync can rebuild them. It deliberately keeps the set of
@@ -215,9 +272,9 @@ func ClearUnmanaged(scope string) {
 // the same resource again on every resync.
 func forgetSeries(scope string) {
 	l := prometheus.Labels{labelScope: scope}
-	for _, g := range []*prometheus.GaugeVec{subnetAvailableIPs, subnetTotalIPs, subnetMissingTags,
-		vpcOverlaps, targetUp, targetThrottled, scopeLastSync} {
-		g.DeletePartialMatch(l)
+	for _, g := range []*gauge{subnetAvailableIPs, subnetTotalIPs, subnetMissingTags,
+		networkOverlaps, targetUp, targetThrottled, scopeLastSync} {
+		g.deletePartialMatch(l)
 	}
 }
 
@@ -242,11 +299,14 @@ func SeedUnmanaged(scope string, known []string) {
 	seenUnmanaged.m[scope] = seen
 }
 
-// Unmanaged records what one account/region holds outside the selector. ids are the resource
-// identifiers, so a resource that was already there is not counted as newly seen again.
-func Unmanaged(scope, account, region, kind string, ids []string) {
-	l := prometheus.Labels{labelScope: scope, labelAccount: account, labelRegion: region, labelKind: kind}
-	unmanagedCurrent.With(l).Set(float64(len(ids)))
+// Unmanaged records what one account/region holds outside the selector. kind is KindNetwork or
+// KindSubnet; ids are the resource identifiers, so a resource that was already there is not
+// counted as newly seen again.
+func Unmanaged(scope string, provider networkv1beta1.Provider, account, region, kind string, ids []string) {
+	l := prometheus.Labels{labelProvider: ProviderLabel(provider), labelScope: scope, labelAccount: account,
+		labelRegion: region, labelKind: kind}
+	unmanagedCurrent.set(l, float64(len(ids)))
+	unmanagedSeen.touch(l)
 
 	seenUnmanaged.mu.Lock()
 	defer seenUnmanaged.mu.Unlock()
@@ -260,22 +320,37 @@ func Unmanaged(scope, account, region, kind string, ids []string) {
 			continue
 		}
 		seen[id] = true
-		unmanagedSeen.With(l).Inc()
+		unmanagedSeen.inc(l)
 	}
 }
 
 // APIThrottled counts one throttled cloud API attempt for the account/region.
-func APIThrottled(scope, account, region, operation string) {
-	apiThrottled.With(prometheus.Labels{
-		labelScope: scope, labelAccount: account, labelRegion: region, "operation": operation,
-	}).Inc()
+func APIThrottled(scope string, provider networkv1beta1.Provider, account, region, operation string) {
+	apiThrottled.inc(prometheus.Labels{
+		labelProvider: ProviderLabel(provider), labelScope: scope, labelAccount: account, labelRegion: region,
+		"operation": operation,
+	})
+}
+
+// AutoImportTarget prepares the auto-import counter of an account/region whose scope runs the
+// policy: every result starts at 0, so the first decision after a start is a rise that
+// increase() can see. Without it the first applied import after a restart appeared at 1 and
+// the AutoImportedResources digest left it out.
+func AutoImportTarget(scope string, provider networkv1beta1.Provider, account, region string) {
+	for _, result := range autoImportResults {
+		autoImports.touch(prometheus.Labels{
+			labelProvider: ProviderLabel(provider), labelScope: scope, labelAccount: account, labelRegion: region,
+			labelResult: result,
+		})
+	}
 }
 
 // AutoImport counts one decision of the auto-import policy.
-func AutoImport(scope, account, region, result string) {
-	autoImports.With(prometheus.Labels{
-		labelScope: scope, labelAccount: account, labelRegion: region, "result": result,
-	}).Inc()
+func AutoImport(scope string, provider networkv1beta1.Provider, account, region, result string) {
+	autoImports.inc(prometheus.Labels{
+		labelProvider: ProviderLabel(provider), labelScope: scope, labelAccount: account, labelRegion: region,
+		labelResult: result,
+	})
 }
 
 // readiness turns an object's conditions into the gauge value and the reason label: the Ready
@@ -291,28 +366,32 @@ func readiness(conds []metav1.Condition) (float64, string) {
 	return 0, c.Reason
 }
 
-// ClaimReady records whether a SubnetClaim is fulfilled. The object's previous series is
-// dropped first, so a claim whose reason changed does not leave the old one behind.
-func ClaimReady(ns, name string, conds []metav1.Condition) {
-	claimReady.DeletePartialMatch(prometheus.Labels{labelNamespace: ns, labelName: name})
+// ClaimReady records whether a SubnetClaim is fulfilled. provider is its scope's, empty when
+// the scope does not exist. The object's previous series is dropped first, so a claim whose
+// reason or provider changed does not leave the old one behind.
+func ClaimReady(ns, name string, provider networkv1beta1.Provider, conds []metav1.Condition) {
+	ForgetClaim(ns, name)
 	v, reason := readiness(conds)
-	claimReady.WithLabelValues(ns, name, reason).Set(v)
+	claimReady.set(prometheus.Labels{labelProvider: ProviderLabel(provider), labelNamespace: ns,
+		labelName: name, labelReason: reason}, v)
 }
 
 // ForgetClaim drops a SubnetClaim that no longer exists.
 func ForgetClaim(ns, name string) {
-	claimReady.DeletePartialMatch(prometheus.Labels{labelNamespace: ns, labelName: name})
+	claimReady.deletePartialMatch(prometheus.Labels{labelNamespace: ns, labelName: name})
 }
 
 // ImportReady records whether a ResourceImport has settled, with its state (Pending, Applied,
-// Skipped, Failed) beside the reason.
-func ImportReady(ns, name, state string, conds []metav1.Condition) {
-	importReady.DeletePartialMatch(prometheus.Labels{labelNamespace: ns, labelName: name})
+// Skipped, Failed) beside the reason. provider is its scope's, empty when the scope does not
+// exist.
+func ImportReady(ns, name string, provider networkv1beta1.Provider, state string, conds []metav1.Condition) {
+	ForgetImport(ns, name)
 	v, reason := readiness(conds)
-	importReady.WithLabelValues(ns, name, state, reason).Set(v)
+	importReady.set(prometheus.Labels{labelProvider: ProviderLabel(provider), labelNamespace: ns,
+		labelName: name, "state": state, labelReason: reason}, v)
 }
 
 // ForgetImport drops a ResourceImport that no longer exists.
 func ForgetImport(ns, name string) {
-	importReady.DeletePartialMatch(prometheus.Labels{labelNamespace: ns, labelName: name})
+	importReady.deletePartialMatch(prometheus.Labels{labelNamespace: ns, labelName: name})
 }

@@ -256,6 +256,16 @@ type NetworkScopeStatus struct {
 	// +optional
 	Unmanaged int32 `json:"unmanaged,omitempty"`
 
+	// capabilities lists what the scope's provider can do as the operator runs it:
+	// CreateSubnet, ChangeEvents, IPUsage. More values may be added; ignore unknown ones.
+	// +listType=set
+	// +optional
+	Capabilities []Capability `json:"capabilities,omitempty"`
+
+	// ownership says where the provider keeps ownership metadata of networks and subnets.
+	// +optional
+	Ownership *Ownership `json:"ownership,omitempty"`
+
 	// targets reports each account/region pair.
 	// +listType=atomic
 	// +optional

@@ -72,7 +72,7 @@ func (r *NetworkScopeReconciler) NotifyChanged(ctx context.Context, changed []in
 	for i := range scopes.Items {
 		scope := &scopes.Items[i]
 		matched := map[inventory.TargetKey]bool{}
-		for _, t := range expandTargets(scope) {
+		for _, t := range expandTargets(scope, nil) {
 			if set[t.Key()] {
 				matched[t.Key()] = true
 			}

@@ -49,6 +49,7 @@ import (
 	"hypersurgery.dev/subnet-operator/internal/audit"
 	"hypersurgery.dev/subnet-operator/internal/inventory"
 	"hypersurgery.dev/subnet-operator/internal/metrics"
+	"hypersurgery.dev/subnet-operator/internal/provider"
 	"hypersurgery.dev/subnet-operator/internal/tenancy"
 )
 
@@ -65,8 +66,10 @@ const (
 // their networks and subnets as Network and Subnet objects. It never writes to the cloud.
 type NetworkScopeReconciler struct {
 	client.Client
-	Scheme     *runtime.Scheme
-	Discoverer inventory.Discoverer
+	Scheme *runtime.Scheme
+	// Providers are the clouds the operator runs with; the scope's spec.provider picks one,
+	// which discovers its targets. A scope whose provider is not among them is not synced.
+	Providers *provider.Registry
 	// APIReader reads Network and Subnet lists directly from the API server, because the
 	// informer cache may not yet contain objects created earlier in the same sync.
 	// When nil, the cached client is used.
@@ -90,9 +93,6 @@ type NetworkScopeReconciler struct {
 	// admission webhook would write — and into the created_by of its audit lines. Empty when
 	// it could not be found out; the webhook still records the real one on the import.
 	Identity string
-	// Legacy knows about aws.hypersurgery/v1alpha1 objects that are not migrated yet. Nil
-	// when the old group is not served.
-	Legacy Legacy
 
 	pending     pendingTargets
 	backoff     throttleBackoff
@@ -132,11 +132,6 @@ func (r *NetworkScopeReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if !scope.DeletionTimestamp.IsZero() {
 		return ctrl.Result{}, nil
 	}
-	// The status of an old-group scope being migrated carries the unmanaged resources it
-	// already knew; syncing before it arrives would count all of them as new.
-	if wait, err := waitingForMigration(ctx, r.Legacy, r.reader(), scope); err != nil || wait {
-		return ctrl.Result{RequeueAfter: migrationRetryInterval}, client.IgnoreNotFound(err)
-	}
 
 	// Once per change of the spec, not on every sync: the warning is about how the scope is
 	// written, and a spec change is when somebody is looking at it.
@@ -146,8 +141,13 @@ func (r *NetworkScopeReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			"%s", tenancy.UnrestrictedWarning(scope))
 	}
 
+	p, ok := r.Providers.Get(scope.Spec.Provider)
+	if !ok {
+		return ctrl.Result{}, r.reportProviderNotEnabled(ctx, scope)
+	}
+
 	now := r.now()
-	all := expandTargets(scope)
+	all := expandTargets(scope, p)
 	full := needsFullSync(scope, now)
 	// Taken before discovery: events arriving during the sync stay pending and trigger another one.
 	changed := r.pending.take(scope.Name)
@@ -177,7 +177,7 @@ func (r *NetworkScopeReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		}
 		log.V(1).Info("syncing changed targets", "targets", len(targets))
 	}
-	results := r.discoverAll(ctx, targets)
+	results := r.discoverAll(ctx, p, targets)
 
 	tagKeys := scope.ResolvedTagKeys()
 	for i := range results {
@@ -227,11 +227,11 @@ func (r *NetworkScopeReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	r.reportUnmanaged(ctx, scope, results)
 
 	syncTime := metav1.NewTime(now)
-	statusTargets, throttled, err := r.updateStatus(ctx, scope, all, results, full, len(networks), len(subnets.Items), syncTime)
+	statusTargets, throttled, err := r.updateStatus(ctx, scope, p, all, results, full, len(networks), len(subnets.Items), syncTime)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	metrics.SetScope(scope.Name, networks, subnets.Items, metricTargets(statusTargets, results, throttled), float64(now.Unix()))
+	metrics.SetScope(scope.Name, scope.Spec.Provider, networks, subnets.Items, metricTargets(statusTargets, results, throttled), float64(now.Unix()))
 
 	if full {
 		return ctrl.Result{RequeueAfter: r.requeueAfter(scope, all, resyncInterval(scope))}, nil
@@ -288,28 +288,61 @@ type targetResult struct {
 	err      error
 }
 
-func expandTargets(scope *networkv1beta1.NetworkScope) []inventory.Target {
+// expandTargets lists the account/region pairs of the scope, each with the read identity the
+// provider reaches its account with. A nil provider leaves the identities out, for callers
+// that only need the pairs.
+func expandTargets(scope *networkv1beta1.NetworkScope, p provider.Provider) []inventory.Target {
 	var targets []inventory.Target
 	for _, a := range scope.Spec.Accounts {
 		regions := a.Regions
 		if len(regions) == 0 {
 			regions = scope.Spec.Regions
 		}
-		aws := a.AWSAccount()
+		var identity inventory.Identity
+		if p != nil {
+			identity = p.Identity(a, provider.Read)
+		}
 		for _, region := range regions {
 			targets = append(targets, inventory.Target{
+				Provider:          scope.Spec.Provider,
 				Scope:             scope.Name,
 				Account:           a.ID,
 				Region:            region,
-				RoleARN:           aws.RoleARN,
-				ExternalID:        aws.ExternalID,
-				VPCTagSelector:    scope.MatchTags(),
+				Identity:          identity,
+				NetworkSelector:   scope.MatchTags(),
 				DiscoverUnmanaged: discoverUnmanaged(scope),
 			})
 		}
 	}
 	return targets
 }
+
+// reportProviderNotEnabled marks a scope whose provider this operator does not run: nothing
+// is discovered, and the inventory it had stays as it was.
+func (r *NetworkScopeReconciler) reportProviderNotEnabled(ctx context.Context, scope *networkv1beta1.NetworkScope) error {
+	msg := r.Providers.NotEnabled(scope.Spec.Provider)
+	logf.FromContext(ctx).Info("NetworkScope is not synced: its provider is not enabled",
+		"scope", scope.Name, "provider", scope.Spec.Provider)
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		latest := &networkv1beta1.NetworkScope{}
+		if err := r.Get(ctx, client.ObjectKeyFromObject(scope), latest); err != nil {
+			return client.IgnoreNotFound(err)
+		}
+		before := latest.Status.DeepCopy()
+		latest.Status.Capabilities, latest.Status.Ownership = nil, nil
+		meta.SetStatusCondition(&latest.Status.Conditions, metav1.Condition{Type: ConditionReady,
+			Status: metav1.ConditionFalse, Reason: ReasonProviderNotEnabled, Message: msg,
+			ObservedGeneration: latest.Generation})
+		if equality.Semantic.DeepEqual(before, &latest.Status) {
+			return nil
+		}
+		return r.Status().Update(ctx, latest)
+	})
+}
+
+// ReasonProviderNotEnabled is the Ready reason of a scope, claim or import whose provider
+// the operator does not run.
+const ReasonProviderNotEnabled = "ProviderNotEnabled"
 
 // discoverySlots is the instance-wide semaphore behind Concurrency. It is shared by every
 // reconcile, so the cap holds however many scopes are reconciled at once.
@@ -327,7 +360,8 @@ func (r *NetworkScopeReconciler) concurrency() int {
 	return r.Concurrency
 }
 
-func (r *NetworkScopeReconciler) discoverAll(ctx context.Context, targets []inventory.Target) []targetResult {
+func (r *NetworkScopeReconciler) discoverAll(ctx context.Context, d inventory.Discoverer,
+	targets []inventory.Target) []targetResult {
 	results := make([]targetResult, len(targets))
 	slots := r.discoverySlots()
 	g, gctx := errgroup.WithContext(ctx)
@@ -342,7 +376,7 @@ func (r *NetworkScopeReconciler) discoverAll(ctx context.Context, targets []inve
 				return nil
 			}
 			defer func() { <-slots }()
-			snap, err := r.Discoverer.Discover(gctx, t)
+			snap, err := d.Discover(gctx, t)
 			results[i] = targetResult{target: t, snapshot: snap, err: err}
 			return nil // one failing account must not stop the others
 		})
@@ -362,21 +396,21 @@ func resyncInterval(scope *networkv1beta1.NetworkScope) time.Duration {
 // so that they match the snapshot.
 func (r *NetworkScopeReconciler) syncTarget(ctx context.Context, scope *networkv1beta1.NetworkScope,
 	target inventory.Target, snap *inventory.Snapshot, tagKeys networkv1beta1.TagKeys) error {
-	provider := scope.Spec.Provider
+	name := scope.Spec.Provider
 	totals := map[string]*networkTotals{}
-	for _, v := range snap.VPCs {
+	for _, v := range snap.Networks {
 		totals[v.ID] = &networkTotals{}
 	}
 
 	seenSubnets := map[string]bool{}
 	for _, s := range snap.Subnets {
 		status := subnetStatus(s, tagKeys, scope.Spec.RequiredSubnetTags)
-		if t := totals[s.VPCID]; t != nil {
+		if t := totals[s.NetworkID]; t != nil {
 			t.add(status)
 		}
 		obj := &networkv1beta1.Subnet{ObjectMeta: metav1.ObjectMeta{Name: s.ID}}
-		spec := networkv1beta1.SubnetSpec{Provider: provider, ID: s.ID, NetworkID: s.VPCID, Account: s.Account, Region: s.Region}
-		ok, err := r.upsert(ctx, scope, obj, labelsFor(scope, target, s.VPCID), func() {
+		spec := networkv1beta1.SubnetSpec{Provider: name, ID: s.ID, NetworkID: s.NetworkID, Account: s.Account, Region: s.Region}
+		ok, err := r.upsert(ctx, scope, obj, labelsFor(scope, target, s.NetworkID), func() {
 			obj.Spec = spec
 		}, func() bool {
 			if equality.Semantic.DeepEqual(obj.Status, status) {
@@ -394,10 +428,10 @@ func (r *NetworkScopeReconciler) syncTarget(ctx context.Context, scope *networkv
 	}
 
 	seenNetworks := map[string]bool{}
-	for _, v := range snap.VPCs {
+	for _, v := range snap.Networks {
 		t := totals[v.ID]
 		obj := &networkv1beta1.Network{ObjectMeta: metav1.ObjectMeta{Name: v.ID}}
-		spec := networkv1beta1.NetworkSpec{Provider: provider, ID: v.ID, Account: v.Account, Region: v.Region}
+		spec := networkv1beta1.NetworkSpec{Provider: name, ID: v.ID, Account: v.Account, Region: v.Region}
 		ok, err := r.upsert(ctx, scope, obj, labelsFor(scope, target, v.ID), func() {
 			obj.Spec = spec
 		}, func() bool {
@@ -414,7 +448,7 @@ func (r *NetworkScopeReconciler) syncTarget(ctx context.Context, scope *networkv
 				AvailableIPs:   t.availableIPs(),
 				// Overlaps are computed across the whole scope in updateOverlaps.
 				OverlapsWith: obj.Status.OverlapsWith,
-				AWS:          &networkv1beta1.AWSNetworkStatus{IsDefault: v.IsDefault},
+				AWS:          copied(v.AWS),
 			}
 			if equality.Semantic.DeepEqual(obj.Status, status) {
 				return false
@@ -471,26 +505,25 @@ func (t *networkTotals) availableIPs() *int64 {
 }
 
 func subnetStatus(s inventory.Subnet, tagKeys networkv1beta1.TagKeys, required []string) networkv1beta1.SubnetStatus {
-	total := inventory.UsableIPv4(s.CIDRBlock)
 	status := networkv1beta1.SubnetStatus{
-		Name:               s.Tags["Name"],
-		State:              s.State,
-		CIDRBlock:          s.CIDRBlock,
-		IPv6CIDRBlocks:     s.IPv6CIDRBlocks,
-		Zone:               s.AvailabilityZone,
-		TotalIPs:           new(total),
-		AvailableIPs:       new(s.AvailableIPs),
-		UtilizationPercent: new(inventory.UtilizationPercent(total, s.AvailableIPs)),
-		Owner:              s.Tags[tagKeys.Owner],
-		Env:                s.Tags[tagKeys.Env],
-		Tier:               s.Tags[tagKeys.Tier],
-		Tags:               s.Tags,
+		Name:            s.Tags["Name"],
+		State:           s.State,
+		CIDRBlock:       s.CIDRBlock,
+		IPv6CIDRBlocks:  s.IPv6CIDRBlocks,
+		Zone:            s.Zone,
+		TotalIPs:        copied(s.TotalIPs),
+		AvailableIPs:    copied(s.AvailableIPs),
+		Owner:           s.Tags[tagKeys.Owner],
+		Env:             s.Tags[tagKeys.Env],
+		Tier:            s.Tags[tagKeys.Tier],
+		OwnershipSource: s.OwnershipSource,
+		Tags:            s.Tags,
+		// What only one provider has is copied as the provider reported it.
+		AWS: copied(s.AWS),
 	}
-	// Discovery only knows AWS so far (#43 moves it behind a provider registry).
-	status.AWS = &networkv1beta1.AWSSubnetStatus{
-		AvailabilityZoneID: s.AvailabilityZoneID,
-		Public:             s.Public,
-		RouteTableID:       s.RouteTableID,
+	// Utilization is only as known as both counts are.
+	if s.TotalIPs != nil && s.AvailableIPs != nil {
+		status.UtilizationPercent = new(inventory.UtilizationPercent(*s.TotalIPs, *s.AvailableIPs))
 	}
 	for _, k := range required {
 		if strings.TrimSpace(s.Tags[k]) == "" {
@@ -498,6 +531,15 @@ func subnetStatus(s inventory.Subnet, tagKeys networkv1beta1.TagKeys, required [
 		}
 	}
 	return status
+}
+
+// copied returns a pointer to a copy of *p, or nil: the status must not share memory with a
+// snapshot the provider may reuse.
+func copied[T any](p *T) *T {
+	if p == nil {
+		return nil
+	}
+	return new(*p)
 }
 
 func labelsFor(scope *networkv1beta1.NetworkScope, target inventory.Target, networkID string) map[string]string {
@@ -632,7 +674,7 @@ func networkRef(v *networkv1beta1.Network) string {
 }
 
 // metricTargets turns the status of each target into its metrics. A throttled target counts
-// as up: it answered, only not fast enough, and hs_aws_target_throttled says so on its own.
+// as up: it answered, only not fast enough, and hs_target_throttled says so on its own.
 func metricTargets(targets []networkv1beta1.TargetStatus, results []targetResult,
 	throttled map[inventory.TargetKey]bool) []metrics.TargetResult {
 	synced := map[inventory.TargetKey]bool{}
@@ -654,7 +696,7 @@ func metricTargets(targets []networkv1beta1.TargetStatus, results []targetResult
 // status; lastSyncTime of the scope only moves on full syncs, because it schedules the next one.
 // It also returns which targets are throttled rather than failed.
 func (r *NetworkScopeReconciler) updateStatus(ctx context.Context, scope *networkv1beta1.NetworkScope,
-	all []inventory.Target, results []targetResult, full bool, networks, subnets int, now metav1.Time,
+	p provider.Provider, all []inventory.Target, results []targetResult, full bool, networks, subnets int, now metav1.Time,
 ) ([]networkv1beta1.TargetStatus, map[inventory.TargetKey]bool, error) {
 	byKey := map[inventory.TargetKey]targetResult{}
 	for _, res := range results {
@@ -693,8 +735,8 @@ func (r *NetworkScopeReconciler) updateStatus(ctx context.Context, scope *networ
 				ts.UnmanagedIDs = prev.UnmanagedIDs
 				ts.Error = res.err.Error()
 			default:
-				ts.Networks, ts.Subnets = count32(len(res.snapshot.VPCs)), count32(len(res.snapshot.Subnets))
-				ts.UnmanagedNetworks = count32(len(res.snapshot.UnmanagedVPCs))
+				ts.Networks, ts.Subnets = count32(len(res.snapshot.Networks)), count32(len(res.snapshot.Subnets))
+				ts.UnmanagedNetworks = count32(len(res.snapshot.UnmanagedNetworks))
 				ts.UnmanagedSubnets = count32(len(res.snapshot.UnmanagedSubnets))
 				ts.UnmanagedIDs = unmanagedIDs(res.snapshot)
 				ts.LastSyncTime = &now
@@ -738,6 +780,9 @@ func (r *NetworkScopeReconciler) updateStatus(ctx context.Context, scope *networ
 		}
 		latest.Status.Unmanaged = unmanaged
 		latest.Status.Targets = targets
+		latest.Status.Capabilities = slices.Sorted(slices.Values(p.Capabilities()))
+		ownership := p.Ownership()
+		latest.Status.Ownership = &ownership
 		return r.Status().Update(ctx, latest)
 	})
 	return targets, throttled, err

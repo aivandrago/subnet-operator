@@ -147,7 +147,7 @@ var _ = Describe("Namespaces allowed to use a NetworkScope", func() {
 		BeforeEach(func() {
 			writer = &fakeWriter{conflictOnce: map[string]bool{}}
 			reconciler = &SubnetClaimReconciler{
-				Client: k8sClient, Scheme: k8sClient.Scheme(), Writer: writer, WritesEnabled: true,
+				Client: k8sClient, Scheme: k8sClient.Scheme(), Providers: awsProviders(nil, writer, nil), WritesEnabled: true,
 				Recorder: recorder,
 			}
 			createVPC()
@@ -231,7 +231,7 @@ var _ = Describe("Namespaces allowed to use a NetworkScope", func() {
 		BeforeEach(func() {
 			writer = &fakeTagWriter{}
 			reconciler = &ResourceImportReconciler{
-				Client: k8sClient, Scheme: k8sClient.Scheme(), Writer: writer, WritesEnabled: true,
+				Client: k8sClient, Scheme: k8sClient.Scheme(), Providers: awsProviders(nil, nil, writer), WritesEnabled: true,
 				Recorder: recorder,
 			}
 		})
@@ -332,13 +332,13 @@ var _ = Describe("Namespaces allowed to use a NetworkScope", func() {
 			sink = &bytes.Buffer{}
 			discoverer = &fakeDiscoverer{
 				snapshots: map[string]*inventory.Snapshot{tenancyAccount + "/" + tenancyRegion: {
-					UnmanagedVPCs: []inventory.VPC{{ID: "vpc-0e4a1dea", Account: tenancyAccount, Region: tenancyRegion,
+					UnmanagedNetworks: []inventory.Network{{ID: "vpc-0e4a1dea", Account: tenancyAccount, Region: tenancyRegion,
 						CIDRBlocks: []string{"10.91.0.0/16"}}},
 				}},
 				errs: map[string]error{},
 			}
 			reconciler = &NetworkScopeReconciler{
-				Client: k8sClient, Scheme: k8sClient.Scheme(), Discoverer: discoverer, Creators: &CreatorCache{},
+				Client: k8sClient, Scheme: k8sClient.Scheme(), Providers: awsProviders(discoverer, nil, nil), Creators: &CreatorCache{},
 				Recorder: recorder, Audit: audit.NewWriter(sink),
 				Identity: "system:serviceaccount:subnet-operator-system:subnet-operator",
 			}

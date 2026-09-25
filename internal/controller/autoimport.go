@@ -57,7 +57,7 @@ func (r *NetworkScopeReconciler) reportUnmanaged(ctx context.Context, scope *net
 	// A target whose discovery failed is skipped below, so its series disappears for as long as
 	// the outage lasts. That is deliberate: a gap says "we do not know right now", which is
 	// true, while a held-over number would read as current. The Ready condition and
-	// hs_aws_target_up say why the gap is there.
+	// hs_target_up say why the gap is there.
 	metrics.ClearUnmanaged(scope.Name)
 
 	// scope was read before this sync writes its status, so these are the unmanaged resources
@@ -75,19 +75,22 @@ func (r *NetworkScopeReconciler) reportUnmanaged(ctx context.Context, scope *net
 		if res.err != nil || res.snapshot == nil {
 			continue
 		}
-		vpcIDs := make([]string, 0, len(res.snapshot.UnmanagedVPCs))
-		for _, v := range res.snapshot.UnmanagedVPCs {
+		vpcIDs := make([]string, 0, len(res.snapshot.UnmanagedNetworks))
+		for _, v := range res.snapshot.UnmanagedNetworks {
 			vpcIDs = append(vpcIDs, v.ID)
 		}
 		subnetIDs := make([]string, 0, len(res.snapshot.UnmanagedSubnets))
 		for _, s := range res.snapshot.UnmanagedSubnets {
 			subnetIDs = append(subnetIDs, s.ID)
 		}
-		metrics.Unmanaged(scope.Name, res.target.Account, res.target.Region, "vpc", vpcIDs)
-		metrics.Unmanaged(scope.Name, res.target.Account, res.target.Region, "subnet", subnetIDs)
+		metrics.Unmanaged(scope.Name, res.target.Provider, res.target.Account, res.target.Region, metrics.KindNetwork, vpcIDs)
+		metrics.Unmanaged(scope.Name, res.target.Provider, res.target.Account, res.target.Region, metrics.KindSubnet, subnetIDs)
 
 		if !policyAllowed {
 			continue
+		}
+		if p := scope.Spec.AutoImport; p != nil && p.Mode != "" && p.Mode != networkv1beta1.AutoImportOff {
+			metrics.AutoImportTarget(scope.Name, res.target.Provider, res.target.Account, res.target.Region)
 		}
 		if err := r.runAutoImport(ctx, scope, res.snapshot); err != nil {
 			log.Error(err, "auto-import failed", "target", res.target.Key())
@@ -135,15 +138,15 @@ func (r *NetworkScopeReconciler) runAutoImport(ctx context.Context, scope *netwo
 	// A subnet usually belongs to whoever owns its VPC, so the parent's tags are needed even
 	// when the VPC itself is managed.
 	vpcTags := map[string]map[string]string{}
-	for _, v := range snap.VPCs {
+	for _, v := range snap.Networks {
 		vpcTags[v.ID] = v.Tags
 	}
-	for _, v := range snap.UnmanagedVPCs {
+	for _, v := range snap.UnmanagedNetworks {
 		vpcTags[v.ID] = v.Tags
 	}
 
-	resources := make([]policy.Resource, 0, len(snap.UnmanagedVPCs)+len(snap.UnmanagedSubnets))
-	for _, v := range snap.UnmanagedVPCs {
+	resources := make([]policy.Resource, 0, len(snap.UnmanagedNetworks)+len(snap.UnmanagedSubnets))
+	for _, v := range snap.UnmanagedNetworks {
 		resources = append(resources, policy.Resource{
 			ID: v.ID, Account: v.Account, Region: v.Region, Tags: v.Tags,
 		})
@@ -151,7 +154,7 @@ func (r *NetworkScopeReconciler) runAutoImport(ctx context.Context, scope *netwo
 	for _, s := range snap.UnmanagedSubnets {
 		resources = append(resources, policy.Resource{
 			ID: s.ID, Account: s.Account, Region: s.Region, Tags: s.Tags,
-			IsSubnet: true, ParentNetworkTags: vpcTags[s.VPCID],
+			IsSubnet: true, ParentNetworkTags: vpcTags[s.NetworkID],
 		})
 	}
 
@@ -172,7 +175,7 @@ func (r *NetworkScopeReconciler) runAutoImport(ctx context.Context, scope *netwo
 				if p.Mode == networkv1beta1.AutoImportDryRun {
 					result = audit.ResultDryRun
 				}
-				metrics.AutoImport(scope.Name, res.Account, res.Region, result)
+				metrics.AutoImport(scope.Name, scope.Spec.Provider, res.Account, res.Region, result)
 				eventf(r.Recorder, scope, corev1.EventTypeNormal, EventAutoImportRequested, ActionAutoImport,
 					"Requested the import of %s in %s/%s: %s", res.ID, res.Account, res.Region, decision.Reason)
 				r.recordDecision(ctx, scope, res, decision, creator, result)
@@ -180,13 +183,13 @@ func (r *NetworkScopeReconciler) runAutoImport(ctx context.Context, scope *netwo
 					"reason", decision.Reason, "creator", creator)
 			}
 		case policy.VerdictSkip:
-			metrics.AutoImport(scope.Name, res.Account, res.Region, audit.ResultSkipped)
+			metrics.AutoImport(scope.Name, scope.Spec.Provider, res.Account, res.Region, audit.ResultSkipped)
 			// No Event: a skip repeats on every sync and says nothing changed. The counter and
 			// the audit line are the record.
 			r.recordDecision(ctx, scope, res, decision, creator, audit.ResultSkipped)
 		case policy.VerdictNoOwner:
 			// Left unmanaged on purpose: the Event and the alert ask a human to pick an owner.
-			metrics.AutoImport(scope.Name, res.Account, res.Region, audit.ResultNoOwner)
+			metrics.AutoImport(scope.Name, scope.Spec.Provider, res.Account, res.Region, audit.ResultNoOwner)
 			eventf(r.Recorder, scope, corev1.EventTypeWarning, EventNoOwner, ActionAutoImport,
 				"No rule could attribute %s in %s/%s: %s", res.ID, res.Account, res.Region, decision.Reason)
 			r.recordDecision(ctx, scope, res, decision, creator, audit.ResultNoOwner)
@@ -312,8 +315,8 @@ func importName(resourceID string) string {
 // unmanagedIDs lists the VPCs and subnets of a snapshot that are outside the selector, sorted so
 // the status does not change when nothing else did.
 func unmanagedIDs(s *inventory.Snapshot) []string {
-	ids := make([]string, 0, len(s.UnmanagedVPCs)+len(s.UnmanagedSubnets))
-	for _, v := range s.UnmanagedVPCs {
+	ids := make([]string, 0, len(s.UnmanagedNetworks)+len(s.UnmanagedSubnets))
+	for _, v := range s.UnmanagedNetworks {
 		ids = append(ids, v.ID)
 	}
 	for _, sn := range s.UnmanagedSubnets {

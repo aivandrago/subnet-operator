@@ -185,16 +185,17 @@ The chart installs a Grafana dashboard and a `PrometheusRule`. You do not build 
 The alerts that ship, and what each one actually means:
 
 ```text
-SubnetOperatorDown         no replica is up: the one alert that fires when the others cannot
-SubnetFull                 zero usable IPv4 addresses left in a subnet
-SubnetNearlyFull           a subnet past 85% of its addresses
-SubnetInventoryTargetDown  an account or region stopped answering; last state kept
-SubnetInventoryStale       a scope has not completed a full sync in an hour
-VPCCIDROverlap             two VPCs in the scope claim the same range
-UnmanagedNetworkResource   a network appeared that carries no hs/managed tag
-SubnetClaimNotReady        a subnet somebody asked for has not arrived in 30 minutes
-ResourceImportNotSettled   tags somebody asked for have not reached AWS in 30 minutes
-AutoImportedResources      informational: what the auto-import policy tagged on its own
+SubnetOperatorDown             no replica is up: the one alert that fires when the others cannot
+SubnetFull                     zero usable IPv4 addresses left in a subnet
+SubnetNearlyFull               a subnet past 85% of its addresses
+SubnetInventoryTargetDown      an account or region stopped answering; last state kept
+SubnetInventoryTargetThrottled the cloud has throttled an account or region for 30 minutes
+SubnetInventoryStale           a scope has not completed a full sync in an hour
+NetworkCIDROverlap             two networks (VPCs) in the scope claim the same range
+UnmanagedNetworkResource       a network appeared that carries no hs/managed tag
+SubnetClaimNotReady            a subnet somebody asked for has not arrived in 30 minutes
+ResourceImportNotSettled       tags somebody asked for have not reached AWS in 30 minutes
+AutoImportedResources          informational: what the auto-import policy tagged on its own
 ```
 
 `SubnetInventoryTargetDown` deserves a sentence. When an account cannot be reached, the operator does **not** erase what it knew. It keeps the last state, marks the target unreachable and says so in the status and in the alert. An inventory that quietly loses rows during an outage is worse than no inventory, because you will trust it.

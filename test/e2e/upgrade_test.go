@@ -36,9 +36,7 @@ import (
 	. "github.com/onsi/gomega"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	awsv1alpha1 "hypersurgery.dev/subnet-operator/api/v1alpha1"
 	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
-	"hypersurgery.dev/subnet-operator/internal/migration"
 	"hypersurgery.dev/subnet-operator/test/utils"
 )
 
@@ -46,24 +44,22 @@ const (
 	// upgradeRelease is the Helm release name the install docs use, so the objects are named
 	// the way they are in a user's cluster.
 	upgradeRelease = "subnet-operator"
-	// oldDeployment is the previous chart's fullname for that release: the chart was called
-	// aws-subnet-operator, and the release name does not contain it.
-	oldDeployment = upgradeRelease + "-aws-subnet-operator"
-	// upgradeDeployment is the chart's fullname for that release since the rename: the release
-	// name contains the chart name, so it is the release name alone.
+	// upgradeDeployment is the chart's fullname for that release: the release name contains the
+	// chart name, so it is the release name alone, before and after the upgrade.
 	upgradeDeployment = upgradeRelease
 	// upgradeScope is the NetworkScope the upgrade spec creates.
 	upgradeScope = "upgrade"
-	// publishedChart is where the last release with the old chart name and the old API group
-	// is published, signed: the upgrade 0.8 has to survive. UPGRADE_CHART overrides it, e.g.
-	// with a ChartMuseum repository added under another name. 0.9 moves this to the new name.
-	publishedChart = "oci://ghcr.io/aivandrago/charts/aws-subnet-operator"
+	// publishedChart is where the previous release is published, signed. UPGRADE_CHART
+	// overrides it, e.g. with a ChartMuseum repository added under another name.
+	publishedChart = "oci://ghcr.io/aivandrago/charts/subnet-operator"
 	// localChart is the chart of the build under test.
 	localChart = "charts/subnet-operator"
-	// leaseName is the leader election lease; only its holder reconciles and counts. It is the
-	// same before and after the rename, which is what keeps an old and a new pod from both
-	// leading during the rollout.
+	// leaseName is the leader election lease; only its holder reconciles and counts.
 	leaseName = "1095b947.hypersurgery"
+	// oldCRDs are the CRDs of aws.hypersurgery/v1alpha1, which 0.8 installed and served, and
+	// which nothing deletes on an upgrade.
+	oldCRDs = "networkscopes.aws.hypersurgery vpcs.aws.hypersurgery subnets.aws.hypersurgery " +
+		"subnetclaims.aws.hypersurgery resourceimports.aws.hypersurgery sheetexports.aws.hypersurgery"
 )
 
 // The upgrade spec installs the latest published release with Helm, creates one of every kind
@@ -73,10 +69,12 @@ const (
 // Helm into the namespace the Manager specs deploy to with kustomize, so the two cannot share a
 // cluster.
 //
-// This upgrade crosses the rename of the chart (aws-subnet-operator to subnet-operator) and of
-// the API group (aws.hypersurgery/v1alpha1 to network.hypersurgery.dev/v1beta1): the release is
-// upgraded in place to the renamed chart, its objects get new names, and the operator migrates
-// every object of the old group, status included.
+// The previous release is 0.8, which served both aws.hypersurgery/v1alpha1 and
+// network.hypersurgery.dev/v1beta1 and migrated the old objects into the new group. This one
+// serves only the new group. So the objects are created the way a user coming from 0.7 has
+// them, in the old group, and 0.8 migrates them before the upgrade: what must survive is what
+// 0.8 left in the new group, status included. An upgrade from 0.7 straight to this release is
+// not supported, and the guard that enforces it is checked at the end.
 var _ = Describe("Upgrade", Label("upgrade"), Ordered, func() {
 	var (
 		previous string // the published chart version installed first
@@ -85,7 +83,7 @@ var _ = Describe("Upgrade", Label("upgrade"), Ordered, func() {
 		// dryRunVPC is untagged and imported in dry-run mode, so it stays unmanaged: the known
 		// resource that must not be counted again after the upgrade.
 		dryRunVPC string
-		before    oldSnapshot
+		before    newSnapshot
 		values    string
 	)
 
@@ -123,7 +121,8 @@ var _ = Describe("Upgrade", Label("upgrade"), Ordered, func() {
 
 		By("writing the values both releases are installed with")
 		// Plain HTTP metrics, so the spec can read them through the API server's pod proxy
-		// without a token of its own: the transport is not what an upgrade changes.
+		// without a token of its own: the transport is not what an upgrade changes. The AWS
+		// settings use their 0.8 names, which this release still accepts (deprecated).
 		queueURL := createEventsQueue(context.Background())
 		values = filepath.Join(GinkgoT().TempDir(), "values.yaml")
 		Expect(os.WriteFile(values, []byte(fmt.Sprintf(`
@@ -149,9 +148,9 @@ extraEnv:
 		_, err = utils.Run(exec.Command(envOr("HELM", "helm"), "install", upgradeRelease, chartRef,
 			"--version", previous, "-n", namespace, "-f", values))
 		Expect(err).NotTo(HaveOccurred(), "helm install of the previous release failed")
-		waitForRollout(oldDeployment)
+		waitForRollout(upgradeDeployment)
 
-		image, err := utils.Run(exec.Command("kubectl", "get", "deployment", oldDeployment, "-n", namespace,
+		image, err := utils.Run(exec.Command("kubectl", "get", "deployment", upgradeDeployment, "-n", namespace,
 			"-o", "jsonpath={.spec.template.spec.containers[0].image}"))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(image).To(HaveSuffix(":"+previous), "the previous release runs its own published image")
@@ -163,14 +162,15 @@ extraEnv:
 		}
 		// Objects with finalizers go first, while the operator is still there to release them.
 		for _, args := range [][]string{
-			{"delete", resClaims + "," + resImports + "," + resOldClaims + "," + resOldImport,
-				"--all", "-n", "default", "--timeout=1m"},
-			{"delete", resScopes + "," + resExports + "," + resOldScopes, "--all", "--timeout=1m"},
+			{"delete", resClaims + "," + resImports, "--all", "-n", "default", "--timeout=1m"},
+			{"delete", resScopes + "," + resExports, "--all", "--timeout=1m"},
 		} {
 			_, _ = utils.Run(exec.Command("kubectl", args...))
 		}
 		_, _ = utils.Run(exec.Command(envOr("HELM", "helm"), "uninstall", upgradeRelease, "-n", namespace))
 		_, _ = utils.Run(exec.Command("kubectl", "delete", "-f", localChart+"/crds/", "--ignore-not-found", "--wait=false"))
+		_, _ = utils.Run(exec.Command("kubectl", append([]string{"delete", "crd", "--ignore-not-found", "--wait=false"},
+			strings.Fields(oldCRDs)...)...))
 		_, _ = utils.Run(exec.Command("kubectl", "delete", "ns", namespace, "--wait=false"))
 	})
 
@@ -183,14 +183,14 @@ extraEnv:
 	SetDefaultEventuallyTimeout(3 * time.Minute)
 	SetDefaultEventuallyPollingInterval(2 * time.Second)
 
-	It("runs the previous release with one of every kind of object", func() {
+	It("runs the previous release, which migrates old-group objects of every kind into the new group", func() {
 		ctx := context.Background()
 
 		By("seeding VPCs and subnets into Moto")
 		fix = seedAWS(ctx)
 		dryRunVPC = createVPC(ctx, hubEC2(ctx), "10.70.0.0/16", "Name", "dry-run")
 
-		By("creating a NetworkScope, a SubnetClaim, ResourceImports and a SheetExport")
+		By("creating a NetworkScope, a SubnetClaim, ResourceImports and a SheetExport in aws.hypersurgery/v1alpha1")
 		// The webhook is served by the operator's pods, which may still be starting it.
 		Eventually(func() error {
 			return applyManifest(fmt.Sprintf(`
@@ -287,42 +287,61 @@ spec:
 				fix.unmanagedVPC, fix.unmanagedSubnet, dryRunVPC, namespace))
 		}, time.Minute, 5*time.Second).Should(Succeed())
 
-		By("waiting until every object has settled")
+		By("waiting until the previous release has migrated every one of them")
 		Eventually(func(g Gomega) {
-			s := takeOldSnapshot(g)
+			samples := scrape(g, leaderRunning(g, ""))
+			for _, kind := range []string{"NetworkScope", "SubnetClaim", "ResourceImport", "SheetExport"} {
+				s := findMetric(samples, "hs_migration_pending_objects", map[string]string{"kind": kind})
+				g.Expect(s).NotTo(BeNil(), "no hs_migration_pending_objects for %s yet", kind)
+				g.Expect(s.value).To(BeZero(), "%s objects still waiting", kind)
+			}
+			for _, args := range [][]string{
+				{resOldScopes, upgradeScope},
+				{"sheetexports.aws.hypersurgery", upgradeScope},
+				{resOldClaims, "payments", "-n", "default"},
+				{resOldImport, "sandbox-vpc-import", "-n", "default"},
+				{resOldImport, "sandbox-subnet-import", "-n", "default"},
+				{resOldImport, "dry-run-import", "-n", "default"},
+			} {
+				g.Expect(migratedTo(args...)).To(Equal(args[1]), "%v", args)
+			}
+		}).Should(Succeed())
 
-			g.Expect(oldReady(s.scope.Status.Conditions)).NotTo(BeNil())
-			g.Expect(oldReady(s.scope.Status.Conditions).Status).To(Equal(metav1.ConditionTrue),
-				oldReady(s.scope.Status.Conditions).Message)
-			hub := oldTarget(&s.scope, hubAccount)
+		By("waiting until every migrated object has settled in the new group")
+		Eventually(func(g Gomega) {
+			s := takeNewSnapshot(g)
+
+			g.Expect(readyCondition(&s.scope)).NotTo(BeNil())
+			g.Expect(readyCondition(&s.scope).Status).To(Equal(metav1.ConditionTrue), readyCondition(&s.scope).Message)
+			hub := targetStatus(&s.scope, hubAccount)
 			g.Expect(hub).NotTo(BeNil())
 			// The dry-run VPC stays unmanaged, so the known set is never empty.
 			g.Expect(hub.UnmanagedIDs).To(ContainElement(dryRunVPC))
 
 			claim := s.claims["payments"]
-			g.Expect(oldReady(claim.Status.Conditions)).NotTo(BeNil())
-			g.Expect(oldReady(claim.Status.Conditions).Status).To(Equal(metav1.ConditionTrue),
-				oldReady(claim.Status.Conditions).Message)
+			g.Expect(claimReady(&claim)).NotTo(BeNil())
+			g.Expect(claimReady(&claim).Status).To(Equal(metav1.ConditionTrue), claimReady(&claim).Message)
 			g.Expect(claim.Status.Allocations).To(HaveLen(2))
 			for _, a := range claim.Status.Allocations {
 				g.Expect(s.subnets).To(HaveKey(a.SubnetID), "the inventory has the claimed subnet")
 			}
+			g.Expect(claim.Annotations).To(HaveKey(networkv1beta1.AnnotationCreatedBy), "the creator travelled with the claim")
 
 			for _, name := range []string{"sandbox-vpc-import", "sandbox-subnet-import"} {
 				imp := s.imports[name]
-				g.Expect(imp.Status.State).To(Equal(awsv1alpha1.ImportApplied), name+": "+imp.Status.Error)
+				g.Expect(imp.Status.State).To(Equal(networkv1beta1.ImportApplied), name+": "+imp.Status.Error)
 				g.Expect(imp.Status.AppliedTime).NotTo(BeNil())
 			}
-			g.Expect(s.imports["dry-run-import"].Status.State).To(Equal(awsv1alpha1.ImportSkipped))
+			g.Expect(s.imports["dry-run-import"].Status.State).To(Equal(networkv1beta1.ImportSkipped))
 
-			g.Expect(s.vpcs).To(HaveKey(fix.unmanagedVPC), "the imported VPC is in the inventory")
-			g.Expect(s.vpcs[fix.unmanagedVPC].Status.Owner).To(Equal("team-sandbox"))
+			g.Expect(s.networks).To(HaveKey(fix.unmanagedVPC), "the imported VPC is in the inventory")
+			g.Expect(s.networks[fix.unmanagedVPC].Status.Owner).To(Equal("team-sandbox"))
 			g.Expect(s.subnets).To(HaveKey(fix.unmanagedSubnet), "the imported subnet is in the inventory")
 			g.Expect(s.subnets[fix.unmanagedSubnet].Status.Owner).To(Equal("team-sandbox"))
 
 			exp := s.exports[upgradeScope]
-			g.Expect(oldReady(exp.Status.Conditions)).NotTo(BeNil())
-			g.Expect(oldReady(exp.Status.Conditions).Reason).To(Equal("ExportFailed"))
+			g.Expect(sheetReady(exp.Status.Conditions)).NotTo(BeNil())
+			g.Expect(sheetReady(exp.Status.Conditions).Reason).To(Equal("ExportFailed"))
 
 			before = s
 		}).Should(Succeed())
@@ -331,7 +350,7 @@ spec:
 		// Imports, claims and the syncs they trigger land in any order; a snapshot taken between
 		// two of them would be compared against a state the operator was never going to keep.
 		Eventually(func(g Gomega) {
-			s := takeOldSnapshot(g)
+			s := takeNewSnapshot(g)
 			g.Expect(s.scope.Status.LastSyncTime).NotTo(BeNil())
 			g.Expect(s.scope.Status.LastSyncTime.After(before.scope.Status.LastSyncTime.Time)).To(BeTrue(),
 				"no full resync since the snapshot yet")
@@ -342,78 +361,44 @@ spec:
 		_, _ = fmt.Fprintf(GinkgoWriter, "steady state before the upgrade:\n%s\n", before.steadyState())
 	})
 
-	It("upgrades to the renamed chart and the build under test: the new CRDs first, then helm upgrade", func() {
-		By("applying the CRDs of the build under test, which adds the new group and deprecates the old one")
+	It("upgrades to the build under test: the new CRDs first, then helm upgrade", func() {
+		By("applying the CRDs of the build under test")
 		_, err := utils.Run(exec.Command("kubectl", "apply", "-f", localChart+"/crds/"))
 		Expect(err).NotTo(HaveOccurred())
-		By("giving the nscope short name to the new group, as the upgrade guide says")
-		_, err = utils.Run(exec.Command("kubectl", "replace", "-f", localChart+"/crds/aws.hypersurgery_networkscopes.yaml"))
-		Expect(err).NotTo(HaveOccurred())
 
-		By("upgrading the release to the renamed local chart and the image under test")
+		By("upgrading the release to the local chart and the image under test")
 		image := strings.SplitN(managerImage, ":", 2)
 		_, err = utils.Run(exec.Command(envOr("HELM", "helm"), "upgrade", upgradeRelease, localChart,
 			"-n", namespace, "-f", values, "--set", "image.repository="+image[0], "--set", "image.tag="+image[1]))
 		Expect(err).NotTo(HaveOccurred(), "helm upgrade to the build under test failed")
 		waitForRollout(upgradeDeployment)
 
-		By("finding the objects of the old chart gone: the release renamed them")
-		Eventually(func(g Gomega) {
-			out, err := utils.Run(exec.Command("kubectl", "get", "deployment,service,serviceaccount", "-n", namespace,
-				"-l", "app.kubernetes.io/instance="+upgradeRelease, "-o", "name"))
-			g.Expect(err).NotTo(HaveOccurred())
-			g.Expect(out).NotTo(ContainSubstring(oldDeployment))
-		}).Should(Succeed())
-	})
-
-	It("migrates every old object, and reports no known unmanaged resource as new", func() {
-		leader, _ := newLeader()
-
-		By("waiting until nothing is left to migrate")
-		Eventually(func(g Gomega) {
-			samples := scrape(g, leader)
-			for _, kind := range []string{"NetworkScope", "SubnetClaim", "ResourceImport", "SheetExport"} {
-				s := findMetric(samples, "hs_migration_pending_objects", map[string]string{"kind": kind})
-				g.Expect(s).NotTo(BeNil(), "no hs_migration_pending_objects for %s yet", kind)
-				g.Expect(s.value).To(BeZero(), "%s objects still waiting", kind)
-			}
-		}).Should(Succeed())
-
-		By("waiting for the new leader's first sync to report every target")
-		// The gauges are set for each target in the same pass that counts newly seen resources,
-		// subnets last, so once all four exist that pass is over and the counter has its answer.
-		var samples []metricSample
-		Eventually(func(g Gomega) {
-			samples = scrape(g, leader)
-			for _, account := range []string{hubAccount, spokeAccount} {
-				for _, kind := range []string{"vpc", "subnet"} {
-					g.Expect(findSample(samples, "hs_aws_unmanaged_resources", account, kind)).NotTo(BeNil(),
-						"no unmanaged gauge for %s/%s yet", account, kind)
-				}
-			}
-		}).Should(Succeed())
-
-		By("checking that the counter did not rise for a resource the previous release already knew")
-		// The known unmanaged resources travel in the scope's status, which the migration copies
-		// before the new scope's first sync.
-		for _, s := range samples {
-			if s.name == "hs_aws_unmanaged_resources_total" && s.labels["scope"] == upgradeScope {
-				Expect(s.value).To(BeZero(), "counted again after the upgrade: %v", s.labels)
-			}
+		By("finding the old group's CRDs still there, with the old objects: nothing deletes them but a person")
+		for _, crd := range strings.Fields(oldCRDs) {
+			_, err := utils.Run(exec.Command("kubectl", "get", "crd", crd))
+			Expect(err).NotTo(HaveOccurred(), "%s is gone", crd)
 		}
-		Expect(findSample(samples, "hs_aws_unmanaged_resources", hubAccount, "vpc").value).To(BeNumerically(">=", 1),
-			"the dry-run VPC is still unmanaged, so the check above had something to not count")
+		Expect(migratedTo(resOldClaims, "payments", "-n", "default")).To(Equal("payments"))
+
+		By("finding no webhook for the old group any more")
+		for _, kind := range []string{"validatingwebhookconfiguration", "mutatingwebhookconfiguration"} {
+			out, err := kubectlOut("get", kind, upgradeDeployment, "-o", "jsonpath={.webhooks[*].rules[*].apiGroups}")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(out).To(ContainSubstring("network.hypersurgery.dev"))
+			Expect(out).NotTo(ContainSubstring("aws.hypersurgery"))
+		}
 	})
 
-	It("keeps every object and its status in the new group", func() {
+	It("keeps every object and its status, and reports no known unmanaged resource as new", func() {
 		var after newSnapshot
-		_, acquired := newLeader()
+		leader, acquired := newLeader()
+
 		By("waiting for a sync the new release started")
 		// lastSyncTime is when the sync started, in whole seconds. One that started in a later
-		// second than the lease was taken cannot be the previous release's.
-		// Nothing changed in AWS, so the new release's full sync must arrive at the steady state
-		// the previous one left: the same counts, the same known unmanaged resources, the same
-		// networks and subnets.
+		// second than the lease was taken cannot be the previous release's. Nothing changed in
+		// AWS, so the new release's full sync must arrive at the steady state the previous one
+		// left: the same counts, the same known unmanaged resources, the same networks and
+		// subnets.
 		Eventually(func(g Gomega) {
 			after = takeNewSnapshot(g)
 			g.Expect(after.scope.Status.LastSyncTime).NotTo(BeNil())
@@ -424,11 +409,11 @@ spec:
 			g.Expect(after.steadyState()).To(Equal(before.steadyState()))
 		}).Should(Succeed())
 
-		By("comparing the NetworkScope with the migration's own conversion of the old one")
-		converted, _ := migration.NetworkScope(&before.scope, migration.ForCluster)
-		Expect(subsetDiff("spec", converted.Spec, after.scope.Spec)).To(BeEmpty())
-		Expect(after.scope.Spec.NamespaceSelector).NotTo(BeNil(), "unset in the old group, {} in the new one")
-		Expect(after.scope.Annotations).To(HaveKeyWithValue(networkv1beta1.AnnotationMigratedFrom, migration.OldAPIVersion))
+		By("comparing the NetworkScope")
+		// What the new release adds (a default of a new field) is allowed; what it loses or
+		// changes is not.
+		Expect(subsetDiff("spec", before.scope.Spec, after.scope.Spec)).To(BeEmpty())
+		Expect(subsetDiff("annotations", before.scope.Annotations, after.scope.Annotations)).To(BeEmpty())
 		for _, t := range before.scope.Status.Targets {
 			now := targetStatus(&after.scope, t.Account)
 			Expect(now).NotTo(BeNil(), "target %s is gone", t.Account)
@@ -436,41 +421,21 @@ spec:
 			Expect(now.UnmanagedIDs).To(ConsistOf(t.UnmanagedIDs), "the known unmanaged resources of %s", t.Account)
 		}
 
-		By("comparing the networks and subnets with the VPCs and subnets the old release reported")
-		Expect(mapKeys(after.networks)).To(ConsistOf(mapKeys(before.vpcs)))
-		for id, v := range before.vpcs {
-			n := after.networks[id]
-			Expect(n.Spec.Provider).To(Equal(networkv1beta1.ProviderAWS))
-			Expect(n.Spec.Account).To(Equal(v.Spec.Account))
-			Expect(n.Status.CIDRBlocks).To(Equal(v.Status.CIDRBlocks), id)
-			Expect(n.Status.Owner).To(Equal(v.Status.Owner), id)
-			Expect(n.Status.Tags).To(Equal(v.Status.Tags), id)
-			Expect(n.Status.Subnets).To(Equal(v.Status.Subnets), id)
-			Expect(n.Status.OverlapsWith).To(Equal(v.Status.OverlapsWith), id)
+		By("comparing the networks and subnets")
+		Expect(mapKeys(after.networks)).To(ConsistOf(mapKeys(before.networks)))
+		for id, n := range before.networks {
+			Expect(subsetDiff(id, n.Spec, after.networks[id].Spec)).To(BeEmpty())
+			Expect(after.networks[id].Status.CIDRBlocks).To(Equal(n.Status.CIDRBlocks), id)
+			Expect(after.networks[id].Status.Owner).To(Equal(n.Status.Owner), id)
+			Expect(after.networks[id].Status.Subnets).To(Equal(n.Status.Subnets), id)
 		}
 		Expect(mapKeys(after.subnets)).To(ConsistOf(mapKeys(before.subnets)))
 		for id, s := range before.subnets {
-			n := after.subnets[id]
-			Expect(n.Spec.NetworkID).To(Equal(s.Spec.VPCID), id)
-			Expect(n.Status.CIDRBlock).To(Equal(s.Status.CIDRBlock), id)
-			Expect(n.Status.Zone).To(Equal(s.Status.AvailabilityZone), id)
-			Expect(n.Status.AvailableIPs).To(HaveValue(Equal(s.Status.AvailableIPs)), id)
-			Expect(n.Status.Owner).To(Equal(s.Status.Owner), id)
-			Expect(n.Status.Tags).To(Equal(s.Status.Tags), id)
-			Expect(n.Status.MissingTags).To(Equal(s.Status.MissingTags), id)
-			Expect(n.Status.AWS).NotTo(BeNil())
-			Expect(n.Status.AWS.Public).To(Equal(s.Status.Public), id)
+			Expect(subsetDiff(id, s.Spec, after.subnets[id].Spec)).To(BeEmpty())
+			Expect(after.subnets[id].Status.CIDRBlock).To(Equal(s.Status.CIDRBlock), id)
+			Expect(after.subnets[id].Status.Owner).To(Equal(s.Status.Owner), id)
+			Expect(after.subnets[id].Status.Tags).To(Equal(s.Status.Tags), id)
 		}
-
-		By("finding the old VPC and Subnet objects gone with their migrated scope")
-		Eventually(func(g Gomega) {
-			var vpcs awsv1alpha1.VPCList
-			g.Expect(getList(&vpcs, "vpcs.aws.hypersurgery")).To(Succeed())
-			g.Expect(vpcs.Items).To(BeEmpty())
-			var subnets awsv1alpha1.SubnetList
-			g.Expect(getList(&subnets, "subnets.aws.hypersurgery")).To(Succeed())
-			g.Expect(subnets.Items).To(BeEmpty())
-		}).Should(Succeed())
 
 		By("comparing the SubnetClaim: still Ready, with the same reservations and no second set in AWS")
 		oldClaim := before.claims["payments"]
@@ -481,62 +446,66 @@ spec:
 			g.Expect(claim.Status.Allocations).To(HaveLen(len(oldClaim.Status.Allocations)))
 			for _, a := range oldClaim.Status.Allocations {
 				g.Expect(claim.Status.Allocations).To(ContainElement(SatisfyAll(
-					HaveField("Zone", a.AvailabilityZone), HaveField("CIDRBlock", a.CIDRBlock),
+					HaveField("Name", a.Name), HaveField("Zone", a.Zone), HaveField("CIDRBlock", a.CIDRBlock),
 					HaveField("SubnetID", a.SubnetID))))
 			}
 			g.Expect(claim.Annotations[networkv1beta1.AnnotationCreatedBy]).
-				To(Equal(oldClaim.Annotations[awsv1alpha1.AnnotationCreatedBy]), "the creator travels with the claim")
+				To(Equal(oldClaim.Annotations[networkv1beta1.AnnotationCreatedBy]), "the creator stays")
 		}).Should(Succeed())
 		Expect(describeSubnetsByTag(context.Background(), "hs/claim", "default/payments")).To(HaveLen(2))
 
 		By("comparing the ResourceImports: applied once, not again")
 		for name, imp := range before.imports {
 			now := after.imports[name]
-			Expect(now.Status.State).To(Equal(string(imp.Status.State)), name)
+			Expect(now.Status.State).To(Equal(imp.Status.State), name)
 			Expect(now.Status.AppliedTags).To(Equal(imp.Status.AppliedTags), name)
 			// An import applied again would carry a new time: the CreateTags call nobody asked for.
 			Expect(now.Status.AppliedTime.Equal(imp.Status.AppliedTime)).To(BeTrue(),
 				"%s was applied again: %v, before %v", name, now.Status.AppliedTime, imp.Status.AppliedTime)
 			Expect(now.Annotations[networkv1beta1.AnnotationCreatedBy]).
-				To(Equal(imp.Annotations[awsv1alpha1.AnnotationCreatedBy]), name)
-			if imp.Status.State == awsv1alpha1.ImportApplied {
-				Expect(importReady(&now)).NotTo(BeNil())
-				Expect(importReady(&now).Status).To(Equal(metav1.ConditionTrue), name)
-			}
+				To(Equal(imp.Annotations[networkv1beta1.AnnotationCreatedBy]), name)
 		}
-		Expect(tagsOf(context.Background(), dryRunVPC)).To(HaveKeyWithValue("Name", "dry-run"))
 		Expect(tagsOf(context.Background(), dryRunVPC)).NotTo(HaveKey("hs/owner"), "the dry run stayed dry")
 
 		By("comparing the SheetExport")
-		exp := after.exports[upgradeScope]
-		Expect(exp.Spec.SpreadsheetID).To(Equal(before.exports[upgradeScope].Spec.SpreadsheetID))
+		Expect(subsetDiff("spec", before.exports[upgradeScope].Spec, after.exports[upgradeScope].Spec)).To(BeEmpty())
+
+		By("counting nothing as pending: every old object is migrated")
+		var samples []metricSample
 		Eventually(func(g Gomega) {
-			exp := takeNewSnapshot(g).exports[upgradeScope]
-			g.Expect(sheetReady(exp.Status.Conditions)).NotTo(BeNil())
-			g.Expect(sheetReady(exp.Status.Conditions).Reason).To(Equal("ExportFailed"))
+			samples = scrape(g, leader)
+			for _, kind := range []string{"NetworkScope", "SubnetClaim", "ResourceImport", "SheetExport"} {
+				s := findMetric(samples, "hs_migration_pending_objects", map[string]string{"kind": kind})
+				g.Expect(s).NotTo(BeNil(), "no hs_migration_pending_objects for %s", kind)
+				g.Expect(s.value).To(BeZero(), kind)
+			}
 		}).Should(Succeed())
 
-		By("finding every old object marked with the name of its copy")
-		for _, args := range [][]string{
-			{resOldScopes, upgradeScope},
-			{"sheetexports.aws.hypersurgery", upgradeScope},
-			{resOldClaims, "payments", "-n", "default"},
-			{resOldImport, "sandbox-vpc-import", "-n", "default"},
-			{resOldImport, "sandbox-subnet-import", "-n", "default"},
-			{resOldImport, "dry-run-import", "-n", "default"},
-		} {
-			out, err := kubectlOut(append([]string{"get"},
-				append(args, "-o", "jsonpath={.metadata.annotations.network\\.hypersurgery\\.dev/migrated-to}")...)...)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(out).To(Equal(args[1]), "%v", args)
+		By("waiting for the new leader's first sync to report every target")
+		// The gauges are set for each target in the same pass that counts newly seen resources,
+		// subnets last, so once all four exist that pass is over and the counter has its answer.
+		Eventually(func(g Gomega) {
+			samples = scrape(g, leader)
+			for _, account := range []string{hubAccount, spokeAccount} {
+				for _, kind := range []string{networkKind, "subnet"} {
+					g.Expect(findSample(samples, unmanagedGauge, account, kind)).NotTo(BeNil(),
+						"no %s for %s/%s yet", unmanagedGauge, account, kind)
+				}
+			}
+		}).Should(Succeed())
+		for _, s := range samples {
+			if s.name == unmanagedCounter && s.labels["scope"] == upgradeScope {
+				Expect(s.value).To(BeZero(), "counted again after the upgrade: %s %v", s.name, s.labels)
+			}
 		}
+		Expect(findSample(samples, unmanagedGauge, hubAccount, networkKind).value).To(BeNumerically(">=", 1),
+			"the dry-run VPC is still unmanaged, so the check above had something to not count")
 	})
 
-	It("lets the webhooks of the new release accept every object, and refuse edits of migrated ones", func() {
+	It("lets the webhooks of the new release accept an update of every object", func() {
 		// A label change is an UPDATE of the whole object, which the validating and mutating
 		// webhooks see like any other edit. An object the new release refuses would be stuck:
-		// nobody could change it without deleting it first. That holds for the copies, and for
-		// the old objects too, which GitOps tools keep applying until their manifests change.
+		// nobody could change it without deleting it first.
 		for _, args := range [][]string{
 			{resScopes, upgradeScope},
 			{resExports, upgradeScope},
@@ -544,20 +513,11 @@ spec:
 			{resImports, "sandbox-vpc-import", "-n", "default"},
 			{resImports, "sandbox-subnet-import", "-n", "default"},
 			{resImports, "dry-run-import", "-n", "default"},
-			{resOldScopes, upgradeScope},
-			{resOldClaims, "payments", "-n", "default"},
-			{resOldImport, "sandbox-vpc-import", "-n", "default"},
 		} {
 			_, err := utils.Run(exec.Command("kubectl", append([]string{"label", "--overwrite"},
 				append(args, "e2e.hypersurgery.dev/upgraded=true")...)...))
 			Expect(err).NotTo(HaveOccurred(), "the new release refused an update of %v", args)
 		}
-
-		By("refusing a spec change of a migrated object, naming the one to change")
-		_, err := utils.Run(exec.Command("kubectl", "patch", resOldClaims, "payments", "-n", "default",
-			"--type=merge", "-p", `{"spec":{"tier":"public"}}`))
-		Expect(err).To(HaveOccurred())
-		Expect(err.Error()).To(ContainSubstring("network.hypersurgery.dev/v1beta1 SubnetClaim default/payments"))
 	})
 
 	It("keeps syncing, and still counts an unmanaged resource that is really new", func() {
@@ -580,19 +540,170 @@ spec:
 		By("checking that it, and only it, was counted as new")
 		Eventually(func(g Gomega) {
 			samples := scrape(g, leader)
-			vpcs := findSample(samples, "hs_aws_unmanaged_resources_total", hubAccount, "vpc")
-			g.Expect(vpcs).NotTo(BeNil())
-			g.Expect(vpcs.value).To(Equal(1.0))
+			vpcs := findSample(samples, unmanagedCounter, hubAccount, networkKind)
+			g.Expect(vpcs).NotTo(BeNil(), "no %s", unmanagedCounter)
+			g.Expect(vpcs.value).To(Equal(1.0), unmanagedCounter)
 			for _, s := range samples {
-				if s.name != "hs_aws_unmanaged_resources_total" || s.labels["scope"] != upgradeScope ||
-					(s.labels["account"] == hubAccount && s.labels["kind"] == "vpc") {
+				if s.name != unmanagedCounter || s.labels["scope"] != upgradeScope ||
+					(s.labels["account"] == hubAccount && s.labels["kind"] == networkKind) {
 					continue
 				}
-				g.Expect(s.value).To(BeZero(), "counted: %v", s.labels)
+				g.Expect(s.value).To(BeZero(), "counted: %s %v", s.name, s.labels)
 			}
 		}).Should(Succeed())
 	})
+
+	It("holds a starting operator back while an old object was never migrated, and lets go once it is gone", func() {
+		// What an upgrade that skipped 0.8, or did not wait for its migration, leaves behind.
+		// Nothing serves webhooks for the old group any more, so the object is accepted as it is.
+		By("creating a claim in aws.hypersurgery/v1alpha1 that nothing migrates")
+		Expect(applyManifest(fmt.Sprintf(`
+apiVersion: aws.hypersurgery/v1alpha1
+kind: SubnetClaim
+metadata:
+  name: forgotten
+  namespace: default
+spec:
+  scopeRef: %s
+  account: "%s"
+  region: %s
+  vpcID: %s
+  prefixLength: 24
+  availabilityZones: [%sa]
+  mode: Allocate
+  owner: team-forgotten
+`, upgradeScope, hubAccount, awsRegion, fix.hubVPC, awsRegion))).To(Succeed())
+
+		By("finding it counted and warned about by the running release, which carries on")
+		leader, _ := newLeader()
+		Eventually(func(g Gomega) {
+			s := findMetric(scrape(g, leader), "hs_migration_pending_objects", map[string]string{"kind": "SubnetClaim"})
+			g.Expect(s).NotTo(BeNil())
+			g.Expect(s.value).To(Equal(1.0))
+		}).Should(Succeed())
+		Eventually(func(g Gomega) {
+			out, err := kubectlOut("get", "events", "-n", "default", "--field-selector",
+				"involvedObject.name=forgotten,reason=MigrationPending", "-o", "jsonpath={.items[*].message}")
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(out).To(ContainSubstring("Never migrated to network.hypersurgery.dev"))
+		}).Should(Succeed())
+		oldPods := operatorPods()
+
+		By("restarting the operator, whose new pod must not become ready")
+		_, err := utils.Run(exec.Command("kubectl", "rollout", "restart", "deployment/"+upgradeDeployment, "-n", namespace))
+		Expect(err).NotTo(HaveOccurred())
+		var blocked string
+		Eventually(func(g Gomega) {
+			for _, pod := range operatorPods() {
+				if !slices.Contains(oldPods, pod) {
+					blocked = pod
+				}
+			}
+			g.Expect(blocked).NotTo(BeEmpty(), "no new pod yet")
+			logs, err := kubectlOut("logs", blocked, "-n", namespace)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(logs).To(ContainSubstring("were never migrated to network.hypersurgery.dev (SubnetClaim default/forgotten)"))
+			g.Expect(logs).To(ContainSubstring("Roll back to 0.8.x"))
+		}).Should(Succeed())
+		Consistently(func(g Gomega) {
+			ready, err := kubectlOut("get", "pod", blocked, "-n", namespace,
+				"-o", `jsonpath={.status.conditions[?(@.type=="Ready")].status}`)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(ready).NotTo(Equal("True"), "the blocked pod became ready")
+			g.Expect(operatorPods()).To(ContainElements(oldPods), "the running pods were replaced regardless")
+		}, 45*time.Second, 5*time.Second).Should(Succeed())
+		Eventually(func(g Gomega) {
+			s := findMetric(scrape(g, blocked), "hs_migration_pending_objects", map[string]string{"kind": "SubnetClaim"})
+			g.Expect(s).NotTo(BeNil())
+			g.Expect(s.value).To(Equal(1.0))
+		}).Should(Succeed())
+		holder, err := kubectlOut("get", "lease", leaseName, "-n", namespace, "-o", "jsonpath={.spec.holderIdentity}")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(holder).NotTo(HavePrefix(blocked+"_"), "a blocked pod never takes the lease")
+
+		By("deleting the object, after which the rollout completes on its own")
+		_, err = utils.Run(exec.Command("kubectl", "delete", resOldClaims, "forgotten", "-n", "default"))
+		Expect(err).NotTo(HaveOccurred())
+		waitForRollout(upgradeDeployment)
+		newLeader()
+	})
+
+	It("keeps running after the old CRDs are deleted, as the upgrade guide says to", func() {
+		_, err := utils.Run(exec.Command("kubectl", append([]string{"delete", "crd"}, strings.Fields(oldCRDs)...)...))
+		Expect(err).NotTo(HaveOccurred())
+		_, err = utils.Run(exec.Command("kubectl", "rollout", "restart", "deployment/"+upgradeDeployment, "-n", namespace))
+		Expect(err).NotTo(HaveOccurred())
+		waitForRollout(upgradeDeployment)
+		leader, acquired := newLeader()
+
+		Eventually(func(g Gomega) {
+			scope := &networkv1beta1.NetworkScope{}
+			g.Expect(getObject(resScopes, upgradeScope, scope)).To(Succeed())
+			g.Expect(scope.Status.LastSyncTime).NotTo(BeNil())
+			g.Expect(scope.Status.LastSyncTime.Time).To(BeTemporally(">", acquired.Truncate(time.Second)))
+			g.Expect(readyCondition(scope)).NotTo(BeNil())
+			g.Expect(readyCondition(scope).Status).To(Equal(metav1.ConditionTrue))
+			samples := scrape(g, leader)
+			for _, kind := range []string{"NetworkScope", "SubnetClaim", "ResourceImport", "SheetExport"} {
+				s := findMetric(samples, "hs_migration_pending_objects", map[string]string{"kind": kind})
+				g.Expect(s).NotTo(BeNil(), kind)
+				g.Expect(s.value).To(BeZero(), kind)
+			}
+		}).Should(Succeed())
+		// kubectl resolves the plain names to the one group left, once its discovery cache has
+		// caught up; a fresh cache stands in for that.
+		out, err := kubectlOut("get", "subnetclaims", "-n", "default", "--cache-dir", GinkgoT().TempDir(),
+			"-o", "jsonpath={.items[*].apiVersion}")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(out).To(ContainSubstring("network.hypersurgery.dev/v1beta1"))
+	})
 })
+
+// migratedTo is the migrated-to annotation of an old-group object, which 0.8 set once the
+// object's copy existed, or the error kubectl gave.
+func migratedTo(args ...string) string {
+	out, err := kubectlOut(append(append([]string{"get"}, args...),
+		"-o", `jsonpath={.metadata.annotations.network\.hypersurgery\.dev/migrated-to}`)...)
+	if err != nil {
+		return "error: " + err.Error()
+	}
+	return out
+}
+
+// operatorPods lists the release's operator pods that are not being deleted.
+func operatorPods() []string {
+	GinkgoHelper()
+	out, err := kubectlOut("get", "pods", "-n", namespace, "-l",
+		"app.kubernetes.io/instance="+upgradeRelease+",app.kubernetes.io/name="+upgradeDeployment,
+		"-o", `go-template={{range .items}}{{if not .metadata.deletionTimestamp}}{{.metadata.name}} {{end}}{{end}}`)
+	Expect(err).NotTo(HaveOccurred())
+	return strings.Fields(out)
+}
+
+// leaderRunning returns the pod holding the lease, when it runs image ("" for any).
+func leaderRunning(g Gomega, image string) string {
+	out, err := utils.Run(exec.Command("kubectl", "get", "lease", leaseName, "-n", namespace,
+		"-o", "jsonpath={.spec.holderIdentity}"))
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(strings.TrimSpace(out)).NotTo(BeEmpty(), "the lease is not held")
+	leader := strings.SplitN(strings.TrimSpace(out), "_", 2)[0] // "<pod>_<uuid>"
+	if image != "" {
+		running, err := utils.Run(exec.Command("kubectl", "get", "pod", leader, "-n", namespace,
+			"-o", "jsonpath={.spec.containers[0].image}"))
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(strings.TrimSpace(running)).To(Equal(image))
+	}
+	return leader
+}
+
+func sheetReady(conds []metav1.Condition) *metav1.Condition {
+	for i := range conds {
+		if conds[i].Type == "Ready" {
+			return &conds[i]
+		}
+	}
+	return nil
+}
 
 // steadyTarget is what a full sync of unchanged AWS resources must reproduce for one target,
 // the same in both groups.
@@ -621,61 +732,6 @@ func steady(networks, subnets, unmanaged int32, targets []steadyTarget, networkO
 	}{networks, subnets, unmanaged, targets, networkObjects, subnetObjects}, "", "  ")
 	Expect(err).NotTo(HaveOccurred())
 	return string(out)
-}
-
-// oldSnapshot is every aws.hypersurgery/v1alpha1 object the upgrade spec compares, by name.
-type oldSnapshot struct {
-	scope   awsv1alpha1.NetworkScope
-	vpcs    map[string]awsv1alpha1.VPC
-	subnets map[string]awsv1alpha1.Subnet
-	claims  map[string]awsv1alpha1.SubnetClaim
-	imports map[string]awsv1alpha1.ResourceImport
-	exports map[string]awsv1alpha1.SheetExport
-}
-
-func takeOldSnapshot(g Gomega) oldSnapshot {
-	s := oldSnapshot{
-		vpcs: map[string]awsv1alpha1.VPC{}, subnets: map[string]awsv1alpha1.Subnet{},
-		claims: map[string]awsv1alpha1.SubnetClaim{}, imports: map[string]awsv1alpha1.ResourceImport{},
-		exports: map[string]awsv1alpha1.SheetExport{},
-	}
-	g.Expect(getObject(resOldScopes, upgradeScope, &s.scope)).To(Succeed())
-	var vpcs awsv1alpha1.VPCList
-	g.Expect(getList(&vpcs, "vpcs.aws.hypersurgery")).To(Succeed())
-	for _, v := range vpcs.Items {
-		s.vpcs[v.Name] = v
-	}
-	var subnets awsv1alpha1.SubnetList
-	g.Expect(getList(&subnets, "subnets.aws.hypersurgery")).To(Succeed())
-	for _, sn := range subnets.Items {
-		s.subnets[sn.Name] = sn
-	}
-	var claims awsv1alpha1.SubnetClaimList
-	g.Expect(getList(&claims, resOldClaims, "-n", "default")).To(Succeed())
-	for _, c := range claims.Items {
-		s.claims[c.Name] = c
-	}
-	var imports awsv1alpha1.ResourceImportList
-	g.Expect(getList(&imports, resOldImport, "-n", "default")).To(Succeed())
-	for _, i := range imports.Items {
-		s.imports[i.Name] = i
-	}
-	var exports awsv1alpha1.SheetExportList
-	g.Expect(getList(&exports, "sheetexports.aws.hypersurgery")).To(Succeed())
-	for _, e := range exports.Items {
-		s.exports[e.Name] = e
-	}
-	return s
-}
-
-func (s oldSnapshot) steadyState() string {
-	var targets []steadyTarget
-	for _, t := range s.scope.Status.Targets {
-		targets = append(targets, steadyTarget{t.Account, t.Region, t.VPCs, t.Subnets,
-			t.UnmanagedVPCs, t.UnmanagedSubnets, slices.Clone(t.UnmanagedIDs)})
-	}
-	return steady(s.scope.Status.VPCs, s.scope.Status.Subnets, s.scope.Status.Unmanaged, targets,
-		mapKeys(s.vpcs), mapKeys(s.subnets))
 }
 
 // newSnapshot is every network.hypersurgery.dev object the upgrade spec compares, by name.
@@ -731,24 +787,6 @@ func (s newSnapshot) steadyState() string {
 	}
 	return steady(s.scope.Status.Networks, s.scope.Status.Subnets, s.scope.Status.Unmanaged, targets,
 		mapKeys(s.networks), mapKeys(s.subnets))
-}
-
-func oldReady(conds []metav1.Condition) *metav1.Condition {
-	for i := range conds {
-		if conds[i].Type == "Ready" {
-			return &conds[i]
-		}
-	}
-	return nil
-}
-
-func oldTarget(scope *awsv1alpha1.NetworkScope, account string) *awsv1alpha1.TargetStatus {
-	for i := range scope.Status.Targets {
-		if scope.Status.Targets[i].Account == account && scope.Status.Targets[i].Region == awsRegion {
-			return &scope.Status.Targets[i]
-		}
-	}
-	return nil
 }
 
 // findMetric returns the first sample of the metric whose labels include these, or nil.
@@ -854,6 +892,13 @@ func scrape(g Gomega, pod string) []metricSample {
 
 // findSample returns the scope's sample of an unmanaged metric for the account and kind in the
 // test region, or nil when the process never set it.
+// The unmanaged-resource metrics of the release under test, and the kind label of a network.
+const (
+	unmanagedGauge   = "hs_unmanaged_resources"
+	unmanagedCounter = "hs_unmanaged_resources_total"
+	networkKind      = "network"
+)
+
 func findSample(samples []metricSample, name, account, kind string) *metricSample {
 	for i, s := range samples {
 		if s.name == name && s.labels["scope"] == upgradeScope && s.labels["account"] == account &&
@@ -862,6 +907,28 @@ func findSample(samples []metricSample, name, account, kind string) *metricSampl
 		}
 	}
 	return nil
+}
+
+func mapKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
+// dumpReleaseState prints what the release's pods are doing, so a failure says why.
+func dumpReleaseState() {
+	selector := "app.kubernetes.io/instance=" + upgradeRelease
+	for _, args := range [][]string{
+		{"get", "pods", "-n", namespace, "-o", "wide"},
+		{"describe", "deployment/" + upgradeDeployment, "-n", namespace},
+		{"get", "events", "-n", namespace, "--sort-by=.lastTimestamp"},
+		{"logs", "-n", namespace, "-l", selector, "--all-containers", "--tail=300", "--prefix"},
+	} {
+		out, err := utils.Run(exec.Command("kubectl", args...))
+		_, _ = fmt.Fprintf(GinkgoWriter, "\n--- kubectl %s ---\n%s\nerr: %v\n", strings.Join(args, " "), out, err)
+	}
 }
 
 // subsetDiff compares two values through their JSON form and describes the first thing that
@@ -908,30 +975,4 @@ func jsonSubsetDiff(path string, before, after any) string {
 		}
 	}
 	return ""
-}
-
-func mapKeys[V any](m map[string]V) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	return keys
-}
-
-func sheetReady(conds []metav1.Condition) *metav1.Condition {
-	return oldReady(conds)
-}
-
-// dumpReleaseState prints what the release's pods are doing, so a failure says why.
-func dumpReleaseState() {
-	selector := "app.kubernetes.io/instance=" + upgradeRelease
-	for _, args := range [][]string{
-		{"get", "pods", "-n", namespace, "-o", "wide"},
-		{"describe", "deployment/" + upgradeDeployment, "-n", namespace},
-		{"get", "events", "-n", namespace, "--sort-by=.lastTimestamp"},
-		{"logs", "-n", namespace, "-l", selector, "--all-containers", "--tail=300", "--prefix"},
-	} {
-		out, err := utils.Run(exec.Command("kubectl", args...))
-		_, _ = fmt.Fprintf(GinkgoWriter, "\n--- kubectl %s ---\n%s\nerr: %v\n", strings.Join(args, " "), out, err)
-	}
 }

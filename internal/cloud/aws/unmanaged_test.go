@@ -58,7 +58,7 @@ func TestDiscoverTargetReportsUnmanaged(t *testing.T) {
 	api := unmanagedFake()
 	target := inventory.Target{
 		Account: "111111111111", Region: "eu-central-1",
-		VPCTagSelector: map[string]string{"hs/managed": "true"}, DiscoverUnmanaged: true,
+		NetworkSelector: map[string]string{"hs/managed": "true"}, DiscoverUnmanaged: true,
 	}
 
 	snap, err := DiscoverTarget(context.Background(), api, target)
@@ -74,11 +74,11 @@ func TestDiscoverTargetReportsUnmanaged(t *testing.T) {
 		t.Errorf("the listing must be unfiltered to see everything, got %v", api.vpcFilters)
 	}
 
-	if len(snap.VPCs) != 1 || snap.VPCs[0].ID != "vpc-managed" {
-		t.Fatalf("managed VPCs = %+v, want only vpc-managed", snap.VPCs)
+	if len(snap.Networks) != 1 || snap.Networks[0].ID != "vpc-managed" {
+		t.Fatalf("managed VPCs = %+v, want only vpc-managed", snap.Networks)
 	}
-	unmanaged := make([]string, 0, len(snap.UnmanagedVPCs))
-	for _, v := range snap.UnmanagedVPCs {
+	unmanaged := make([]string, 0, len(snap.UnmanagedNetworks))
+	for _, v := range snap.UnmanagedNetworks {
 		unmanaged = append(unmanaged, v.ID)
 	}
 	// A tag with the wrong value is as unmanaged as no tag at all.
@@ -102,7 +102,7 @@ func TestDiscoverTargetWithoutUnmanagedFiltersServerSide(t *testing.T) {
 	api := unmanagedFake()
 	target := inventory.Target{
 		Account: "111111111111", Region: "eu-central-1",
-		VPCTagSelector: map[string]string{"hs/managed": "true"},
+		NetworkSelector: map[string]string{"hs/managed": "true"},
 	}
 
 	snap, err := DiscoverTarget(context.Background(), api, target)
@@ -113,9 +113,9 @@ func TestDiscoverTargetWithoutUnmanagedFiltersServerSide(t *testing.T) {
 	if len(api.vpcFilters) != 1 || aws.ToString(api.vpcFilters[0].Name) != "tag:hs/managed" {
 		t.Errorf("filters = %v, want the selector applied server side", api.vpcFilters)
 	}
-	if len(snap.UnmanagedVPCs) != 0 || len(snap.UnmanagedSubnets) != 0 {
+	if len(snap.UnmanagedNetworks) != 0 || len(snap.UnmanagedSubnets) != 0 {
 		t.Errorf("nothing unmanaged should be reported, got %d VPCs and %d subnets",
-			len(snap.UnmanagedVPCs), len(snap.UnmanagedSubnets))
+			len(snap.UnmanagedNetworks), len(snap.UnmanagedSubnets))
 	}
 }
 

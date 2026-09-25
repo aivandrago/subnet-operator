@@ -22,7 +22,7 @@ https://hypersurgery.dev/dashboard/
 
 ## Status
 
-**Alpha.** The latest release is v0.8.0. Read-only discovery is the default
+**Alpha.** The latest release is v0.9.0. Read-only discovery is the default
 and the part that has had the most use: the operator finds VPCs and subnets across accounts and
 regions, mirrors them as `Network` and `Subnet` objects, reports compliance findings, exports them to a Google Sheet and publishes
 Prometheus metrics, calling only EC2 `Describe*` APIs.
@@ -40,12 +40,13 @@ Tested against [Moto](https://github.com/getmoto/moto) in Kind, not yet against 
 organization — that conformance run is the open item in the current milestone. Every change is
 also tested as an upgrade from the latest release.
 
-New in 0.8: the API is the cloud-neutral group `network.hypersurgery.dev/v1beta1`, where a
+Since 0.8 the API is the cloud-neutral group `network.hypersurgery.dev/v1beta1`, where a
 `NetworkScope` names its provider and a `VPC` is a `Network`, and the project and its chart are
-called `subnet-operator` (until 0.7: `aws-subnet-operator`). The operator migrates every
-`aws.hypersurgery/v1alpha1` object itself, status included; that group is deprecated and
-removed in 0.9. Upgrading from 0.7: [the upgrade guide](docs/operations/upgrades.md#upgrading-from-07-to-08).
-The design is [ADR 0002](docs/adr/0002-multi-cloud-model.md).
+called `subnet-operator` (until 0.7: `aws-subnet-operator`). 0.8 migrated every
+`aws.hypersurgery/v1alpha1` object itself, status included; 0.9 removes that group, so 0.7
+upgrades through 0.8: [0.7 to 0.8](docs/operations/upgrades.md#upgrading-from-07-to-08), then
+[0.8 to 0.9](docs/operations/upgrades.md#upgrading-from-08-to-09). The design is
+[ADR 0002](docs/adr/0002-multi-cloud-model.md).
 
 Versioning, what counts as a breaking change, how long deprecated things live, the supported
 Kubernetes versions (1.34 to 1.37, oldest and newest tested in CI) and how security fixes ship:
@@ -62,7 +63,8 @@ Kubernetes versions (1.34 to 1.37, oldest and newest tested in CI) and how secur
 - **Spoke accounts**: deploy [`deploy/iam/spoke-readonly-role.cfn.yaml`](deploy/iam/spoke-readonly-role.cfn.yaml)
   to every account with a service-managed StackSet, passing the hub role ARN as `OperatorRoleArn`.
 
-For IRSA, annotate the service account with `eks.amazonaws.com/role-arn`; Pod Identity needs no annotation.
+For IRSA, set the chart's `providers.aws.irsaRoleARN` (it becomes the `eks.amazonaws.com/role-arn`
+annotation of the service account); Pod Identity needs nothing.
 
 ### 2. Change events (optional, recommended)
 
@@ -79,11 +81,12 @@ CloudTrail ─► EventBridge rule ──PutEvents──►  default bus ─► 
    in the operator's region. Pass `OrganizationId`.
 3. Spoke accounts: deploy [`deploy/events/spoke-events.cfn.yaml`](deploy/events/spoke-events.cfn.yaml)
    with a StackSet to every account and region in the scope, passing the hub `EventBusArn` output.
-4. Start the operator with `--events-queue-url=<QueueUrl output>` (or `EVENTS_QUEUE_URL`).
+4. Set the chart's `providers.aws.events.queueUrl` to the `QueueUrl` output (the operator's flag is
+   `--aws-events-queue-url`; `--events-queue-url` and `EVENTS_QUEUE_URL` still work until 0.10).
    The hub policy already allows the queue (`deploy/iam/operator-policy.json`).
 
 The operator only resyncs the account/region an event names. It ignores failed calls and tags on
-non-network resources, and it collects events for `--events-debounce` (10s) so a burst of calls
+non-network resources, and it collects events for `--aws-events-debounce` (10s) so a burst of calls
 causes one resync. Free-IP counts change with every ENI and are not event-driven: they are
 refreshed by the periodic full resync, which also covers lost events.
 
@@ -173,9 +176,10 @@ subnet-0a1b2c3d   vpc-0aaa   10.20.1.0/24   eu-central-1a   51         79       
 ```
 
 `networks` and `subnets` are plain names other projects use too (OpenShift, Kube-OVN), so the
-kinds have prefixed short names and the `hypersurgery` category. While the deprecated
-`aws.hypersurgery` CRDs are still installed, `kubectl get subnets` means *their* subnets;
-use the short names or the full resource name, e.g. `subnets.network.hypersurgery.dev`.
+kinds have prefixed short names and the `hypersurgery` category. While the `aws.hypersurgery`
+CRDs of 0.8 are still installed (nothing deletes them but you), `kubectl get subnets` means
+*their* subnets; use the short names or the full resource name, e.g.
+`subnets.network.hypersurgery.dev`.
 
 Users should have read-only RBAC on `networks` and `subnets`: the operator overwrites manual
 edits on the next resync.
@@ -183,26 +187,36 @@ edits on the next resync.
 ## Metrics
 
 Served on the controller-runtime metrics endpoint (`config/prometheus` has a ServiceMonitor).
-The names still carry `aws`; the neutral `hs_*` names with a `provider` label arrive next to
-them in a later change (#44, ADR 0002 §7).
+Every metric has a `provider` label (`aws` today; lowercase, like other label values). Labels
+name a network `network_id` and an availability zone `zone`, whatever the cloud calls them.
 
 | Metric | Labels | Meaning |
 |---|---|---|
-| `hs_aws_subnet_available_ips` | scope, account, region, vpc_id, subnet_id, name, cidr, az, owner, env, tier, public | Free IPv4 addresses. Only for subnets with an IPv4 CIDR: an IPv6-only subnet has no IPv4 capacity to report |
-| `hs_aws_subnet_total_ips` | same | Usable IPv4 addresses (CIDR size - 5); likewise only for subnets with an IPv4 CIDR |
-| `hs_aws_subnet_missing_required_tags` | same | Required tags absent or empty |
-| `hs_aws_subnet_claim_ready` | namespace, name, reason | 1 when a `SubnetClaim` is fulfilled, 0 while it is not; `reason` is its Ready condition's |
-| `hs_aws_resource_import_ready` | namespace, name, state, reason | 1 when a `ResourceImport` has settled (applied, or a dry run), 0 while it is pending or failed |
-| `hs_aws_vpc_cidr_overlaps` | scope, account, region, vpc_id, name, owner, env | VPCs in the scope with overlapping CIDRs |
-| `hs_aws_target_up` | scope, account, region | 1 if the account/region is reachable: the last discovery succeeded or was only throttled |
-| `hs_aws_target_sync_errors_total` | scope, account, region | Failed discoveries, not counting throttled ones |
-| `hs_aws_target_throttled` | scope, account, region | 1 while the account/region is backed off because AWS throttled its last discovery |
-| `hs_aws_api_throttled_total` | scope, account, region, operation | EC2 calls throttled, per attempt, including attempts a retry rode out |
-| `hs_aws_scope_last_sync_timestamp_seconds` | scope | Last finished sync |
-| `hs_aws_unmanaged_resources` | scope, account, region, kind | Resources without the managed tag, right now |
-| `hs_aws_unmanaged_resources_total` | scope, account, region, kind | Unmanaged resources seen for the first time; alert on an increase |
-| `hs_aws_auto_imports_total` | scope, account, region, result | Auto-import decisions: applied, dryrun, skipped, no_owner |
-| `hs_migration_pending_objects` | kind | `aws.hypersurgery/v1alpha1` objects not yet migrated to `network.hypersurgery.dev`; 0.9 does not start while it is above zero |
+| `hs_subnet_available_ips` | provider, scope, account, region, network_id, subnet_id, name, cidr, zone, owner, env, tier, public | Free IPv4 addresses. Only for subnets with an IPv4 CIDR: an IPv6-only subnet has no IPv4 capacity to report |
+| `hs_subnet_total_ips` | same | Usable IPv4 addresses (the CIDR size minus what the provider reserves, 5 on AWS); likewise only for subnets with an IPv4 CIDR |
+| `hs_subnet_missing_required_tags` | same | Required tags absent or empty |
+| `hs_subnet_claim_ready` | provider, namespace, name, reason | 1 when a `SubnetClaim` is fulfilled, 0 while it is not; `reason` is its Ready condition's, `provider` its scope's (empty while the scope does not exist) |
+| `hs_resource_import_ready` | provider, namespace, name, state, reason | 1 when a `ResourceImport` has settled (applied, or a dry run), 0 while it is pending or failed |
+| `hs_network_cidr_overlaps` | provider, scope, account, region, network_id, name, owner, env | Other networks in the scope whose CIDRs overlap this one |
+| `hs_target_up` | provider, scope, account, region | 1 if the account/region is reachable: the last discovery succeeded or was only throttled |
+| `hs_target_sync_errors_total` | provider, scope, account, region | Failed discoveries, not counting throttled ones |
+| `hs_target_throttled` | provider, scope, account, region | 1 while the account/region is backed off because its cloud throttled its last discovery |
+| `hs_api_throttled_total` | provider, scope, account, region, operation | Cloud API calls throttled, per attempt, including attempts a retry rode out |
+| `hs_scope_last_sync_timestamp_seconds` | provider, scope | Last finished sync |
+| `hs_unmanaged_resources` | provider, scope, account, region, kind | Resources without the managed tag, right now; `kind` is `network` or `subnet` |
+| `hs_unmanaged_resources_total` | provider, scope, account, region, kind | Unmanaged resources seen for the first time; alert on an increase |
+| `hs_auto_imports_total` | provider, scope, account, region, result | Auto-import decisions: applied, dryrun, skipped, no_owner. All four exist, at 0, for every target of a scope that runs the policy |
+| `hs_migration_pending_objects` | kind | `aws.hypersurgery/v1alpha1` objects 0.8 never migrated to `network.hypersurgery.dev`; while it is above zero at startup the operator runs no controllers and stays not ready ([upgrade guide](docs/operations/upgrades.md#objects-08-never-migrated)); 0 once the old CRDs are gone |
+
+The counters behind alerts start at 0 rather than appearing at their first count, so
+`increase()` sees the first rise after a restart: `hs_target_sync_errors_total` and
+`hs_unmanaged_resources_total` from a target's first sync, and `hs_auto_imports_total` for all
+four results once its scope runs the auto-import policy.
+
+**Renamed in 0.9:** 0.8 exported these metrics as `hs_aws_<name>`, with no `provider`, `vpc_id`
+for `network_id`, `az` for `zone` and `kind="vpc"` for `kind="network"`; 0.9 no longer exports
+them. [upgrades.md](docs/operations/upgrades.md#upgrading-from-08-to-09) has the mapping and a
+recipe for rules and dashboards of your own.
 
 ### Dashboard and alerts
 
@@ -226,7 +240,7 @@ headline counts, utilization by environment, free addresses by account, the full
 subnets missing required tags, what is still unmanaged, what the auto-import policy decided,
 account health and the age of the last full sync.
 Set `grafanaDashboard.enabled=true` and the Grafana sidecar imports it; `prometheusRule.enabled=true`
-adds alerts for nearly full subnets, unreachable accounts, accounts AWS keeps throttling, CIDR
+adds alerts for nearly full subnets, unreachable accounts, accounts their cloud keeps throttling, CIDR
 overlaps and a stale inventory.
 Every one of those alerts has a runbook entry — what it means, how to confirm it, what to do and
 when to ignore it — in [`docs/operations/`](docs/operations/), next to upgrade and rollback notes,
@@ -236,13 +250,13 @@ Example alerts:
 
 ```promql
 # Subnet more than 80% used
-1 - hs_aws_subnet_available_ips / hs_aws_subnet_total_ips > 0.8
+1 - hs_subnet_available_ips / hs_subnet_total_ips > 0.8
 # Account/region not reachable
-hs_aws_target_up == 0
-# Account/region reachable, but throttled by AWS and backed off
-hs_aws_target_throttled == 1
-# Overlapping VPC CIDRs
-hs_aws_vpc_cidr_overlaps > 0
+hs_target_up == 0
+# Account/region reachable, but throttled by its cloud and backed off
+hs_target_throttled == 1
+# Overlapping network CIDRs
+hs_network_cidr_overlaps > 0
 ```
 
 ## Capacity
@@ -263,7 +277,7 @@ closer to its limit. The limit is wall clock, so it scales with concurrency: for
 4 regions, set `discovery.concurrency` to 12. The cap is one for the whole instance, however
 many `NetworkScope`s share it. An account that is throttled anyway (by whatever else calls EC2
 there) is backed off and retried on its own schedule, stays in the inventory with its last
-known state, and shows up as `hs_aws_target_throttled` rather than as unreachable.
+known state, and shows up as `hs_target_throttled` rather than as unreachable.
 
 The arithmetic, the measurements, the API cost per sync and the memory side are in
 [docs/operations/limits.md](docs/operations/limits.md#accounts-and-regions-per-instance).
@@ -291,11 +305,13 @@ supported ones (see [docs/policy.md](docs/policy.md#kubernetes-versions)).
 
 To run the operator against any AWS-compatible endpoint, set `AWS_ENDPOINT_URL`.
 
-Layout: `api/v1beta1` (the `network.hypersurgery.dev` CRDs), `api/v1alpha1` (the deprecated
-`aws.hypersurgery` group, until 0.9), `internal/controller` (sync loops), `internal/migration`
-(the move from the old group, in the cluster and for manifests), `internal/cloud/aws`
-(EC2 discovery), `internal/events` (SQS change events), `internal/sheets` (Google Sheet export),
-`internal/inventory` (cloud-neutral model), `internal/metrics`.
+Layout: `api/v1beta1` (the `network.hypersurgery.dev` CRDs), `internal/controller` (sync loops),
+`internal/migration` (`migrate-manifests` for manifests of the removed `aws.hypersurgery` group,
+and the guard against old objects 0.8 never migrated), `internal/provider` (the provider
+interface and registry every cloud plugs into, and in `providertest` the contract each must pass),
+`internal/cloud/aws` (the AWS provider: EC2 discovery and writes, and in `events` its SQS change
+events), `internal/sheets` (Google Sheet export), `internal/inventory` (cloud-neutral model),
+`internal/metrics`.
 Packaging lives in `charts/subnet-operator` (`make helm-lint` renders it; `make helm-crds`
 refreshes the chart's copy of the CRDs), AWS-side templates in `deploy/`, examples in `examples/`.
 
@@ -529,7 +545,7 @@ Most existing VPCs and subnets are managed by Terraform. Rules:
 | 3. Allocation ✅ | `SubnetClaim`, built-in first-fit allocator, opt-in creation behind a write role, route table association, Allocate mode for Terraform | Subnets on demand |
 | 3b. Onboarding ✅ | Unmanaged discovery, `ResourceImport`, auto-import policy with creator attribution from CloudTrail | Nothing stays unowned by accident |
 | 4. Hardening ✅ | Admission webhooks, audit trail, HA, namespaced Secret access, signed image and chart, alerts that notice silence, throttling backoff, live dashboard, upgrade tests, measured capacity, threat model, namespace-scoped writes, authenticated creator in the audit trail. Open: a conformance run against a real AWS organization | Production |
-| 5. Cloud-neutral API (0.8) | `network.hypersurgery.dev/v1beta1` with the provider as a field, operator-driven migration from `aws.hypersurgery` (removed in 0.9), the project renamed to `subnet-operator` ([ADR 0002](docs/adr/0002-multi-cloud-model.md)); done: the API, the migration, the rename. Open: provider registry (#43), neutral metrics (#44), provider contract tests (#45) | One API for every cloud |
+| 5. Cloud-neutral API (0.8) | `network.hypersurgery.dev/v1beta1` with the provider as a field, operator-driven migration from `aws.hypersurgery`, the project renamed to `subnet-operator` ([ADR 0002](docs/adr/0002-multi-cloud-model.md)); done: the API, the migration, the rename (0.8), provider registry (#43), neutral metrics (#44), provider contract tests (#45) and the old group removed (0.9) | One API for every cloud |
 | 6. 1.0 | `v1` API with a compatibility promise, the [support policy](docs/policy.md) in full | Stable |
 | 7. GCP and Azure (1.x) | Providers for GCP projects and Azure subscriptions on the 1.0 API | Same UX across clouds |
 

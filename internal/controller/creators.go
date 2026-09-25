@@ -23,7 +23,7 @@ import (
 
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	"hypersurgery.dev/subnet-operator/internal/events"
+	"hypersurgery.dev/subnet-operator/internal/inventory"
 )
 
 const (
@@ -35,7 +35,8 @@ const (
 	creatorCacheTTL = 24 * time.Hour
 )
 
-// CreatorCache remembers who created a resource, from the CloudTrail events the poller sees.
+// CreatorCache remembers who created a resource, from the change events of the providers
+// (on AWS, CloudTrail through EventBridge and SQS).
 // It is best-effort by design: a miss means the policy falls back to inheritance or account
 // defaults, which is exactly what should happen for a resource created before the operator.
 //
@@ -58,8 +59,9 @@ func (c *CreatorCache) clock() time.Time {
 	return time.Now()
 }
 
-// Record stores the principals of newly created resources. It implements events.CreationSink.
-func (c *CreatorCache) Record(ctx context.Context, created []events.Creation) {
+// Record stores the principals of newly created resources. It is the Created side of every
+// provider's provider.EventSink.
+func (c *CreatorCache) Record(ctx context.Context, created []inventory.Creation) {
 	log := logf.FromContext(ctx)
 	c.mu.Lock()
 	defer c.mu.Unlock()

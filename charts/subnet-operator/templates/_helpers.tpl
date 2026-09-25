@@ -130,14 +130,67 @@ app.kubernetes.io/part-of: subnet-operator
 {{- end -}}
 
 {{/*
-The API groups the webhooks serve: the current one, and in 0.8 the deprecated one, whose
-objects the operator migrates and whose webhooks keep the old promises until then.
+The API groups and versions the webhooks serve.
 */}}
 {{- define "subnet-operator.webhook.apis" -}}
 - group: network.hypersurgery.dev
   version: v1beta1
   path: network-hypersurgery-dev-v1beta1
-- group: aws.hypersurgery
-  version: v1alpha1
-  path: aws-hypersurgery-v1alpha1
+{{- end -}}
+
+{{/*
+The providers the operator runs with, as the --providers flag takes them. At least one must be
+enabled: the operator refuses to start without.
+*/}}
+{{- define "subnet-operator.providers" -}}
+{{- $enabled := list -}}
+{{- if .Values.providers.aws.enabled -}}
+{{- $enabled = append $enabled "aws" -}}
+{{- end -}}
+{{- if not $enabled -}}
+{{- fail "enable at least one provider under providers (only providers.aws exists in this release)" -}}
+{{- end -}}
+{{- join "," $enabled -}}
+{{- end -}}
+
+{{/* AWS settings, with the deprecated 0.8 names (events.*, aws.*) as fallbacks until 0.10. */}}
+{{- define "subnet-operator.aws.eventsQueueUrl" -}}
+{{- coalesce .Values.providers.aws.events.queueUrl (dig "queueUrl" "" (default dict .Values.events)) | default "" -}}
+{{- end -}}
+{{- define "subnet-operator.aws.eventsDebounce" -}}
+{{- coalesce .Values.providers.aws.events.debounce (dig "debounce" "" (default dict .Values.events)) "10s" -}}
+{{- end -}}
+{{- define "subnet-operator.aws.region" -}}
+{{- coalesce .Values.providers.aws.region (dig "region" "" (default dict .Values.aws)) | default "" -}}
+{{- end -}}
+{{- define "subnet-operator.aws.podIdentity" -}}
+{{- $new := default dict .Values.providers.aws.podIdentity -}}
+{{- $old := dig "egress" "podIdentity" dict (default dict .Values.networkPolicy) | default dict -}}
+{{- $enabled := true -}}
+{{- if hasKey $new "enabled" -}}
+{{- $enabled = $new.enabled -}}
+{{- else if hasKey $old "enabled" -}}
+{{- $enabled = $old.enabled -}}
+{{- end -}}
+enabled: {{ $enabled }}
+cidr: {{ coalesce $new.cidr $old.cidr "169.254.170.23/32" }}
+port: {{ coalesce $new.port $old.port 80 }}
+{{- end -}}
+{{- define "subnet-operator.aws.endpointURL" -}}
+{{- coalesce .Values.providers.aws.endpointURL (dig "endpointURL" "" (default dict .Values.aws)) | default "" -}}
+{{- end -}}
+
+{{/*
+Service account annotations: each enabled provider's identity for the operator, then
+serviceAccount.annotations, which win.
+*/}}
+{{- define "subnet-operator.serviceAccountAnnotations" -}}
+{{- $annotations := dict -}}
+{{- if and .Values.providers.aws.enabled .Values.providers.aws.irsaRoleARN -}}
+{{- $_ := set $annotations "eks.amazonaws.com/role-arn" .Values.providers.aws.irsaRoleARN -}}
+{{- end -}}
+{{- $annotations = merge (deepCopy (default dict .Values.serviceAccount.annotations)) $annotations -}}
+{{- if $annotations -}}
+{{- toYaml $annotations | trim -}}
+{{- end -}}
 {{- end -}}

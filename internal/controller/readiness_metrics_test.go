@@ -45,6 +45,11 @@ func readySeries(metric, name string) map[string]float64 {
 			if labels["namespace"] != "default" || labels["name"] != name {
 				continue
 			}
+			// The provider is the claim's or the import's scope's: every scope here is AWS, and
+			// a scope that does not exist has none.
+			if p, ok := labels["provider"]; ok && p != "aws" && p != "" {
+				continue
+			}
 			key := labels["reason"]
 			if state, ok := labels["state"]; ok {
 				key = strings.Join([]string{state, labels["reason"]}, "/")

@@ -1,19 +1,19 @@
 {{- if .Values.networkScope.create }}
 {{- /*
-Accounts may be written the way the 0.7 chart took them, with roleARN, externalID and
-writeRoleARN next to the id; they move into the aws member the new API keeps them in, so a
-values file from 0.7 renders the same scope.
+The 0.7 forms of these values, deprecated in 0.8, were removed in 0.9. Rendered as they are,
+the API server would drop the unknown fields without a word: an account's roles would be
+lost, and the scope would read it with the operator's own identity. Refused instead.
 */}}
-{{- $accounts := list }}
 {{- range .Values.networkScope.accounts }}
-{{- $account := omit . "roleARN" "externalID" "writeRoleARN" }}
-{{- $aws := merge (dict) (default dict .aws) (pick . "roleARN" "externalID" "writeRoleARN") }}
-{{- if $aws }}
-{{- $_ := set $account "aws" $aws }}
+{{- if or .roleARN .externalID .writeRoleARN }}
+{{- fail (printf "networkScope.accounts: roleARN, externalID and writeRoleARN next to the id (account %v) were removed in 0.9; move them into the account's aws member (aws: {roleARN: ...})" .id) }}
 {{- end }}
-{{- $accounts = append $accounts $account }}
 {{- end }}
-{{- $matchTags := .Values.networkScope.vpcTagSelector | default .Values.networkScope.networkSelector.matchTags }}
+{{- if .Values.networkScope.vpcTagSelector }}
+{{- fail "networkScope.vpcTagSelector was removed in 0.9; use networkScope.networkSelector.matchTags" }}
+{{- end }}
+{{- $accounts := .Values.networkScope.accounts }}
+{{- $matchTags := .Values.networkScope.networkSelector.matchTags }}
 apiVersion: network.hypersurgery.dev/v1beta1
 kind: NetworkScope
 metadata:

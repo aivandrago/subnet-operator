@@ -2,8 +2,8 @@ apiVersion: v2
 name: subnet-operator
 description: Kubernetes operator that discovers cloud networks and subnets (AWS today) from resource tags and keeps a live inventory in the cluster
 type: application
-version: 0.8.0
-appVersion: "0.8.0"
+version: 0.9.0
+appVersion: "0.9.0"
 kubeVersion: ">=1.28.0-0"
 keywords:
   - aws
@@ -34,7 +34,7 @@ annotations:
   artifacthub.io/prerelease: "true"
   artifacthub.io/images: |
     - name: subnet-operator
-      image: ghcr.io/aivandrago/subnet-operator:0.8.0
+      image: ghcr.io/aivandrago/subnet-operator:0.9.0
       platforms:
         - linux/amd64
         - linux/arm64
@@ -50,22 +50,28 @@ annotations:
     - name: Dashboard demo
       url: https://hypersurgery.dev/dashboard/
   artifacthub.io/changes: |
-    - kind: changed
-      description: The chart is renamed from aws-subnet-operator to subnet-operator; upgrade an existing release to the new chart, see the upgrade guide
+    - kind: removed
+      description: aws.hypersurgery/v1alpha1 is removed with its CRDs, webhooks and the migration controller; upgrade from 0.8 only after it migrated every object, see the upgrade guide
     - kind: added
-      description: New API group network.hypersurgery.dev/v1beta1 with a provider field; VPC becomes Network
+      description: The operator does not start its controllers while aws.hypersurgery/v1alpha1 objects that 0.8 never migrated exist; it stays not ready and names them
+    - kind: removed
+      description: The manager flag --migrate-v1alpha1
+    - kind: removed
+      description: The 0.7 chart values networkScope.vpcTagSelector and roleARN, externalID and writeRoleARN next to an account's id are refused
+    - kind: changed
+      description: The old CRDs are not deleted by the upgrade; delete them yourself once nothing is left to migrate
+    - kind: changed
+      description: Metrics are renamed from hs_aws_* to hs_* with provider, network_id and zone labels, without an overlap
+    - kind: changed
+      description: The alert VPCCIDROverlap is renamed NetworkCIDROverlap; alert labels and texts are cloud-neutral
+    - kind: fixed
+      description: UnmanagedNetworkResource fires for a single new resource, and the first auto-import after a restart is counted
+    - kind: added
+      description: Providers are registered per cloud, with their settings under providers.aws; NetworkScope reports status.capabilities and status.ownership
     - kind: deprecated
-      description: aws.hypersurgery/v1alpha1 is deprecated and removed in 0.9; the operator migrates its objects, status included, to the new group
+      description: events.*, aws.* and networkPolicy.egress.podIdentity are now under providers.aws, and --events-queue-url and --events-debounce are --aws-events-*; the old names are removed in 0.10
     - kind: added
-      description: manager migrate-manifests rewrites aws.hypersurgery/v1alpha1 manifests for GitOps repositories
-    - kind: changed
-      description: A NetworkScope without namespaceSelector allows no namespace in the new group; migrated scopes get an explicit {} (every namespace)
-    - kind: added
-      description: hs_migration_pending_objects counts old-group objects that are not migrated yet
-    - kind: changed
-      description: The Grafana dashboard's UID is subnet-operator and its title Subnet inventory
-    - kind: changed
-      description: The service account's name follows the renamed chart; update a Pod Identity association or IRSA trust policy before upgrading, or pin serviceAccount.name
+      description: manager migrate-manifests keeps converting aws.hypersurgery/v1alpha1 manifests for GitOps repositories
   artifacthub.io/crds: |
     - kind: NetworkScope
       version: v1beta1

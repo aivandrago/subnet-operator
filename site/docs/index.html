@@ -203,15 +203,15 @@ aws eks create-pod-identity-association \
         <h3>Install the chart</h3>
         <p>The image is public and signed, so there is no pull secret and nothing to log in to.
           If you would rather check what you are about to run before you run it:</p>
-<pre>cosign verify ghcr.io/aivandrago/subnet-operator:v0.8.0 \
+<pre>cosign verify ghcr.io/aivandrago/subnet-operator:v0.9.0 \
   --certificate-identity-regexp <span class="s">'^https://github.com/aivandrago/subnet-operator/\.github/workflows/release\.yml@'</span> \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com</pre>
         <p>The signature names the workflow file and the tag that built the image, so it says
           what produced it rather than merely that somebody signed it.</p>
 <pre>helm install subnet-operator hypersurgery/subnet-operator \
   --namespace subnet-operator-system --create-namespace \
-  --set aws.region=<span class="s">eu-central-1</span> \
-  --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"=<span class="s">arn:aws:iam::111111111111:role/aws-subnet-operator</span></pre>
+  --set providers.aws.region=<span class="s">eu-central-1</span> \
+  --set providers.aws.irsaRoleARN=<span class="s">arn:aws:iam::111111111111:role/aws-subnet-operator</span></pre>
         <p>The chart installs the CRDs, RBAC, the manager and a metrics service. Drop the
           <code>serviceAccount.annotations</code> line if you use Pod Identity.</p>
         <p>Since v0.6.0 releases also publish the chart to ghcr.io as an OCI artifact, signed
@@ -223,8 +223,8 @@ aws eks create-pod-identity-association \
 helm install subnet-operator oci://ghcr.io/aivandrago/charts/subnet-operator \
   --version <span class="n">&lt;version&gt;</span> \
   --namespace subnet-operator-system --create-namespace \
-  --set aws.region=<span class="s">eu-central-1</span> \
-  --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"=<span class="s">arn:aws:iam::111111111111:role/aws-subnet-operator</span></pre>
+  --set providers.aws.region=<span class="s">eu-central-1</span> \
+  --set providers.aws.irsaRoleARN=<span class="s">arn:aws:iam::111111111111:role/aws-subnet-operator</span></pre>
       </div>
     </div>
 
@@ -281,7 +281,7 @@ kubectl get hypersurgery                 <span class="c"># everything the operat
     </ol>
 <pre>helm upgrade subnet-operator hypersurgery/subnet-operator \
   --namespace subnet-operator-system --reuse-values \
-  --set events.queueUrl=<span class="s">https://sqs.eu-central-1.amazonaws.com/111111111111/aws-subnet-operator-events</span></pre>
+  --set providers.aws.events.queueUrl=<span class="s">https://sqs.eu-central-1.amazonaws.com/111111111111/aws-subnet-operator-events</span></pre>
 
     <h2 id="monitoring">Dashboard and alerts</h2>
     <p>With kube-prometheus-stack in the cluster:</p>
@@ -372,7 +372,7 @@ kubectl get subnetclaims.network.hypersurgery.dev payments -o jsonpath='{.status
 <span class="c">NAME           PROVIDER   NETWORKS   SUBNETS   UNMANAGED   READY</span>
 <span class="c">organization   AWS        14         212       9           True</span>
 
-<span class="c"># hs_aws_unmanaged_resources{kind="subnet"} says where they are</span>
+<span class="c"># hs_unmanaged_resources{kind="subnet"} says where they are</span>
 kubectl get nscope organization -o jsonpath='{.status.targets}' | jq</pre>
     <p>A <code>ResourceImport</code> takes one of them over. The operator applies exactly these tags with
       <code>ec2:CreateTags</code> and does nothing else: the resource keeps its configuration and every tag
@@ -432,22 +432,25 @@ kubectl get resourceimports.network.hypersurgery.dev -A</pre>
     </div>
 
     <h2 id="alerts">Alerts</h2>
-    <p>With <code>prometheusRule.enabled=true</code> the chart ships these rules. They carry the account,
-      region and resource labels, so routing them per team in Alertmanager is a matter of matchers.</p>
+    <p>With <code>prometheusRule.enabled=true</code> the chart ships these rules. They carry the provider,
+      account, region and resource labels (<code>network_id</code>, <code>subnet_id</code>, <code>zone</code>), so
+      routing them per team in Alertmanager is a matter of matchers. They read the <code>hs_*</code> metrics;
+      0.9 no longer exports the <code>hs_aws_</code> names of 0.8, and renamed <code>VPCCIDROverlap</code> to
+      <code>NetworkCIDROverlap</code> (the <a href="https://github.com/aivandrago/subnet-operator/blob/main/docs/operations/upgrades.md#upgrading-from-08-to-09">upgrade notes</a> have the mapping).</p>
     <table>
       <thead><tr><th>Alert</th><th>Fires when</th><th>Severity</th></tr></thead>
       <tbody>
         <tr><td><code>SubnetOperatorDown</code></td><td>no replica of the operator has been scraped successfully for 10 minutes. Every other alert is computed from the operator's own metrics and goes quiet when it is gone; this is the one that notices. Rendered with the chart's <code>ServiceMonitor</code>, or with <code>prometheusRule.operatorDown.job</code> set</td><td>critical</td></tr>
         <tr><td><code>SubnetClaimNotReady</code></td><td>a <code>SubnetClaim</code> has not been fulfilled for 30 minutes; <code>reason</code> says why — <code>NoSpace</code>, <code>WritesDisabled</code>, <code>CreateFailed</code></td><td>warning</td></tr>
-        <tr><td><code>ResourceImportNotSettled</code></td><td>tags a <code>ResourceImport</code> asked for have not reached AWS for 30 minutes; a dry run never fires it</td><td>warning</td></tr>
+        <tr><td><code>ResourceImportNotSettled</code></td><td>tags a <code>ResourceImport</code> asked for have not reached the cloud for 30 minutes; a dry run never fires it</td><td>warning</td></tr>
         <tr><td><code>SubnetNearlyFull</code></td><td>a subnet is at or above <code>prometheusRule.thresholds.subnetUsedRatio</code> (0.85) for 15 minutes</td><td>warning</td></tr>
         <tr><td><code>SubnetFull</code></td><td>a subnet has no free IPv4 address for 15 minutes</td><td>critical</td></tr>
         <tr><td><code>SubnetInventoryTargetDown</code></td><td>an account/region cannot be discovered for 15 minutes, for a reason other than throttling</td><td>warning</td></tr>
-        <tr><td><code>SubnetInventoryTargetThrottled</code></td><td>AWS has throttled an account/region for <code>prometheusRule.thresholds.throttledFor</code> (30 minutes). The operator backs the target off and retries it on its own; the target stays reachable, so <code>SubnetInventoryTargetDown</code> does not fire for it</td><td>warning</td></tr>
-        <tr><td><code>VPCCIDROverlap</code></td><td>two VPCs in the scope overlap for 30 minutes</td><td>warning</td></tr>
+        <tr><td><code>SubnetInventoryTargetThrottled</code></td><td>the cloud provider has throttled an account/region for <code>prometheusRule.thresholds.throttledFor</code> (30 minutes). The operator backs the target off and retries it on its own; the target stays reachable, so <code>SubnetInventoryTargetDown</code> does not fire for it</td><td>warning</td></tr>
+        <tr><td><code>NetworkCIDROverlap</code></td><td>two networks (VPCs on AWS) in the scope overlap for 30 minutes. Called <code>VPCCIDROverlap</code> up to 0.8</td><td>warning</td></tr>
         <tr><td><code>SubnetInventoryStale</code></td><td>no full resync for <code>prometheusRule.thresholds.staleSyncSeconds</code> (1 hour)</td><td>warning</td></tr>
-        <tr><td><code>UnmanagedNetworkResource</code></td><td>a VPC or subnet without the <code>hs/managed</code> tag is seen for the first time</td><td>warning</td></tr>
-        <tr><td><code>AutoImportedResources</code></td><td>the auto-import policy took resources over, as a record of what changed</td><td>info</td></tr>
+        <tr><td><code>UnmanagedNetworkResource</code></td><td>a network or subnet without the <code>hs/managed</code> tag is seen for the first time</td><td>warning</td></tr>
+        <tr><td><code>AutoImportedResources</code></td><td>the auto-import policy applied imports in the last 24 hours, as a record of what changed. Its counter exists at 0 for every target of a scope that runs the policy, so the first import after a restart is in the digest too</td><td>info</td></tr>
       </tbody>
     </table>
     <p>Routing them into Slack or Teams is ordinary Alertmanager configuration; the
@@ -524,9 +527,10 @@ Error from server (Forbidden): admission webhook "vsubnetclaim.kb.io" denied the
       <thead><tr><th>Value</th><th>Default</th><th>What it does</th></tr></thead>
       <tbody>
         <tr><td><code>image.repository</code></td><td><code>ghcr.io/aivandrago/subnet-operator</code></td><td>Manager image. Public and signed; point it at your own registry if you mirror it.</td></tr>
-        <tr><td><code>aws.region</code></td><td>empty</td><td>Region for the operator's own calls.</td></tr>
+        <tr><td><code>providers.aws.region</code></td><td>empty</td><td>Region for the operator's own calls. (<code>aws.region</code> in 0.8, still accepted until 0.10.)</td></tr>
+        <tr><td><code>providers.aws.irsaRoleARN</code></td><td>empty</td><td>The operator's role with IRSA; EKS Pod Identity needs nothing.</td></tr>
         <tr><td><code>discovery.concurrency</code></td><td><code>4</code></td><td>Account/region pairs discovered in parallel.</td></tr>
-        <tr><td><code>events.queueUrl</code></td><td>empty</td><td>SQS queue with EC2 change events.</td></tr>
+        <tr><td><code>providers.aws.events.queueUrl</code></td><td>empty</td><td>SQS queue with EC2 change events. (<code>events.queueUrl</code> in 0.8, still accepted until 0.10.)</td></tr>
         <tr><td><code>metrics.secure</code></td><td><code>true</code></td><td>HTTPS with authn/authz on the metrics endpoint.</td></tr>
         <tr><td><code>metrics.serviceMonitor.enabled</code></td><td><code>false</code></td><td>ServiceMonitor for the Prometheus operator.</td></tr>
         <tr><td><code>prometheusRule.enabled</code></td><td><code>false</code></td><td>Alerting rules.</td></tr>
@@ -564,6 +568,14 @@ helm upgrade subnet-operator hypersurgery/subnet-operator \
       <code>docker run --rm -i ghcr.io/aivandrago/subnet-operator:0.8.0 migrate-manifests &lt; old.yaml</code>.
       Step by step:
       <a href="https://github.com/aivandrago/subnet-operator/blob/main/docs/operations/upgrades.md#upgrading-from-07-to-08">the upgrade guide</a>.
+      <br><br>
+      <b>From 0.8 to 0.9 the old API group is gone.</b> Upgrade from 0.8 only once it has migrated
+      every object (<code>hs_migration_pending_objects</code> is 0); from 0.7, go through 0.8. A 0.9 pod
+      that finds an <code>aws.hypersurgery/v1alpha1</code> object 0.8 never migrated runs no controllers,
+      stays not ready and names the object, so the rollout stops with the 0.8 pods still running. The old
+      CRDs stay in the cluster until you delete them. The AWS values move under <code>providers.aws</code>,
+      and the metrics are renamed from <code>hs_aws_*</code> to <code>hs_*</code>:
+      <a href="https://github.com/aivandrago/subnet-operator/blob/main/docs/operations/upgrades.md#upgrading-from-08-to-09">the upgrade guide</a>.
       <br><br>
       <b>Upgrading adds CRDs.</b> v0.2.0 brought <code>SubnetClaim</code> and v0.3.0
       <code>ResourceImport</code>. Helm never upgrades CRDs, so apply them before the upgrade:

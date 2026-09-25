@@ -18,6 +18,7 @@ package inventory
 
 import "testing"
 
+// With the five addresses AWS and Azure reserve.
 func TestUsableIPv4(t *testing.T) {
 	cases := map[string]int64{
 		"10.0.0.0/24":   251,
@@ -28,9 +29,13 @@ func TestUsableIPv4(t *testing.T) {
 		"garbage":       0,
 	}
 	for cidr, want := range cases {
-		if got := UsableIPv4(cidr); got != want {
-			t.Errorf("UsableIPv4(%q) = %d, want %d", cidr, got, want)
+		if got := UsableIPv4(cidr, 5); got != want {
+			t.Errorf("UsableIPv4(%q, 5) = %d, want %d", cidr, got, want)
 		}
+	}
+	// GCP reserves four.
+	if got := UsableIPv4("10.0.0.0/24", 4); got != 252 {
+		t.Errorf("UsableIPv4(10.0.0.0/24, 4) = %d, want 252", got)
 	}
 }
 

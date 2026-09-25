@@ -442,7 +442,7 @@ footer .wrap { display: flex; justify-content: space-between; gap: 20px; flex-wr
     <button class="btn-demo" id="demo-open" type="button" aria-haspopup="dialog">
       <span class="live"></span>Live dashboard
     </button>
-    <span class="pill hide-sm"><span class="dot"></span>Alpha · v0.8.0</span>
+    <span class="pill hide-sm"><span class="dot"></span>Alpha · v0.9.0</span>
   </div>
 </nav>
 
@@ -865,14 +865,15 @@ subnet-0f1a2b3c  100.64.0.0/20  eu-west-1a     3812  <span class="t-ok">6</span>
       <div class="code">
         <div class="code-head"><b>prometheusrule.yaml</b><span>ships with the chart</span></div>
 <pre>- <span class="k">alert</span>: <span class="s">UnmanagedNetworkResource</span>
-  <span class="k">expr</span>: <span class="s">increase(hs_aws_unmanaged_resources_total[10m]) > 0</span>
-  <span class="k">labels</span>: { <span class="k">severity</span>: <span class="s">warning</span>, <span class="k">team</span>: <span class="s">network</span> }
+  <span class="k">expr</span>: <span class="s">increase(hs_unmanaged_resources_total[30m]) > 0</span>
+  <span class="k">for</span>: <span class="s">10m</span>
+  <span class="k">labels</span>: { <span class="k">severity</span>: <span class="s">warning</span> }
   <span class="k">annotations</span>:
-    <span class="k">summary</span>: <span class="s">"{{ $value }} new unmanaged resources in {{ $labels.account }}/{{ $labels.region }}"</span>
-    <span class="k">import_url</span>: <span class="s">"https://hypersurgery.dev/dashboard/?import={{ $labels.resource_id }}"</span>
+    <span class="k">summary</span>: <span class="s">"{{ $value }} new unmanaged {{ $labels.kind }} resources in {{ $labels.account }}/{{ $labels.region }}"</span>
+    <span class="k">runbook_url</span>: <span class="s">"https://hypersurgery.dev/docs/#unmanaged"</span>
 
 - <span class="k">alert</span>: <span class="s">AutoImportedResources</span>          <span class="c"># info: a daily digest, not a page</span>
-  <span class="k">expr</span>: <span class="s">increase(hs_aws_auto_imports_total[24h]) > 0</span>
+  <span class="k">expr</span>: <span class="s">increase(hs_auto_imports_total{result="applied"}[24h]) > 0</span>
   <span class="k">labels</span>: { <span class="k">severity</span>: <span class="s">info</span> }</pre>
       </div>
       <div class="code">
@@ -885,7 +886,7 @@ subnet-0f1a2b3c  100.64.0.0/20  eu-west-1a     3812  <span class="t-ok">6</span>
         <span class="k">actions</span>:
           - <span class="k">type</span>: <span class="s">button</span>
             <span class="k">text</span>: <span class="s">"Import…"</span>
-            <span class="k">url</span>: <span class="s">"{{ .CommonAnnotations.import_url }}"</span>
+            <span class="k">url</span>: <span class="s">"https://hypersurgery.dev/dashboard/"</span>
   - <span class="k">name</span>: <span class="s">network-teams</span>
     <span class="k">msteamsv2_configs</span>:
       - <span class="k">webhook_url</span>: <span class="s">"https://….webhook.office.com/…"</span>
@@ -894,7 +895,7 @@ subnet-0f1a2b3c  100.64.0.0/20  eu-west-1a     3812  <span class="t-ok">6</span>
     - <span class="k">matchers</span>: [<span class="s">alertname = UnmanagedNetworkResource</span>]
       <span class="k">receiver</span>: <span class="s">network-slack</span>
       <span class="k">continue</span>: <span class="n">true</span>
-    - <span class="k">matchers</span>: [<span class="s">team = network</span>]
+    - <span class="k">matchers</span>: [<span class="s">alertname = AutoImportedResources</span>]
       <span class="k">receiver</span>: <span class="s">network-teams</span></pre>
       </div>
     </div>
@@ -1072,10 +1073,11 @@ subnet-0f1a2b3c  100.64.0.0/20  eu-west-1a     3812  <span class="t-ok">6</span>
           claim or an import. Still open: a conformance run
           against a real AWS organization.</p>
         <div class="chips"><span class="chip ok">Admission webhooks</span><span class="chip ok">Audit trail</span><span class="chip ok">HA defaults</span><span class="chip ok">Namespaced Secret access</span><span class="chip ok">Signed images · SBOM · provenance</span><span class="chip ok">Alerts that notice silence</span><span class="chip ok">Fast leader hand-over</span><span class="chip ok">Throttling backoff</span><span class="chip ok">Signed chart on ghcr.io</span><span class="chip ok">Live dashboard</span><span class="chip ok">Upgrade tests</span><span class="chip ok">Threat model</span><span class="chip ok">Namespace-scoped writes</span><span class="chip">Real-AWS conformance · needs an account</span></div></div></div>
-      <div class="phase reveal"><div class="bullet">5</div><div class="phase-body"><header><h4>A cloud-neutral API</h4><span class="status next">NEXT · 0.8</span></header>
+      <div class="phase reveal"><div class="bullet">5</div><div class="phase-body"><header><h4>A cloud-neutral API</h4><span class="status now">0.8 · 0.9</span></header>
         <p>The API moves to <code>network.hypersurgery.dev</code>, with the cloud as a field of the scope rather
-          than part of every name, and the project becomes <code>subnet-operator</code>. The operator migrates
-          existing objects itself, status included, so an upgrade does not lose a reservation. Decided in
+          than part of every name, and the project becomes <code>subnet-operator</code>. 0.8 migrates
+          existing objects itself, status included, so an upgrade does not lose a reservation; 0.9 drops the
+          old group, and will not run next to an object that was never migrated. Decided in
           <a href="https://github.com/aivandrago/subnet-operator/blob/main/docs/adr/0002-multi-cloud-model.md">ADR 0002</a>.</p></div></div>
       <div class="phase reveal"><div class="bullet">6</div><div class="phase-body"><header><h4>1.0</h4><span class="status next">PLANNED</span></header>
         <p>A <code>v1</code> API with a compatibility promise, in which a scope that names no namespaces can be

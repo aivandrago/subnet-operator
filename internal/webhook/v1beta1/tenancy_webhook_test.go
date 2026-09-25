@@ -167,7 +167,7 @@ var _ = Describe("Namespaces allowed to use a NetworkScope", func() {
 			MatchLabels: map[string]string{"example.com/team": "payments"}}
 		s.Spec.AutoImport = &networkv1beta1.AutoImportPolicy{Mode: networkv1beta1.AutoImportDryRun, Namespace: "not-yet"}
 
-		warnings, err := (&NetworkScopeValidator{Client: k8sClient}).ValidateCreate(ctx, s)
+		warnings, err := (&NetworkScopeValidator{Client: k8sClient, Providers: testProviders}).ValidateCreate(ctx, s)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(warnings).To(ContainElement(ContainSubstring(`namespace "not-yet"`)))
 	})
@@ -176,7 +176,7 @@ var _ = Describe("Namespaces allowed to use a NetworkScope", func() {
 		s := scope("tenants-open", "400000000005", tenantRegion)
 		s.Spec.NamespaceSelector = &metav1.LabelSelector{}
 
-		warnings, err := (&NetworkScopeValidator{Client: k8sClient}).ValidateCreate(ctx, s)
+		warnings, err := (&NetworkScopeValidator{Client: k8sClient, Providers: testProviders}).ValidateCreate(ctx, s)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(warnings).To(ContainElement(ContainSubstring("has an empty spec.namespaceSelector")))
 	})
@@ -185,7 +185,7 @@ var _ = Describe("Namespaces allowed to use a NetworkScope", func() {
 		s := scope("tenants-closed", "400000000007", tenantRegion)
 		s.Spec.NamespaceSelector = nil
 
-		warnings, err := (&NetworkScopeValidator{Client: k8sClient}).ValidateCreate(ctx, s)
+		warnings, err := (&NetworkScopeValidator{Client: k8sClient, Providers: testProviders}).ValidateCreate(ctx, s)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(warnings).To(ContainElement(ContainSubstring("no SubnetClaim or ResourceImport may use it")))
 	})
@@ -294,7 +294,7 @@ var _ = Describe("The created-by annotation", func() {
 		newObj := oldObj.DeepCopy()
 		newObj.Annotations = map[string]string{networkv1beta1.AnnotationCreatedBy: "somebody-else"}
 
-		_, err := (&ResourceImportValidator{Client: k8sClient, WritesEnabled: true}).ValidateUpdate(ctx, oldObj, newObj)
+		_, err := (&ResourceImportValidator{Client: k8sClient, Providers: testProviders, WritesEnabled: true}).ValidateUpdate(ctx, oldObj, newObj)
 		Expect(err).To(MatchError(ContainSubstring("was not set")))
 	})
 
@@ -305,20 +305,21 @@ var _ = Describe("The created-by annotation", func() {
 		obj.Annotations = map[string]string{networkv1beta1.AnnotationCreatedBy: "somebody-else"}
 		reqCtx := admission.NewContextWithRequest(ctx, asUser("jane@example.com", admissionv1.Create))
 
-		_, err := (&ResourceImportValidator{Client: k8sClient, WritesEnabled: true}).ValidateCreate(reqCtx, obj)
+		_, err := (&ResourceImportValidator{Client: k8sClient, Providers: testProviders, WritesEnabled: true}).ValidateCreate(reqCtx, obj)
 		Expect(err).To(MatchError(ContainSubstring("must name the user that creates the object (jane@example.com)")))
 
 		claim := claimIn("unstamped", 26)
-		_, err = (&SubnetClaimValidator{Client: k8sClient, WritesEnabled: true}).ValidateCreate(reqCtx, claim)
+		_, err = (&SubnetClaimValidator{Client: k8sClient, Providers: testProviders, WritesEnabled: true}).ValidateCreate(reqCtx, claim)
 		Expect(err).To(MatchError(ContainSubstring("must name the user that creates the object")),
 			"a missing annotation is as unstamped as a forged one")
 	})
 })
 
-// The migration from aws.hypersurgery/v1alpha1 creates the copies as the operator. What it
-// copies — the creator the old group's webhooks recorded — must survive that, and nobody but
-// the operator may use the same way in.
-var _ = Describe("A copy migrated from aws.hypersurgery/v1alpha1", func() {
+// 0.8 migrated aws.hypersurgery/v1alpha1 objects by creating copies as the operator, marked
+// migrated-from, and the webhooks let such a copy keep the creator it carried and skip their
+// checks. 0.9 does not migrate, so the marker earns nothing any more, not even for the
+// operator: an object carrying it is stamped and checked like every other.
+var _ = Describe("An object marked migrated-from aws.hypersurgery/v1alpha1", func() {
 	var created []client.Object
 
 	BeforeEach(func() {
@@ -349,10 +350,10 @@ var _ = Describe("A copy migrated from aws.hypersurgery/v1alpha1", func() {
 		obj.SetAnnotations(annotations)
 	}
 
-	It("keeps the original creator when the operator creates it", func() {
-		imp := importOf("migrated-import", map[string]string{networkv1beta1.DefaultOwnerTagKey: "payments"})
+	It("names whoever creates it, the operator included", func() {
+		imp := importOf("marked-import", map[string]string{networkv1beta1.DefaultOwnerTagKey: "payments"})
 		migrated(imp, "jane@example.com")
-		claim := claimIn("migrated-claim", 26)
+		claim := claimIn("marked-claim", 26)
 		migrated(claim, "jane@example.com")
 
 		operator := clientAs(operatorUser)
@@ -361,26 +362,14 @@ var _ = Describe("A copy migrated from aws.hypersurgery/v1alpha1", func() {
 		Eventually(func() error { return operator.Create(ctx, claim) }).Should(Succeed())
 		created = append(created, claim)
 
-		Expect(imp.Annotations).To(HaveKeyWithValue(networkv1beta1.AnnotationCreatedBy, "jane@example.com"))
-		Expect(claim.Annotations).To(HaveKeyWithValue(networkv1beta1.AnnotationCreatedBy, "jane@example.com"))
-		Expect(imp.Spec.RequestedBy).To(BeEmpty(), "a migrated import names whoever it named before")
+		Expect(imp.Annotations).To(HaveKeyWithValue(networkv1beta1.AnnotationCreatedBy, operatorUser))
+		Expect(claim.Annotations).To(HaveKeyWithValue(networkv1beta1.AnnotationCreatedBy, operatorUser))
+		Expect(imp.Spec.RequestedBy).To(Equal(operatorUser))
 	})
 
-	It("keeps no creator when the original never had one", func() {
-		imp := importOf("migrated-no-creator", map[string]string{networkv1beta1.DefaultOwnerTagKey: "payments"})
+	It("gets a creator even when it arrives without one", func() {
+		imp := importOf("marked-no-creator", map[string]string{networkv1beta1.DefaultOwnerTagKey: "payments"})
 		migrated(imp, "")
-
-		operator := clientAs(operatorUser)
-		Eventually(func() error { return operator.Create(ctx, imp) }).Should(Succeed())
-		created = append(created, imp)
-
-		Expect(imp.Annotations).NotTo(HaveKey(networkv1beta1.AnnotationCreatedBy),
-			"the audit trail says unknown rather than naming the operator")
-	})
-
-	It("names the operator on an object the operator creates without the marker", func() {
-		imp := importOf("operator-own", map[string]string{networkv1beta1.DefaultOwnerTagKey: "payments"})
-		imp.Annotations = map[string]string{networkv1beta1.AnnotationCreatedBy: "jane@example.com"}
 
 		operator := clientAs(operatorUser)
 		Eventually(func() error { return operator.Create(ctx, imp) }).Should(Succeed())
@@ -389,41 +378,28 @@ var _ = Describe("A copy migrated from aws.hypersurgery/v1alpha1", func() {
 		Expect(imp.Annotations).To(HaveKeyWithValue(networkv1beta1.AnnotationCreatedBy, operatorUser))
 	})
 
-	It("does not let anybody else use the marker to name another creator", func() {
-		imp := importOf("forged-migration", map[string]string{networkv1beta1.DefaultOwnerTagKey: "payments"})
-		migrated(imp, "somebody-else")
-
-		jane := clientAs("jane@example.com")
-		Eventually(func() error { return jane.Create(ctx, imp) }).Should(Succeed())
-		created = append(created, imp)
-
-		Expect(imp.Annotations).To(HaveKeyWithValue(networkv1beta1.AnnotationCreatedBy, "jane@example.com"))
-	})
-
-	It("refuses a forged creator on a marked object from anybody but the operator", func() {
+	It("refuses a forged creator on a marked object, from the operator too", func() {
 		// The mutating webhook is failurePolicy Ignore; without it the marker must not help.
 		imp := importOf("forged-unstamped", map[string]string{networkv1beta1.DefaultOwnerTagKey: "payments"})
 		migrated(imp, "somebody-else")
-		reqCtx := admission.NewContextWithRequest(ctx, asUser("jane@example.com", admissionv1.Create))
-
-		_, err := (&ResourceImportValidator{Client: k8sClient, WritesEnabled: true, Operator: operatorUser}).
-			ValidateCreate(reqCtx, imp)
-		Expect(err).To(MatchError(ContainSubstring("must name the user that creates the object (jane@example.com)")))
+		for _, user := range []string{"jane@example.com", operatorUser} {
+			reqCtx := admission.NewContextWithRequest(ctx, asUser(user, admissionv1.Create))
+			_, err := (&ResourceImportValidator{Client: k8sClient, Providers: testProviders, WritesEnabled: true}).
+				ValidateCreate(reqCtx, imp)
+			Expect(err).To(MatchError(ContainSubstring("must name the user that creates the object (" + user + ")")))
+		}
 	})
 
-	It("is not checked against the inventory again, so a full network cannot strand its reservations", func() {
-		// The fixture network is a /22; two /22 claims cannot both fit. A migrated claim whose
-		// subnets already exist is exactly such a claim when it is created, before its status
-		// is copied in.
+	It("is checked against the inventory like any other", func() {
+		// The fixture network is a /22, with no room for two /22 subnets. 0.8 let the migration's
+		// copy of such a claim in unchecked, because its subnets already existed.
 		ensureClaimNetwork()
-		claim := claimIn("migrated-full", 22, claimRegion+"a", claimRegion+"b")
+		claim := claimIn("marked-full", 22, claimRegion+"a", claimRegion+"b")
 		migrated(claim, "jane@example.com")
-
 		operator := clientAs(operatorUser)
-		Eventually(func() error { return operator.Create(ctx, claim) }).Should(Succeed())
-		created = append(created, claim)
-
-		refused := claimIn("not-migrated-full", 22, claimRegion+"a", claimRegion+"b")
-		expectDenied(refused, "has no room for")
+		Eventually(func(g Gomega) {
+			err := operator.Create(ctx, claim)
+			g.Expect(err).To(MatchError(ContainSubstring("has no room for")))
+		}).Should(Succeed())
 	})
 })

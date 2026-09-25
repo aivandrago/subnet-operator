@@ -28,14 +28,13 @@ import (
 	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
 	"sigs.k8s.io/yaml"
 
-	awsv1alpha1 "hypersurgery.dev/subnet-operator/api/v1alpha1"
-	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
+	awsv1alpha1 "hypersurgery.dev/subnet-operator/internal/migration/v1alpha1"
 )
 
 // Manifests rewrites a stream of YAML documents for the new group, the way
 // `manager migrate-manifests` does for a GitOps repository: aws.hypersurgery/v1alpha1
-// NetworkScope, SubnetClaim, ResourceImport and SheetExport documents are converted with the
-// same functions the migration controller uses; VPC and Subnet documents are left out, because
+// NetworkScope, SubnetClaim, ResourceImport and SheetExport documents are converted with
+// the mapping 0.8's in-cluster migration used; VPC and Subnet documents are left out, because
 // the operator writes those itself; every other document is copied unchanged, byte for byte.
 //
 // A converted document loses its comments and its status (apply ignores status anyway). What a
@@ -107,18 +106,17 @@ func convertDocument(doc []byte) (out []byte, keep bool, notes Notes, err error)
 		if err := yaml.UnmarshalStrict(doc, old); err != nil {
 			return nil, false, nil, err
 		}
-		scope, n := NetworkScope(old, ForManifest)
-		scope.Status = networkv1beta1.NetworkScopeStatus{}
+		scope, n := NetworkScope(old)
 		obj, notes = scope, prefixed(name(old.ObjectMeta), n)
 	case kindSubnetClaim:
 		old := &awsv1alpha1.SubnetClaim{}
 		if err := yaml.UnmarshalStrict(doc, old); err != nil {
 			return nil, false, nil, err
 		}
-		claim, n := SubnetClaim(old, ForManifest)
-		claim.Status = networkv1beta1.SubnetClaimStatus{}
+		claim, n := SubnetClaim(old)
 		if len(old.Status.Allocations) > 0 {
-			n.add("status.allocations are not written to a manifest; the migration controller copies them in the cluster")
+			n.add("status.allocations are not written to a manifest: a claim applied from it starts without these " +
+				"reservations. Only 0.8 migrated them, in the cluster")
 		}
 		obj, notes = claim, prefixed(name(old.ObjectMeta), n)
 	case kindResourceImport:
@@ -126,16 +124,14 @@ func convertDocument(doc []byte) (out []byte, keep bool, notes Notes, err error)
 		if err := yaml.UnmarshalStrict(doc, old); err != nil {
 			return nil, false, nil, err
 		}
-		imp, n := ResourceImport(old, ForManifest)
-		imp.Status = networkv1beta1.ResourceImportStatus{}
+		imp, n := ResourceImport(old)
 		obj, notes = imp, prefixed(name(old.ObjectMeta), n)
 	case kindSheetExport:
 		old := &awsv1alpha1.SheetExport{}
 		if err := yaml.UnmarshalStrict(doc, old); err != nil {
 			return nil, false, nil, err
 		}
-		exp, n := SheetExport(old, ForManifest)
-		exp.Status = networkv1beta1.SheetExportStatus{}
+		exp, n := SheetExport(old)
 		obj, notes = exp, prefixed(name(old.ObjectMeta), n)
 	case "VPC", "Subnet":
 		var meta struct {

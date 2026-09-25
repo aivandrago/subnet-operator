@@ -8,13 +8,6 @@ resources:
 - bases/network.hypersurgery.dev_sheetexports.yaml
 - bases/network.hypersurgery.dev_subnetclaims.yaml
 - bases/network.hypersurgery.dev_resourceimports.yaml
-# The deprecated group, which 0.8 migrates from and 0.9 drops.
-- bases/aws.hypersurgery_networkscopes.yaml
-- bases/aws.hypersurgery_vpcs.yaml
-- bases/aws.hypersurgery_subnets.yaml
-- bases/aws.hypersurgery_sheetexports.yaml
-- bases/aws.hypersurgery_subnetclaims.yaml
-- bases/aws.hypersurgery_resourceimports.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:

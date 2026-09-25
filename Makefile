@@ -112,8 +112,8 @@ test-e2e: setup-test-e2e manifests generate fmt vet helm ## Run the e2e tests in
 # The upgrade test installs the latest published chart, creates every kind of object, upgrades
 # to this checkout (CRDs first, then helm upgrade) and checks nothing was lost or re-reported.
 # UPGRADE_FROM picks the previous chart version instead of the latest; UPGRADE_CHART another
-# chart reference, e.g. hypersurgery/aws-subnet-operator from ChartMuseum (0.7 and earlier are
-# published under that name; the test follows the release through the rename either way).
+# chart reference, e.g. hypersurgery/subnet-operator from ChartMuseum. The test expects 0.8, the
+# last release that migrated aws.hypersurgery/v1alpha1: upgrading from 0.7 goes through it.
 UPGRADE_FROM ?=
 UPGRADE_CHART ?=
 
@@ -138,6 +138,8 @@ CHART_DIR ?= charts/subnet-operator
 
 .PHONY: helm-crds
 helm-crds: manifests ## Copy the generated CRDs into the Helm chart.
+	# The chart ships exactly the generated CRDs: one that is no longer generated goes too.
+	rm -f "$(CHART_DIR)"/crds/*.yaml
 	cp config/crd/bases/*.yaml "$(CHART_DIR)/crds/"
 
 .PHONY: helm-lint

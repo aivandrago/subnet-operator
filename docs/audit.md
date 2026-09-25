@@ -14,7 +14,7 @@ turn on, and they are kept for as long as the cluster keeps Events (an hour by d
 |---|---|---|---|
 | `ResourceImport` | Normal | `Imported` | tags reached AWS |
 | `ResourceImport` | Normal | `DryRun` | the tags were computed, not applied |
-| `ResourceImport` | Warning | the condition's reason (`WritesDisabled`, `NoWriteRole`, `TagsNotApplied`, `ScopeNotFound`, `NamespaceNotAllowed`, `AccountNotInScope`) | the import did not happen, with the reason |
+| `ResourceImport` | Warning | the condition's reason (`WritesDisabled`, `NoWriteRole`, `TagsNotApplied`, `ScopeNotFound`, `NamespaceNotAllowed`, `AccountNotInScope`, `ProviderNotEnabled`) | the import did not happen, with the reason |
 | `SubnetClaim` | Normal | `Allocated` | a CIDR was reserved for an availability zone |
 | `SubnetClaim` | Normal | `SubnetCreated` | the subnet exists in AWS |
 | `SubnetClaim` | Warning | the condition's reason (`NoSpace`, `WritesDisabled`, `CreateFailed`, `NetworkNotFound`, `ZonesRequired`, `NamespaceNotAllowed`, …) | the claim did not get what it asked for |
@@ -106,12 +106,12 @@ who applies an object can choose it:
   (`system:serviceaccount:<namespace>:<service account>`), which the operator looks up with a
   `SelfSubjectReview` at startup and sets on the import; the webhook writes the same value.
 - **`policy_decision`** — the operator's own identity too: the policy runs as the operator.
-- **Objects migrated from `aws.hypersurgery/v1alpha1`** (0.8) — the creator the old object
+- **Objects 0.8 migrated from `aws.hypersurgery/v1alpha1`** — the creator the old object
   recorded in `aws.hypersurgery/created-by`, which the old group's webhooks wrote and guarded
-  the same way. The migration copies it, and the new group's webhook keeps a copied value only
-  for objects the operator's own service account creates with the
-  `network.hypersurgery.dev/migrated-from` marker; everybody else gets their own name. An old
-  object that had no creator (from before 0.7) gets none, and its lines say `unknown`.
+  the same way, and which 0.8's migration copied. An old object that had no creator (from
+  before 0.7) got none, and its lines say `unknown`. 0.9 migrates nothing: an object created now
+  gets its creator's name, the `network.hypersurgery.dev/migrated-from` marker
+  notwithstanding.
 
 The operator only repeats the annotation while it serves the admission webhooks itself. With
 `webhook.enabled=false` the annotation is whatever the object's author wrote, so every line
@@ -133,7 +133,7 @@ there the resource's current tags come straight from discovery.
 ### Repetition
 
 The auto-import policy runs on every sync, so a resource that stays in `skipped` or `no_owner`
-produces one line per sync — exactly like the `hs_aws_auto_imports_total` counter beside it.
+produces one line per sync — exactly like the `hs_auto_imports_total` counter beside it.
 Imports, allocations and created subnets are written once, when they happen. Deduplicate
 downstream on `resource_id` + `result` if the volume matters.
 
@@ -151,7 +151,7 @@ decides and never applies, and a hand-written import applies with no policy deci
 ## What is not in either
 
 - **Reads.** Discovery is not audited; it changes nothing. That an account could not be read
-  is an Event and `hs_aws_target_up`, not an audit line.
+  is an Event and `hs_target_up`, not an audit line.
 - **Deletions.** The operator never deletes a cloud resource, so there is nothing to record.
 - **Delivery guarantees.** Both outputs are best-effort. A line that cannot be written is
   dropped rather than failing a reconcile that has already changed AWS, and Events are subject

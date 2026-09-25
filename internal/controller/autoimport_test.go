@@ -30,7 +30,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
-	"hypersurgery.dev/subnet-operator/internal/events"
 	"hypersurgery.dev/subnet-operator/internal/inventory"
 	"hypersurgery.dev/subnet-operator/internal/metrics"
 )
@@ -55,14 +54,14 @@ var _ = Describe("Auto-import policy", func() {
 	// one inside the managed VPC (so inheritance can apply) and one inside the unmanaged one.
 	snapshot := func() *inventory.Snapshot {
 		return &inventory.Snapshot{
-			VPCs: []inventory.VPC{{ID: "vpc-0aa11bb2", Account: autoAccount, Region: autoRegion,
+			Networks: []inventory.Network{{ID: "vpc-0aa11bb2", Account: autoAccount, Region: autoRegion,
 				CIDRBlocks: []string{"10.0.0.0/16"},
 				Tags:       map[string]string{"hs/managed": "true", "hs/owner": "team-platform", "hs/env": "prod"}}},
-			UnmanagedVPCs: []inventory.VPC{{ID: "vpc-0fee1dead", Account: autoAccount, Region: autoRegion,
+			UnmanagedNetworks: []inventory.Network{{ID: "vpc-0fee1dead", Account: autoAccount, Region: autoRegion,
 				CIDRBlocks: []string{"10.90.0.0/16"}, Tags: map[string]string{"Name": "legacy"}}},
 			UnmanagedSubnets: []inventory.Subnet{
-				{ID: "subnet-0abc1111", VPCID: "vpc-0aa11bb2", Account: autoAccount, Region: autoRegion, CIDRBlock: "10.0.9.0/24"},
-				{ID: "subnet-0def2222", VPCID: "vpc-0fee1dead", Account: autoAccount, Region: autoRegion, CIDRBlock: "10.90.1.0/24"},
+				{ID: "subnet-0abc1111", NetworkID: "vpc-0aa11bb2", Account: autoAccount, Region: autoRegion, CIDRBlock: "10.0.9.0/24"},
+				{ID: "subnet-0def2222", NetworkID: "vpc-0fee1dead", Account: autoAccount, Region: autoRegion, CIDRBlock: "10.90.1.0/24"},
 			},
 		}
 	}
@@ -123,7 +122,7 @@ var _ = Describe("Auto-import policy", func() {
 			errs:      map[string]error{},
 		}
 		reconciler = &NetworkScopeReconciler{
-			Client: k8sClient, Scheme: k8sClient.Scheme(), Discoverer: discoverer, Creators: creators,
+			Client: k8sClient, Scheme: k8sClient.Scheme(), Providers: awsProviders(discoverer, nil, nil), Creators: creators,
 		}
 	})
 
@@ -150,7 +149,7 @@ var _ = Describe("Auto-import policy", func() {
 		Expect(k8sClient.Status().Update(ctx, scope)).To(Succeed())
 	}
 
-	// newlyUnmanaged reads hs_aws_unmanaged_resources_total for this scope — the counter behind
+	// newlyUnmanaged reads hs_unmanaged_resources_total for this scope — the counter behind
 	// the UnmanagedNetworkResource alert.
 	newlyUnmanaged := func() float64 {
 		GinkgoHelper()
@@ -158,7 +157,7 @@ var _ = Describe("Auto-import policy", func() {
 		Expect(err).NotTo(HaveOccurred())
 		total := 0.0
 		for _, f := range families {
-			if f.GetName() != "hs_aws_unmanaged_resources_total" {
+			if f.GetName() != "hs_unmanaged_resources_total" {
 				continue
 			}
 			for _, m := range f.GetMetric() {
@@ -198,7 +197,7 @@ var _ = Describe("Auto-import policy", func() {
 		metrics.Forget(scopeName)
 		snap := snapshot()
 		snap.UnmanagedSubnets = append(snap.UnmanagedSubnets, inventory.Subnet{
-			ID: "subnet-0new3333", VPCID: "vpc-0fee1dead", Account: autoAccount, Region: autoRegion,
+			ID: "subnet-0new3333", NetworkID: "vpc-0fee1dead", Account: autoAccount, Region: autoRegion,
 			CIDRBlock: "10.90.2.0/24"})
 		discoverer.snapshots[autoAccount+"/"+autoRegion] = snap
 		dueForResync()
@@ -226,7 +225,7 @@ var _ = Describe("Auto-import policy", func() {
 	})
 
 	It("imports what it can attribute and leaves the rest alone", func() {
-		creators.Record(context.Background(), []events.Creation{{
+		creators.Record(context.Background(), []inventory.Creation{{
 			Target:     inventory.TargetKey{Account: autoAccount, Region: autoRegion},
 			ResourceID: "vpc-0fee1dead", Principal: paymentsRole, EventName: "CreateVpc",
 		}})
@@ -258,7 +257,7 @@ var _ = Describe("Auto-import policy", func() {
 	})
 
 	It("marks its imports as dry runs in DryRun mode", func() {
-		creators.Record(context.Background(), []events.Creation{{
+		creators.Record(context.Background(), []inventory.Creation{{
 			ResourceID: "vpc-0fee1dead", Principal: paymentsRole, EventName: "CreateVpc",
 		}})
 		createScope(policy(networkv1beta1.AutoImportDryRun))
@@ -270,7 +269,7 @@ var _ = Describe("Auto-import policy", func() {
 	})
 
 	It("skips what a pipeline created", func() {
-		creators.Record(context.Background(), []events.Creation{{
+		creators.Record(context.Background(), []inventory.Creation{{
 			ResourceID: "vpc-0fee1dead", Principal: terraformCI, EventName: "CreateVpc",
 		}})
 		createScope(policy(networkv1beta1.AutoImportApply))
@@ -278,5 +277,46 @@ var _ = Describe("Auto-import policy", func() {
 
 		Expect(importFor("vpc-0fee1dead")).To(BeNil(), "Terraform owns it; tagging it would fight the next plan")
 		Expect(importFor("subnet-0abc1111")).NotTo(BeNil(), "the rest is unaffected")
+	})
+
+	// autoImportSeries reads hs_auto_imports_total for this scope, by result — the counter behind
+	// the AutoImportedResources digest.
+	autoImportSeries := func() map[string]float64 {
+		GinkgoHelper()
+		families, err := ctrlmetrics.Registry.Gather()
+		Expect(err).NotTo(HaveOccurred())
+		out := map[string]float64{}
+		for _, f := range families {
+			if f.GetName() != "hs_auto_imports_total" {
+				continue
+			}
+			for _, m := range f.GetMetric() {
+				labels := map[string]string{}
+				for _, l := range m.GetLabel() {
+					labels[l.GetName()] = l.GetValue()
+				}
+				if labels["scope"] == scopeName {
+					Expect(labels).To(HaveKeyWithValue("account", autoAccount))
+					out[labels["result"]] = m.GetCounter().GetValue()
+				}
+			}
+		}
+		return out
+	}
+
+	// The digest fires on an increase. A series that first appears at 1 has not increased as far
+	// as Prometheus can tell, so before this the first import after a restart never made it.
+	It("exports every auto-import result at zero before the policy decides anything", func() {
+		discoverer.snapshots[autoAccount+"/"+autoRegion] = &inventory.Snapshot{}
+		createScope(policy(networkv1beta1.AutoImportApply))
+		reconcileScope()
+		Expect(autoImportSeries()).To(Equal(map[string]float64{
+			"applied": 0, "dryrun": 0, "skipped": 0, "no_owner": 0}))
+	})
+
+	It("exports no auto-import series for a scope without a policy", func() {
+		createScope(nil)
+		reconcileScope()
+		Expect(autoImportSeries()).To(BeEmpty())
 	})
 })

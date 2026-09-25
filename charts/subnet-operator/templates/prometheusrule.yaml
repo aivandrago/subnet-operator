@@ -36,8 +36,9 @@ spec:
             runbook_url: "https://github.com/aivandrago/subnet-operator/blob/main/docs/operations/runbook.md#subnetoperatordown"
         {{- end }}
 
+        # The expressions read the hs_* metrics, which have a provider label.
         - alert: SubnetNearlyFull
-          expr: 1 - hs_aws_subnet_available_ips / hs_aws_subnet_total_ips >= {{ $used }}
+          expr: 1 - hs_subnet_available_ips / hs_subnet_total_ips >= {{ $used }}
           for: 15m
           labels:
             severity: warning
@@ -45,10 +46,10 @@ spec:
             summary: "Subnet {{`{{ $labels.subnet_id }}`}} is {{`{{ $value | humanizePercentage }}`}} full"
             description: >-
               {{`{{ $labels.cidr }}`}} in {{`{{ $labels.account }}`}}/{{`{{ $labels.region }}`}}
-              (owner {{`{{ $labels.owner }}`}}) is running out of addresses.
+              ({{`{{ $labels.provider }}`}}, owner {{`{{ $labels.owner }}`}}) is running out of addresses.
 
         - alert: SubnetFull
-          expr: hs_aws_subnet_available_ips == 0
+          expr: hs_subnet_available_ips == 0
           for: 15m
           labels:
             severity: critical
@@ -56,49 +57,53 @@ spec:
             summary: "Subnet {{`{{ $labels.subnet_id }}`}} has no free addresses"
             description: >-
               {{`{{ $labels.cidr }}`}} in {{`{{ $labels.account }}`}}/{{`{{ $labels.region }}`}}
-              cannot take another ENI.
+              ({{`{{ $labels.provider }}`}}) cannot take another network interface.
 
         - alert: SubnetInventoryTargetDown
-          expr: hs_aws_target_up == 0
+          expr: hs_target_up == 0
           for: 15m
           labels:
             severity: warning
           annotations:
             summary: "Discovery of {{`{{ $labels.account }}`}}/{{`{{ $labels.region }}`}} is failing"
             description: >-
-              The inventory of this account and region is stale. Check the NetworkScope status
-              for the error, usually an IAM or trust policy problem.
+              The inventory of this {{`{{ $labels.provider }}`}} account and region is stale.
+              Check the NetworkScope status for the error, usually a credentials or permissions
+              problem (on AWS, the IAM role or its trust policy).
 
         - alert: SubnetInventoryTargetThrottled
-          # Reachable but rate-limited. hs_aws_target_up stays 1 for a throttled target, so this
+          # Reachable but rate-limited. hs_target_up stays 1 for a throttled target, so this
           # and SubnetInventoryTargetDown never fire for the same one: the causes differ, and so
           # do the fixes. The operator backs the target off and retries it on its own; this only
           # fires when that has not got through for a while.
-          expr: hs_aws_target_throttled == 1
+          expr: hs_target_throttled == 1
           for: {{ .Values.prometheusRule.thresholds.throttledFor }}
           labels:
             severity: warning
           annotations:
-            summary: "Discovery of {{`{{ $labels.account }}`}}/{{`{{ $labels.region }}`}} is throttled by AWS"
+            summary: "Discovery of {{`{{ $labels.account }}`}}/{{`{{ $labels.region }}`}} is throttled by the cloud provider"
             description: >-
-              EC2 has been rate-limiting this account and region for {{ .Values.prometheusRule.thresholds.throttledFor }},
+              The {{`{{ $labels.provider }}`}} API has been rate-limiting this account and region for {{ .Values.prometheusRule.thresholds.throttledFor }},
               so its inventory is stale. The operator keeps retrying with backoff. Something else
-              in the account is using up its EC2 API budget, or this instance serves too many targets.
+              in the account is using up its API budget, or this instance serves too many targets.
             runbook_url: "https://github.com/aivandrago/subnet-operator/blob/main/docs/operations/runbook.md#subnetinventorytargetthrottled"
 
-        - alert: VPCCIDROverlap
-          expr: hs_aws_vpc_cidr_overlaps > 0
+        # Called VPCCIDROverlap up to 0.8; the rule covers every provider's networks.
+        - alert: NetworkCIDROverlap
+          expr: hs_network_cidr_overlaps > 0
           for: 30m
           labels:
             severity: warning
           annotations:
-            summary: "VPC {{`{{ $labels.vpc_id }}`}} overlaps another VPC"
+            summary: "Network {{`{{ $labels.network_id }}`}} overlaps another network"
             description: >-
-              Overlapping CIDRs break VPC peering and Transit Gateway routing.
-              See status.overlapsWith on the VPC object.
+              {{`{{ $labels.network_id }}`}} in {{`{{ $labels.account }}`}}/{{`{{ $labels.region }}`}}
+              ({{`{{ $labels.provider }}`}}) has CIDRs that overlap another network in the scope.
+              Overlapping CIDRs break peering and transit routing between them.
+              See status.overlapsWith on the Network object.
 
         - alert: SubnetInventoryStale
-          expr: time() - hs_aws_scope_last_sync_timestamp_seconds > {{ .Values.prometheusRule.thresholds.staleSyncSeconds }}
+          expr: time() - hs_scope_last_sync_timestamp_seconds > {{ .Values.prometheusRule.thresholds.staleSyncSeconds }}
           for: 10m
           labels:
             severity: warning
@@ -110,8 +115,10 @@ spec:
 
         - alert: UnmanagedNetworkResource
           # The counter rises once per resource the operator has never seen before, so an
-          # increase means something appeared that nobody has taken responsibility for.
-          expr: increase(hs_aws_unmanaged_resources_total[10m]) > 0
+          # increase means something appeared that nobody has taken responsibility for. The
+          # window is longer than the for: a window of exactly 10m showed one new resource for
+          # 10 minutes minus one evaluation, so the alert never got past pending for it.
+          expr: increase(hs_unmanaged_resources_total[30m]) > 0
           for: 10m
           labels:
             severity: warning
@@ -127,7 +134,7 @@ spec:
         - alert: SubnetClaimNotReady
           # A claim is a request someone is waiting on. Until now a claim stuck on NoSpace or
           # CreateFailed was visible only in its status, so nothing could page on it.
-          expr: hs_aws_subnet_claim_ready == 0
+          expr: hs_subnet_claim_ready == 0
           for: {{ .Values.prometheusRule.thresholds.notReadyFor }}
           labels:
             severity: warning
@@ -141,8 +148,8 @@ spec:
 
         - alert: ResourceImportNotSettled
           # Pending or Failed for this long means the tags someone asked for have not reached
-          # AWS. A dry run counts as settled: it did what it was asked.
-          expr: hs_aws_resource_import_ready == 0
+          # the cloud. A dry run counts as settled: it did what it was asked.
+          expr: hs_resource_import_ready == 0
           for: {{ .Values.prometheusRule.thresholds.notReadyFor }}
           labels:
             severity: warning
@@ -156,7 +163,7 @@ spec:
 
         - alert: AutoImportedResources
           # Informational: a digest of what the policy took care of, not something to page on.
-          expr: increase(hs_aws_auto_imports_total{result="applied"}[24h]) > 0
+          expr: increase(hs_auto_imports_total{result="applied"}[24h]) > 0
           labels:
             severity: info
           annotations:

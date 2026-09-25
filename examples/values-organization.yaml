@@ -2,20 +2,17 @@
 image:
   repository: ghcr.io/aivandrago/subnet-operator
 
-serviceAccount:
-  annotations:
-    eks.amazonaws.com/role-arn: arn:aws:iam::111111111111:role/aws-subnet-operator
-
-aws:
-  region: eu-central-1
+providers:
+  aws:
+    irsaRoleARN: arn:aws:iam::111111111111:role/aws-subnet-operator
+    region: eu-central-1
+    events:
+      # QueueUrl output of deploy/events/hub-events.cfn.yaml.
+      queueUrl: https://sqs.eu-central-1.amazonaws.com/111111111111/aws-subnet-operator-events
+      debounce: 10s
 
 discovery:
   concurrency: 8
-
-events:
-  # QueueUrl output of deploy/events/hub-events.cfn.yaml.
-  queueUrl: https://sqs.eu-central-1.amazonaws.com/111111111111/aws-subnet-operator-events
-  debounce: 10s
 
 metrics:
   serviceMonitor:

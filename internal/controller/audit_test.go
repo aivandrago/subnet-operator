@@ -34,7 +34,6 @@ import (
 
 	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
 	"hypersurgery.dev/subnet-operator/internal/audit"
-	"hypersurgery.dev/subnet-operator/internal/events"
 	"hypersurgery.dev/subnet-operator/internal/inventory"
 )
 
@@ -131,7 +130,7 @@ var _ = Describe("Audit trail", func() {
 			resourceID = fmt.Sprintf("subnet-0a11d1%04d", auditCounter)
 			writer = &fakeTagWriter{}
 			reconciler = &ResourceImportReconciler{
-				Client: k8sClient, Scheme: k8sClient.Scheme(), Writer: writer, WritesEnabled: true,
+				Client: k8sClient, Scheme: k8sClient.Scheme(), Providers: awsProviders(nil, nil, writer), WritesEnabled: true,
 				Recorder: recorder, Audit: audit.NewWriter(sink),
 			}
 
@@ -278,10 +277,10 @@ var _ = Describe("Audit trail", func() {
 
 		snapshot := func() *inventory.Snapshot {
 			return &inventory.Snapshot{
-				UnmanagedVPCs: []inventory.VPC{{ID: "vpc-0a11d17ed", Account: auditAccount, Region: auditRegion,
+				UnmanagedNetworks: []inventory.Network{{ID: "vpc-0a11d17ed", Account: auditAccount, Region: auditRegion,
 					CIDRBlocks: []string{"10.90.0.0/16"}, Tags: map[string]string{"Name": "legacy"}}},
 				UnmanagedSubnets: []inventory.Subnet{
-					{ID: "subnet-0a11d17ed", VPCID: "vpc-0a11d17ed", Account: auditAccount, Region: auditRegion,
+					{ID: "subnet-0a11d17ed", NetworkID: "vpc-0a11d17ed", Account: auditAccount, Region: auditRegion,
 						CIDRBlock: "10.90.1.0/24"},
 				},
 			}
@@ -313,7 +312,7 @@ var _ = Describe("Audit trail", func() {
 				errs:      map[string]error{},
 			}
 			reconciler = &NetworkScopeReconciler{
-				Client: k8sClient, Scheme: k8sClient.Scheme(), Discoverer: discoverer, Creators: creators,
+				Client: k8sClient, Scheme: k8sClient.Scheme(), Providers: awsProviders(discoverer, nil, nil), Creators: creators,
 				Recorder: recorder, Audit: audit.NewWriter(sink),
 			}
 		})
@@ -339,7 +338,7 @@ var _ = Describe("Audit trail", func() {
 			})
 			// Only the VPC has a known creator; the subnet inside it has none and no rule can
 			// inherit anything, because the VPC is unmanaged too.
-			creators.Record(context.Background(), []events.Creation{{
+			creators.Record(context.Background(), []inventory.Creation{{
 				ResourceID: "vpc-0a11d17ed", Principal: auditCreator, EventName: "CreateVpc"}})
 
 			reconcileScope()
@@ -390,7 +389,7 @@ var _ = Describe("Audit trail", func() {
 			claimVPC = fmt.Sprintf("vpc-0a11d2%04d", auditCounter)
 			writer = &fakeWriter{conflictOnce: map[string]bool{}}
 			reconciler = &SubnetClaimReconciler{
-				Client: k8sClient, Scheme: k8sClient.Scheme(), Writer: writer, WritesEnabled: true,
+				Client: k8sClient, Scheme: k8sClient.Scheme(), Providers: awsProviders(nil, writer, nil), WritesEnabled: true,
 				Recorder: recorder, Audit: audit.NewWriter(sink),
 			}
 

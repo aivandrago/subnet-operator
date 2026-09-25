@@ -252,11 +252,12 @@ Alternatives:
   (`aws`, `gcp`, `azure`, lowercase like other label values).
 - Labels that named AWS concepts are renamed: `vpc_id` → `network_id`, `az` → `zone`.
   `account`, `region`, `scope` keep their names.
-- Deprecation window (#44): the release that introduces the new group exports both families; the
-  old family keeps its old names **and** labels unchanged, so existing alerts keep working. It is
-  removed in the next minor release. Alerts, recording rules, the Grafana dashboard, the promtool
-  tests and the web dashboard switch to `hs_*` in the release that introduces them. Series
-  cardinality doubles during the window; the limits page documents it.
+- No deprecation window (#44, amended 2026-09-25): 0.9 exports only `hs_*`. The accepted plan
+  exported both families for one minor release, with the old one keeping its names and labels;
+  the owner dropped the window because the project has no users yet, so nobody's alerts depend
+  on the old names and the doubled series would buy nothing. Alerts, the Grafana dashboard, the
+  promtool tests and the web dashboard use `hs_*` from 0.9 on, and the upgrade notes carry the
+  mapping for rules of one's own.
 
 ### 8. What stays provider-specific, and how the API says so
 
@@ -324,14 +325,15 @@ subnets are re-adopted through their `hs/claim` tag even if status copying faile
 The migration controller is on by default in the release that introduces the new group and gone
 in the next; that release refuses to start (with a clear error and a metric) while unmigrated
 old-group objects exist. The chart never deletes CRDs; the upgrade note tells users to delete the
-old ones after that release.
+old ones after that release. (Done in 0.9; "refuses to start" became "starts without its
+controllers and stays not ready", see the implementation notes for 0.9.)
 
 ### 10. Versioning to v1 (#58)
 
 | Release | Served | Storage | Notes |
 |---|---|---|---|
-| 0.8 | `aws.hypersurgery/v1alpha1` (deprecated), `network.hypersurgery.dev/v1beta1` | v1beta1 | migration controller; both metric families |
-| 0.9 | `network.hypersurgery.dev/v1beta1` | v1beta1 | old group and `hs_aws_*` removed |
+| 0.8 | `aws.hypersurgery/v1alpha1` (deprecated), `network.hypersurgery.dev/v1beta1` | v1beta1 | migration controller |
+| 0.9 | `network.hypersurgery.dev/v1beta1` | v1beta1 | old group removed (done; see the implementation notes for 0.9); `hs_aws_*` renamed to `hs_*`, with no overlap |
 | 1.0 | `v1`, `v1beta1` (deprecated) | v1 | conversion webhook; storage migrated to v1 |
 | ≥1.2 and ≥6 months after 1.0 | `v1` | v1 | `v1beta1` no longer served |
 
@@ -532,9 +534,12 @@ Accepted by the owner on 2026-09-24 with these answers to the open questions: th
 `network.hypersurgery.dev`; the project is renamed to `subnet-operator` (#76); the old group and
 the `hs_aws_*` metrics get one minor release of overlap (0.8) and are removed in 0.9. (Planned
 as 0.7/0.8 when accepted; moved by one on 2026-09-25, when 0.7.0 shipped the security fixes
-and `namespaceSelector` on the old API first.) Whether the
-GCP write identity may create tag values, and the Azure VNet tag budget, are decided in phases 5b
-and 5c; neither affects the 1.0 API.
+and `namespaceSelector` on the old API first. The metrics then moved by one more, to an
+overlap in 0.9 and removal in 0.10, because 0.8 shipped without them. On 2026-09-25 the owner
+dropped that overlap: with no users yet, 0.9 renames the metrics outright and renames the alert
+`VPCCIDROverlap` to `NetworkCIDROverlap` with them; see the implementation notes for #44 below.)
+Whether the GCP write identity may create tag values, and the Azure VNet tag budget, are decided
+in phases 5b and 5c; neither affects the 1.0 API.
 
 ## Consequences
 
@@ -595,12 +600,119 @@ What the implementation decided where this ADR left room, or deviates from its l
   converted form, and refuse spec changes to migrated objects.
 - **Deferred, additive later:** `SubnetClaim.spec.count`, `Subnet.status.secondaryCIDRBlocks`,
   `ipUsageTime`, `ownershipSource`, `NetworkScope.status.capabilities` and `ownership`, and every
-  GCP and Azure member. Only what would be breaking to change later ships in v1beta1.
+  GCP and Azure member. Only what would be breaking to change later ships in v1beta1. (#43/#45
+  then added `capabilities`, `ownership` and `ownershipSource`; see below.)
 - **Per-provider validation.** `prefixLength` is 1–32 in the schema, 16–28 for AWS in the
   webhook and the controller; account ID formats are CEL rules on the scope, and on claims and
   imports webhook and controller checks, because those do not know their provider. `managedTag`
   lost its static CRD default for the same reason; the webhook and the policy default it per
   provider.
-- **Metrics** keep their `hs_aws_*` names in this change; §7 is #44.
+- **Metrics** keep their `hs_aws_*` names in this change; §7 is #44, below.
 - **The leader election lease** keeps its name across the rename (#76), so a 0.7 and a 0.8 pod
   never lead at once during the rolling upgrade.
+
+## Implementation notes (#44)
+
+- **Window.** 0.8 shipped the new group without the new metrics. The first implementation
+  exported both families in 0.9, recorded from one set of labels, and planned the removal of
+  `hs_aws_*` for 0.10, as the [policy](../policy.md#deprecation) asks of a deprecated metric.
+  The owner then dropped the window (no users yet): 0.9 exports `hs_*` only, the policy records
+  the exception, and §10 is updated to match. A test checks that nothing is exported under
+  `hs_aws_` any more.
+- **Names.** `hs_aws_vpc_cidr_overlaps` becomes `hs_network_cidr_overlaps`, not a name that
+  keeps `vpc`: the kind is `Network`, and a neutral name that says VPC would be renamed
+  again. Every other metric is `hs_<name>` as §7 says.
+- **Label values.** The unmanaged metrics' `kind` is `network` (`vpc` in 0.8), for the same
+  reason. `provider` on the claim and import readiness gauges is their
+  scope's, empty while the scope does not exist.
+- **Alerts** keep their names, except `VPCCIDROverlap`, which becomes `NetworkCIDROverlap` like
+  the metric it reads. With the window gone there is no release in which the old name could
+  have kept routes working anyway, so it is renamed now rather than as a separate breaking
+  change later. Their labels and text are neutral.
+- **Counters start at zero.** `hs_target_sync_errors_total` and `hs_unmanaged_resources_total`
+  exist at 0 from a target's first sync, and `hs_auto_imports_total` at 0 for each of its four
+  results once the target's scope runs the auto-import policy. A series that first appears at 1
+  is invisible to `increase()`, so without this the first unmanaged resource or the first
+  auto-import after a restart did not alert.
+
+## Implementation notes (#43, #45)
+
+- **`internal/provider`** defines `Provider` and a `Registry`. A provider bundles what the core
+  needs from one cloud: its name, capabilities and ownership model; the identity for an account
+  (read or write, from the account's member); the provider-specific checks of scopes, claims,
+  imports and tags (used by the webhooks and, as condition reasons, by the controllers); the
+  `Discoverer`, `SubnetWriter` and `OwnershipWriter`; and an optional change-event source. The
+  controllers and webhooks look the provider up by `spec.provider` and no longer name AWS. A
+  scope of a provider the operator does not run is refused by the webhook and reported
+  `ProviderNotEnabled` by the controllers, never synced.
+- **`inventory` is neutral**: `Network`/`Subnet`/`Snapshot` with `NetworkID`, `Zone`,
+  `TotalIPs`/`AvailableIPs` as pointers (unknown is nil; the provider computes the total, since
+  reserved addresses differ per cloud), `OwnershipSource`, and the provider's own details in a
+  member typed with the API's status structs (`AWS *AWSSubnetStatus`), which the controllers copy
+  unread. `Target` has `Provider` and an `Identity` (an interface each provider implements; the
+  AWS one is role ARN plus external ID) instead of `RoleARN`/`ExternalID`, and `NetworkSelector`
+  instead of `VPCTagSelector`. `TargetKey` stays account/region: account IDs of the three clouds
+  cannot collide (see §3). `TagWriter` became `OwnershipWriter` (§6).
+- **The AWS provider** is `internal/cloud/aws.Provider`; its change events moved to
+  `internal/cloud/aws/events`. The operator runs the providers named by `--providers` (default
+  `aws`); per-provider flags are prefixed (`--aws-events-queue-url`), and the chart has
+  `providers.aws.{enabled,irsaRoleARN,region,endpointURL,events.*}` with the 0.8 names kept until
+  0.10. GCP Workload Identity Federation and Azure Workload Identity become
+  `providers.gcp.*`/`providers.azure.*` values that render the service account annotations and pod
+  labels those need.
+- **API additions** (optional status fields, so additive): `NetworkScope.status.capabilities`
+  (`CreateSubnet`, `ChangeEvents`, `IPUsage`; an open set, `ChangeEvents` only while an event source
+  runs), `NetworkScope.status.ownership` (`{networks, subnets}` of `ResourceTags` or
+  `ParentNetworkTags`) and `Subnet.status.ownershipSource` (`Subnet` or `Network`). A Create-mode
+  claim on a provider without `CreateSubnet` is refused (`CreateNotSupported`). `ipUsageTime`,
+  `secondaryCIDRBlocks` and `count` stay deferred: nothing reports them yet.
+- **The contract suite** (`internal/provider/providertest`) runs against a `Fixture` (the provider
+  plus a way to arrange its cloud) and never assumes an empty account, so it runs against the
+  in-memory EC2 in `make test` and against Moto in the e2e job. Clauses a fixture cannot
+  arrange (throttling, unknown IP usage on Moto) are skipped there, not dropped. It checks that the
+  tag keys the operator writes (`hs/owner`, `hs/managed`, `hs/claim`, ...) are valid for the
+  provider: they are AWS keys today, so GCP and Azure must make them provider-dependent before
+  they can pass (§5).
+
+## Implementation notes (0.9: the old group removed)
+
+- **Removed:** the `aws.hypersurgery` CRDs from `config/crd` and the chart, `api/v1alpha1`, the
+  old group's webhooks, the migration controller and `--migrate-v1alpha1`, the controllers'
+  wait for an object's old counterpart and the claim allocator's view of unmigrated old claims,
+  and the old group's RBAC but `list`. The webhooks' exception for a copy the operator creates
+  with `network.hypersurgery.dev/migrated-from` (keep its creator, skip the checks) went with the
+  migration: nothing creates such copies any more, and an exception nobody needs is only a way
+  in. The marker stays on the objects 0.8 migrated, as a record that grants nothing.
+- **Kept:** `manager migrate-manifests`, for GitOps repositories, with the mapping of §9. It
+  converts metadata and spec only (manifests carry no state), and reads the old kinds with Go
+  types kept in `internal/migration/v1alpha1`, which is no API: no scheme, no CRD, no deepcopy.
+  Its removal is not scheduled; it has no cluster access and costs little to keep.
+- **The guard, instead of refusing to start.** An operator that exits is restarted by the
+  kubelet into a crash loop, whose metrics nobody scrapes and whose reason is a log line away.
+  So the operator lists the four user-written old kinds (metadata only) before it builds its
+  manager. With an object that lacks `migrated-to` (or when it cannot list them), it runs a
+  manager with nothing but the metrics and the probes: no controllers, no webhooks and no leader
+  election, so a 0.8 replica still running keeps the lease; the readiness probe fails with the
+  reason, the log names the objects, each gets a `MigrationPending` Warning Event, and
+  `hs_migration_pending_objects` counts them. It looks again every 30 seconds and exits once
+  nothing is left, to be restarted into normal operation. A rolling upgrade from 0.8 therefore
+  stops at the first new pod, with the 0.8 pods still serving. A running operator keeps counting
+  every minute and warns about an old object that appears later, without stopping.
+- **No chart-side check.** A pre-upgrade check in the chart (a `lookup` of the old objects, or a
+  hook Job) was considered and left out: `lookup` sees nothing under `helm template`, Argo CD or
+  Flux and needs the person running Helm to be able to list the old group cluster-wide, and a
+  hook Job needs a service account, RBAC and a pod of its own, which the namespace's Pod Security
+  and network policies must admit. The operator's
+  guard covers every way of installing, and the rollout it stops is the same signal
+  `helm upgrade --wait` reports.
+- **Upgrade test.** It starts from the published 0.8.0, creates old-group objects and lets 0.8
+  migrate them, then checks after the upgrade that what 0.8 migrated is unchanged, that the guard
+  blocks a restarted pod while an unmigrated old object exists and lets go once it is deleted,
+  and that the operator carries on after the old CRDs are deleted. 0.7 to 0.9 directly is not
+  supported and not tested.
+- **For #58 (v1).** `network.hypersurgery.dev` has one version and one set of webhooks; v1 is
+  added next to v1beta1 in the same group, where a conversion webhook can do what §9 had to do
+  by copying. `migrated-from` and `migrated-to` are annotations, not fields, so they need no
+  conversion. The guard and `hs_migration_pending_objects` are about the old group only and can
+  stay as they are until the old group is gone from supported upgrade paths.
+

@@ -35,33 +35,38 @@ func subnet(id, owner string, available int64) networkv1beta1.Subnet {
 	}
 }
 
+const aws = networkv1beta1.ProviderAWS
+
 func TestSetScopeReplacesSeries(t *testing.T) {
+	t.Cleanup(func() { Forget("s1"); Forget("s2") })
 	targets := []TargetResult{{Account: "111111111111", Region: "eu-central-1", OK: true}}
-	SetScope("s1", nil, []networkv1beta1.Subnet{subnet("subnet-1", "team-a", 10), subnet("subnet-2", "", 200)}, targets, 1)
-	SetScope("s2", nil, []networkv1beta1.Subnet{subnet("subnet-9", "", 5)}, targets, 1)
-	if got := testutil.CollectAndCount(subnetAvailableIPs); got != 3 {
+	SetScope("s1", aws, nil, []networkv1beta1.Subnet{subnet("subnet-1", "team-a", 10), subnet("subnet-2", "", 200)}, targets, 1)
+	SetScope("s2", aws, nil, []networkv1beta1.Subnet{subnet("subnet-9", "", 5)}, targets, 1)
+	if got := testutil.CollectAndCount(subnetAvailableIPs.vec); got != 3 {
 		t.Fatalf("want 3 series, got %d", got)
 	}
 
 	// subnet-2 disappeared and subnet-1 changed owner: no stale series may remain.
-	SetScope("s1", nil, []networkv1beta1.Subnet{subnet("subnet-1", "team-b", 10)},
+	errsBefore := testutil.ToFloat64(targetSyncErrors.vec.WithLabelValues("aws", "s1", "111111111111", "eu-central-1"))
+	SetScope("s1", aws, nil, []networkv1beta1.Subnet{subnet("subnet-1", "team-b", 10)},
 		[]TargetResult{{Account: "111111111111", Region: "eu-central-1", OK: false, Synced: true}}, 2)
-	if got := testutil.CollectAndCount(subnetAvailableIPs); got != 2 {
+	if got := testutil.CollectAndCount(subnetAvailableIPs.vec); got != 2 {
 		t.Fatalf("want 2 series after resync, got %d", got)
 	}
-	if got := testutil.ToFloat64(subnetMissingTags.WithLabelValues("s1", "111111111111", "eu-central-1", "vpc-1",
-		"subnet-1", "", "10.0.0.0/24", "", "team-b", "", "", "false")); got != 1 {
+	if got := testutil.ToFloat64(subnetMissingTags.vec.WithLabelValues("aws", "s1", "111111111111", "eu-central-1",
+		"vpc-1", "subnet-1", "", "10.0.0.0/24", "", "team-b", "", "", "false")); got != 1 {
 		t.Errorf("missing tags = %v, want 1", got)
 	}
-	if got := testutil.ToFloat64(targetUp.WithLabelValues("s1", "111111111111", "eu-central-1")); got != 0 {
+	if got := testutil.ToFloat64(targetUp.vec.WithLabelValues("aws", "s1", "111111111111", "eu-central-1")); got != 0 {
 		t.Errorf("target_up = %v, want 0", got)
 	}
-	if got := testutil.ToFloat64(targetSyncErrors.WithLabelValues("s1", "111111111111", "eu-central-1")); got != 1 {
-		t.Errorf("sync errors = %v, want 1", got)
+	// Counters are never reset, and the tests share them, so assert on the rise.
+	if got := testutil.ToFloat64(targetSyncErrors.vec.WithLabelValues("aws", "s1", "111111111111", "eu-central-1")); got != errsBefore+1 {
+		t.Errorf("sync errors = %v, want %v", got, errsBefore+1)
 	}
 
 	Forget("s1")
-	if got := testutil.CollectAndCount(subnetAvailableIPs); got != 1 {
+	if got := testutil.CollectAndCount(subnetAvailableIPs.vec); got != 1 {
 		t.Fatalf("want only s2 left, got %d", got)
 	}
 }
@@ -79,13 +84,13 @@ func TestIPv6OnlySubnetReportsNoIPv4Capacity(t *testing.T) {
 	}
 	dual := subnet("subnet-dual", "team-a", 40)
 	dual.Status.IPv6CIDRBlocks = []string{"2600:1f18:abcd:1201::/64"}
-	SetScope(scope, nil, []networkv1beta1.Subnet{v6only, dual}, nil, 1)
+	SetScope(scope, aws, nil, []networkv1beta1.Subnet{v6only, dual}, nil, 1)
 
 	// Only the dual-stack subnet has IPv4 capacity, so it alone has the two capacity series.
 	for name, g := range map[string]interface {
 		Collect(chan<- prometheus.Metric)
 	}{
-		"available": subnetAvailableIPs, "total": subnetTotalIPs,
+		"available": subnetAvailableIPs.vec, "total": subnetTotalIPs.vec,
 	} {
 		if got := seriesFor(g, "subnet_id", "subnet-v6"); got != 0 {
 			t.Errorf("%s: IPv6-only subnet has %d series, want none", name, got)
@@ -95,7 +100,7 @@ func TestIPv6OnlySubnetReportsNoIPv4Capacity(t *testing.T) {
 		}
 	}
 	// Tag compliance is about the subnet, not its address family, so it is reported for both.
-	if got := seriesFor(subnetMissingTags, "subnet_id", "subnet-v6"); got != 1 {
+	if got := seriesFor(subnetMissingTags.vec, "subnet_id", "subnet-v6"); got != 1 {
 		t.Errorf("missing tags: IPv6-only subnet has %d series, want 1", got)
 	}
 }
@@ -127,25 +132,31 @@ func TestThrottledTargetIsUpAndThrottled(t *testing.T) {
 	const scope = "throttle-test"
 	t.Cleanup(func() { Forget(scope) })
 	busy := []TargetResult{{Account: "111111111111", Region: "eu-central-1", OK: true, Synced: true, Throttled: true}}
+	errs := func() float64 {
+		return testutil.ToFloat64(targetSyncErrors.vec.WithLabelValues("aws", scope, "111111111111", "eu-central-1"))
+	}
+	errsBefore := errs()
 
-	SetScope(scope, nil, nil, busy, 1)
-	up := targetUp.WithLabelValues(scope, "111111111111", "eu-central-1")
-	throttled := targetThrottled.WithLabelValues(scope, "111111111111", "eu-central-1")
+	SetScope(scope, aws, nil, nil, busy, 1)
+	up := targetUp.vec.WithLabelValues("aws", scope, "111111111111", "eu-central-1")
+	throttled := targetThrottled.vec.WithLabelValues("aws", scope, "111111111111", "eu-central-1")
 	if testutil.ToFloat64(up) != 1 || testutil.ToFloat64(throttled) != 1 {
 		t.Fatalf("target_up = %v, target_throttled = %v, want 1 and 1", testutil.ToFloat64(up), testutil.ToFloat64(throttled))
 	}
-	if got := testutil.ToFloat64(targetSyncErrors.WithLabelValues(scope, "111111111111", "eu-central-1")); got != 0 {
-		t.Errorf("sync errors = %v, want 0 for a throttled target", got)
+	if got := errs(); got != errsBefore {
+		t.Errorf("sync errors rose to %v from %v for a throttled target", got, errsBefore)
 	}
 
-	SetScope(scope, nil, nil, []TargetResult{{Account: "111111111111", Region: "eu-central-1", OK: true, Synced: true}}, 2)
-	if got := testutil.ToFloat64(targetThrottled.WithLabelValues(scope, "111111111111", "eu-central-1")); got != 0 {
+	SetScope(scope, aws, nil, nil, []TargetResult{{Account: "111111111111", Region: "eu-central-1", OK: true, Synced: true}}, 2)
+	if got := testutil.ToFloat64(targetThrottled.vec.WithLabelValues("aws", scope, "111111111111", "eu-central-1")); got != 0 {
 		t.Errorf("target_throttled = %v after recovery, want 0", got)
 	}
 
-	APIThrottled(scope, "111111111111", "eu-central-1", "DescribeSubnets")
-	APIThrottled(scope, "111111111111", "eu-central-1", "DescribeSubnets")
-	if got := testutil.ToFloat64(apiThrottled.WithLabelValues(scope, "111111111111", "eu-central-1", "DescribeSubnets")); got != 2 {
-		t.Errorf("api_throttled_total = %v, want 2", got)
+	calls := apiThrottled.vec.WithLabelValues("aws", scope, "111111111111", "eu-central-1", "DescribeSubnets")
+	before := testutil.ToFloat64(calls)
+	APIThrottled(scope, aws, "111111111111", "eu-central-1", "DescribeSubnets")
+	APIThrottled(scope, aws, "111111111111", "eu-central-1", "DescribeSubnets")
+	if got := testutil.ToFloat64(calls); got != before+2 {
+		t.Errorf("api_throttled_total = %v, want %v", got, before+2)
 	}
 }

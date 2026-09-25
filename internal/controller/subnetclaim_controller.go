@@ -42,6 +42,7 @@ import (
 	"hypersurgery.dev/subnet-operator/internal/audit"
 	"hypersurgery.dev/subnet-operator/internal/inventory"
 	"hypersurgery.dev/subnet-operator/internal/metrics"
+	"hypersurgery.dev/subnet-operator/internal/provider"
 	"hypersurgery.dev/subnet-operator/internal/tenancy"
 )
 
@@ -60,9 +61,10 @@ type SubnetClaimReconciler struct {
 	// APIReader reads inventory lists straight from the API server, so a subnet created a
 	// moment ago by another claim is not missed because the cache is behind.
 	APIReader client.Reader
-	// Writer creates subnets. Nil means writes are impossible.
-	Writer inventory.SubnetWriter
-	// WritesEnabled gates every call to Writer. Off by default: an operator installed for
+	// Providers are the clouds the operator runs with; the claim's scope picks one, which
+	// checks the claim and creates its subnets.
+	Providers *provider.Registry
+	// WritesEnabled gates every subnet creation. Off by default: an operator installed for
 	// inventory must not start creating things because someone applied a claim.
 	WritesEnabled bool
 	// Notify asks the scope controller to resync a target after a subnet was created.
@@ -76,41 +78,6 @@ type SubnetClaimReconciler struct {
 	// created-by annotation and refuse changes to it. Only then does the audit trail repeat
 	// the annotation; otherwise anybody could have written it, and the line says "unknown".
 	WebhooksEnabled bool
-	// Legacy knows about aws.hypersurgery/v1alpha1 objects that are not migrated yet. Nil
-	// when the old group is not served.
-	Legacy Legacy
-}
-
-// Legacy is what the controllers need to know about aws.hypersurgery/v1alpha1 while that group
-// is still served (0.8). It goes away with the group in 0.9.
-type Legacy interface {
-	// Pending reports whether obj's old-group counterpart still waits to be migrated into
-	// it. Until it is, obj's controller leaves obj alone: the counterpart's status is about
-	// to be copied into it.
-	Pending(ctx context.Context, obj client.Object) (bool, error)
-	// Reservations returns the CIDRs that unmigrated old-group claims hold in a network.
-	Reservations(ctx context.Context, networkID string) ([]string, error)
-}
-
-// migrationRetryInterval is how soon an object waiting for the migration is looked at again.
-// The migration controller copies an object within seconds of starting.
-const migrationRetryInterval = 5 * time.Second
-
-// waitingForMigration reports whether obj must wait for its old-group counterpart. When it
-// need not, it reads obj again past the cache: the migration copies the status first and marks
-// the old object afterwards, so a copy read before that mark may still lack the status.
-func waitingForMigration(ctx context.Context, legacy Legacy, reader client.Reader, obj client.Object) (bool, error) {
-	if legacy == nil {
-		return false, nil
-	}
-	pending, err := legacy.Pending(ctx, obj)
-	if err != nil || pending {
-		if pending {
-			logf.FromContext(ctx).V(1).Info("waiting for the aws.hypersurgery/v1alpha1 counterpart to be migrated")
-		}
-		return pending, err
-	}
-	return false, reader.Get(ctx, client.ObjectKeyFromObject(obj), obj)
 }
 
 // +kubebuilder:rbac:groups=network.hypersurgery.dev,resources=subnetclaims,verbs=get;list;watch
@@ -134,9 +101,6 @@ func (r *SubnetClaimReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		// Subnets stay: deleting them is a human decision, made in the cloud.
 		return ctrl.Result{}, nil
 	}
-	if wait, err := waitingForMigration(ctx, r.Legacy, r.reader(), claim); err != nil || wait {
-		return ctrl.Result{RequeueAfter: migrationRetryInterval}, client.IgnoreNotFound(err)
-	}
 
 	status, requeue, err := r.reconcile(ctx, claim)
 	if err != nil {
@@ -146,7 +110,7 @@ func (r *SubnetClaimReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		return ctrl.Result{}, statusErr
 	}
 	// From the status just written, so the metric never says something the object does not.
-	metrics.ClaimReady(req.Namespace, req.Name, status.Conditions)
+	metrics.ClaimReady(req.Namespace, req.Name, scopeProvider(ctx, r, claim.Spec.ScopeRef), status.Conditions)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -165,7 +129,7 @@ func (r *SubnetClaimReconciler) reconcile(ctx context.Context, claim *networkv1b
 	}
 
 	// The scope supplies the credentials and the inventory the claim is checked against.
-	scope, target, reason, msg, err := r.scopeFor(ctx, claim)
+	scope, p, target, reason, msg, err := r.scopeFor(ctx, claim)
 	if err != nil {
 		return status, 0, err
 	}
@@ -173,7 +137,9 @@ func (r *SubnetClaimReconciler) reconcile(ctx context.Context, claim *networkv1b
 		return fail(reason, msg)
 	}
 
-	if reason, msg := invalidForProvider(claim, scope.Spec.Provider); reason != "" {
+	// The webhook refuses the same claims at apply time; this is for the ones created while
+	// it was not running.
+	if reason, msg := p.ClaimRefusal(claim); reason != "" {
 		return fail(reason, msg)
 	}
 
@@ -203,10 +169,7 @@ func (r *SubnetClaimReconciler) reconcile(ctx context.Context, claim *networkv1b
 	// zones that left the spec.
 	status.Allocations = reconcileAllocations(claim, status.Allocations, subnets.Items)
 
-	noSpace, err := r.allocateMissing(ctx, claim, network, subnets.Items, claims.Items, &status)
-	if err != nil {
-		return status, 0, err
-	}
+	noSpace := r.allocateMissing(ctx, claim, network, subnets.Items, claims.Items, &status)
 	if noSpace != nil {
 		setCondition(&status, ConditionAllocated, metav1.ConditionFalse, "NoSpace", noSpace.Error(), claim.Generation)
 		return fail("NoSpace", noSpace.Error())
@@ -221,14 +184,19 @@ func (r *SubnetClaimReconciler) reconcile(ctx context.Context, claim *networkv1b
 		return status, 0, nil
 	}
 
-	if !r.WritesEnabled || r.Writer == nil {
+	if !provider.HasCapability(p, networkv1beta1.CapabilityCreateSubnet) {
+		return fail("CreateNotSupported", fmt.Sprintf("provider %s cannot create subnets in this release; "+
+			"use mode Allocate to only reserve CIDRs", p.Name()))
+	}
+	if !r.WritesEnabled {
 		return fail("WritesDisabled", "the operator runs read-only; start it with --enable-writes to create subnets")
 	}
-	if target.RoleARN == "" && scope.AccountHasReadRole(claim.Spec.Account) {
-		return fail("NoWriteRole", fmt.Sprintf("account %s has no aws.writeRoleARN in NetworkScope %q", claim.Spec.Account, scope.Name))
+	if provider.MissingWriteIdentity(p, scope, claim.Spec.Account) {
+		return fail("NoWriteRole", fmt.Sprintf("account %s has no %s in NetworkScope %q",
+			claim.Spec.Account, p.WriteIdentityField(), scope.Name))
 	}
 
-	created, needsRetry := r.createPending(ctx, claim, target, &status)
+	created, needsRetry := r.createPending(ctx, claim, p, target, &status)
 	if created {
 		if r.Notify != nil {
 			if err := r.Notify(ctx, []inventory.TargetKey{target.Key()}); err != nil {
@@ -246,10 +214,10 @@ func (r *SubnetClaimReconciler) reconcile(ctx context.Context, claim *networkv1b
 
 // allocateMissing reserves a CIDR for every zone of the claim that has none yet, from what is
 // free in the network: its blocks minus the discovered subnets and every other claim's
-// reservations. noSpace says the network is full; err is for Kubernetes API problems.
+// reservations. noSpace says the network is full.
 func (r *SubnetClaimReconciler) allocateMissing(ctx context.Context, claim *networkv1beta1.SubnetClaim,
 	network *networkv1beta1.Network, subnets []networkv1beta1.Subnet, claims []networkv1beta1.SubnetClaim,
-	status *networkv1beta1.SubnetClaimStatus) (noSpace, err error) {
+	status *networkv1beta1.SubnetClaimStatus) (noSpace error) {
 	var missing []string
 	for _, zone := range claim.Spec.Zones {
 		if findAllocation(status.Allocations, zone) == nil {
@@ -257,7 +225,7 @@ func (r *SubnetClaimReconciler) allocateMissing(ctx context.Context, claim *netw
 		}
 	}
 	if len(missing) == 0 {
-		return nil, nil
+		return nil
 	}
 
 	pool := allocator.Pool{CIDRs: network.Status.CIDRBlocks}
@@ -275,20 +243,10 @@ func (r *SubnetClaimReconciler) allocateMissing(ctx context.Context, claim *netw
 	for _, a := range status.Allocations {
 		pool.Used = append(pool.Used, a.CIDRBlock)
 	}
-	// Until the migration from aws.hypersurgery/v1alpha1 is done, other claims' reservations
-	// may still live only in the old group. Allocating without them could hand out a CIDR that
-	// is already promised.
-	if r.Legacy != nil {
-		used, err := r.Legacy.Reservations(ctx, claim.Spec.NetworkID)
-		if err != nil {
-			return nil, err
-		}
-		pool.Used = append(pool.Used, used...)
-	}
 
 	cidrs, err := allocator.Allocate(pool, int(claim.Spec.PrefixLength), len(missing))
 	if err != nil {
-		return err, nil //nolint:nilerr // a full network is an answer for the status, not a failure to ask
+		return err // a full network is an answer for the status, not a failure to ask
 	}
 	for i, zone := range missing {
 		status.Allocations = append(status.Allocations, networkv1beta1.SubnetAllocation{
@@ -301,7 +259,7 @@ func (r *SubnetClaimReconciler) allocateMissing(ctx context.Context, claim *netw
 			Reason: fmt.Sprintf("reserved in %s for %s", claim.Spec.NetworkID, zone),
 		})
 	}
-	return nil, nil
+	return nil
 }
 
 // scopeFor reads the claim's scope and checks that the claim may use it at all: the scope
@@ -313,33 +271,37 @@ func (r *SubnetClaimReconciler) allocateMissing(ctx context.Context, claim *netw
 // never deletes a subnet, and dropping the reservations would hand their CIDRs to the next
 // claim while the subnets may still exist.
 func (r *SubnetClaimReconciler) scopeFor(ctx context.Context, claim *networkv1beta1.SubnetClaim) (
-	scope *networkv1beta1.NetworkScope, target inventory.Target, reason, msg string, err error) {
+	scope *networkv1beta1.NetworkScope, p provider.Provider, target inventory.Target, reason, msg string, err error) {
 	scope = &networkv1beta1.NetworkScope{}
 	if err := r.Get(ctx, types.NamespacedName{Name: claim.Spec.ScopeRef}, scope); err != nil {
 		if apierrors.IsNotFound(err) {
-			return nil, target, "ScopeNotFound", fmt.Sprintf("NetworkScope %q not found", claim.Spec.ScopeRef), nil
+			return nil, nil, target, "ScopeNotFound", fmt.Sprintf("NetworkScope %q not found", claim.Spec.ScopeRef), nil
 		}
-		return nil, target, "", "", err
+		return nil, nil, target, "", "", err
 	}
 	refusal, err := namespaceRefusal(ctx, r.Client, scope, claim.Namespace)
 	if err != nil {
-		return nil, target, "", "", err
+		return nil, nil, target, "", "", err
 	}
 	if refusal != "" {
-		return nil, target, tenancy.ReasonNamespaceNotAllowed, refusal, nil
+		return nil, nil, target, tenancy.ReasonNamespaceNotAllowed, refusal, nil
 	}
-	target, ok := targetFor(scope, claim.Spec.Account, claim.Spec.Region)
+	p, ok := r.Providers.Get(scope.Spec.Provider)
 	if !ok {
-		return nil, target, "AccountNotInScope", fmt.Sprintf("account %s in %s is not covered by NetworkScope %q",
+		return nil, nil, target, ReasonProviderNotEnabled, r.Providers.NotEnabled(scope.Spec.Provider), nil
+	}
+	target, ok = writeTarget(scope, p, claim.Spec.Account, claim.Spec.Region)
+	if !ok {
+		return nil, nil, target, "AccountNotInScope", fmt.Sprintf("account %s in %s is not covered by NetworkScope %q",
 			claim.Spec.Account, claim.Spec.Region, scope.Name), nil
 	}
-	return scope, target, "", "", nil
+	return scope, p, target, "", "", nil
 }
 
 // createPending creates every allocation that has no subnet yet. It reports whether anything
 // was created and whether anything still needs a retry.
 func (r *SubnetClaimReconciler) createPending(ctx context.Context, claim *networkv1beta1.SubnetClaim,
-	target inventory.Target, status *networkv1beta1.SubnetClaimStatus) (created, needsRetry bool) {
+	w inventory.SubnetWriter, target inventory.Target, status *networkv1beta1.SubnetClaimStatus) (created, needsRetry bool) {
 	log := logf.FromContext(ctx)
 	for i := range status.Allocations {
 		a := &status.Allocations[i]
@@ -348,14 +310,13 @@ func (r *SubnetClaimReconciler) createPending(ctx context.Context, claim *networ
 			continue
 		}
 		tags := subnetTags(claim, a.Zone)
-		opts := claim.AWSOptions()
-		id, err := r.Writer.CreateSubnet(ctx, target, inventory.CreateSubnetRequest{
-			VPCID:               claim.Spec.NetworkID,
-			CIDRBlock:           a.CIDRBlock,
-			AvailabilityZone:    a.Zone,
-			RouteTableID:        opts.RouteTableID,
-			MapPublicIPOnLaunch: opts.MapPublicIPOnLaunch,
-			Tags:                tags,
+		id, err := w.CreateSubnet(ctx, target, inventory.CreateSubnetRequest{
+			NetworkID: claim.Spec.NetworkID,
+			CIDRBlock: a.CIDRBlock,
+			Zone:      a.Zone,
+			Tags:      tags,
+			// The provider's own options travel as the claim states them.
+			AWS: claim.Spec.AWS,
 		})
 		switch {
 		case errors.Is(err, inventory.ErrCIDRConflict):
@@ -471,31 +432,6 @@ func subnetName(claim *networkv1beta1.SubnetClaim, zone string) string {
 	return networkv1beta1.SubnetName(claim.NamePrefixOrName(), claim.Spec.Region, zone)
 }
 
-// AWS limits a subnet to between a /16 and a /28.
-const (
-	awsMinPrefixLength = 16
-	awsMaxPrefixLength = 28
-)
-
-// invalidForProvider refuses a claim that the scope's provider cannot fulfil, with a reason and
-// a message for the status. The webhook refuses the same claims at apply time; this is for
-// the ones created while it was not running.
-func invalidForProvider(claim *networkv1beta1.SubnetClaim, provider networkv1beta1.Provider) (string, string) {
-	switch provider {
-	case networkv1beta1.ProviderAWS:
-		if len(claim.Spec.Zones) == 0 {
-			return "ZonesRequired", "AWS subnets are zonal: list one to six availability zones in spec.zones"
-		}
-		if claim.Spec.PrefixLength < awsMinPrefixLength || claim.Spec.PrefixLength > awsMaxPrefixLength {
-			return "InvalidPrefixLength", fmt.Sprintf("AWS subnets are between a /%d and a /%d, not a /%d",
-				awsMinPrefixLength, awsMaxPrefixLength, claim.Spec.PrefixLength)
-		}
-		return "", ""
-	default:
-		return "ProviderNotSupported", fmt.Sprintf("provider %q is not supported by this release of the operator", provider)
-	}
-}
-
 func claimTag(claim *networkv1beta1.SubnetClaim) string {
 	return claim.Namespace + "/" + claim.Name
 }
@@ -535,15 +471,16 @@ func namespaceRefusal(ctx context.Context, reader client.Reader, scope *networkv
 	return "", nil
 }
 
-// targetFor returns the write target for the account/region, if the scope covers it.
-// RoleARN is the account's write role, which may be empty for the operator's own account.
-func targetFor(scope *networkv1beta1.NetworkScope, account, region string) (inventory.Target, bool) {
+// writeTarget returns the write target for the account/region, if the scope covers it. Its
+// identity is the account's write identity, which is the operator's own for the account the
+// operator runs in.
+func writeTarget(scope *networkv1beta1.NetworkScope, p provider.Provider, account, region string) (inventory.Target, bool) {
 	a, ok := scope.Account(account)
 	if !ok || !scope.Covers(account, region) {
 		return inventory.Target{}, false
 	}
-	aws := a.AWSAccount()
-	return inventory.Target{Account: account, Region: region, RoleARN: aws.WriteRoleARN, ExternalID: aws.ExternalID}, true
+	return inventory.Target{Provider: p.Name(), Scope: scope.Name, Account: account, Region: region,
+		Identity: p.Identity(a, provider.Write)}, true
 }
 
 func setCondition(status *networkv1beta1.SubnetClaimStatus, typ string, st metav1.ConditionStatus, reason, msg string, gen int64) {

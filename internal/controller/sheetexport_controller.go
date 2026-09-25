@@ -49,9 +49,6 @@ type SheetExportReconciler struct {
 	APIReader client.Reader
 	// NewSyncer builds a sheet writer from Google service account JSON; replaced in tests.
 	NewSyncer func(ctx context.Context, credentialsJSON []byte) (sheets.Syncer, error)
-	// Legacy knows about aws.hypersurgery/v1alpha1 objects that are not migrated yet. Nil
-	// when the old group is not served.
-	Legacy Legacy
 }
 
 // +kubebuilder:rbac:groups=network.hypersurgery.dev,resources=sheetexports,verbs=get;list;watch
@@ -69,13 +66,6 @@ func (r *SheetExportReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	if !export.DeletionTimestamp.IsZero() {
 		// The sheet is left as it is: it belongs to the people reading it.
 		return ctrl.Result{}, nil
-	}
-	reader := client.Reader(r.Client)
-	if r.APIReader != nil {
-		reader = r.APIReader
-	}
-	if wait, err := waitingForMigration(ctx, r.Legacy, reader, export); err != nil || wait {
-		return ctrl.Result{RequeueAfter: migrationRetryInterval}, client.IgnoreNotFound(err)
 	}
 
 	rows, err := r.export(ctx, export)

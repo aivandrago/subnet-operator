@@ -34,6 +34,7 @@ import (
 
 	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
 	"hypersurgery.dev/subnet-operator/internal/inventory"
+	"hypersurgery.dev/subnet-operator/internal/provider"
 )
 
 // fakeDiscoverer returns a fixed snapshot or error per "account/region".
@@ -42,6 +43,7 @@ type fakeDiscoverer struct {
 	snapshots map[string]*inventory.Snapshot
 	errs      map[string]error
 	calls     map[string]int
+	targets   map[string]inventory.Target
 }
 
 func (f *fakeDiscoverer) Discover(_ context.Context, t inventory.Target) (*inventory.Snapshot, error) {
@@ -52,6 +54,10 @@ func (f *fakeDiscoverer) Discover(_ context.Context, t inventory.Target) (*inven
 		f.calls = map[string]int{}
 	}
 	f.calls[key]++
+	if f.targets == nil {
+		f.targets = map[string]inventory.Target{}
+	}
+	f.targets[key] = t
 	if err := f.errs[key]; err != nil {
 		return nil, err
 	}
@@ -69,21 +75,22 @@ const (
 
 func snapshotA() *inventory.Snapshot {
 	return &inventory.Snapshot{
-		VPCs: []inventory.VPC{{ID: "vpc-aaa", Account: accountA, Region: region, State: "available",
+		Networks: []inventory.Network{{ID: "vpc-aaa", Account: accountA, Region: region, State: "available",
 			CIDRBlocks: []string{"10.0.0.0/16"}, Tags: map[string]string{"Name": "prod", "hs/owner": "platform"}}},
 		Subnets: []inventory.Subnet{
-			{ID: "subnet-a1", VPCID: "vpc-aaa", Account: accountA, Region: region, State: "available",
-				CIDRBlock: "10.0.1.0/24", AvailabilityZone: "eu-central-1a", AvailableIPs: 51, Public: true,
+			{ID: "subnet-a1", NetworkID: "vpc-aaa", Account: accountA, Region: region, State: "available",
+				CIDRBlock: "10.0.1.0/24", Zone: "eu-central-1a", TotalIPs: new(int64(251)), AvailableIPs: new(int64(51)),
+				OwnershipSource: networkv1beta1.OwnershipSourceSubnet, AWS: &networkv1beta1.AWSSubnetStatus{Public: true},
 				Tags: map[string]string{"hs/owner": "team-a", "hs/env": "prod", "hs/tier": "public"}},
-			{ID: "subnet-a2", VPCID: "vpc-aaa", Account: accountA, Region: region, State: "available",
-				CIDRBlock: "10.0.2.0/24", AvailabilityZone: "eu-central-1b", AvailableIPs: 251},
+			{ID: "subnet-a2", NetworkID: "vpc-aaa", Account: accountA, Region: region, State: "available",
+				CIDRBlock: "10.0.2.0/24", Zone: "eu-central-1b", TotalIPs: new(int64(251)), AvailableIPs: new(int64(251))},
 		},
 	}
 }
 
 func snapshotB() *inventory.Snapshot {
 	return &inventory.Snapshot{
-		VPCs: []inventory.VPC{{ID: "vpc-bbb", Account: accountB, Region: region, State: "available",
+		Networks: []inventory.Network{{ID: "vpc-bbb", Account: accountB, Region: region, State: "available",
 			CIDRBlocks: []string{"10.0.128.0/20"}}},
 	}
 }
@@ -129,7 +136,7 @@ var _ = Describe("NetworkScope Controller", func() {
 			snapshots: map[string]*inventory.Snapshot{accountA + "/" + region: snapshotA(), accountB + "/" + region: snapshotB()},
 			errs:      map[string]error{},
 		}
-		reconciler = &NetworkScopeReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), Discoverer: discoverer}
+		reconciler = &NetworkScopeReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), Providers: awsProviders(discoverer, nil, nil)}
 
 		scope := &networkv1beta1.NetworkScope{
 			ObjectMeta: metav1.ObjectMeta{Name: scopeName},
@@ -194,6 +201,62 @@ var _ = Describe("NetworkScope Controller", func() {
 		Expect(meta.IsStatusConditionTrue(scope.Status.Conditions, ConditionReady)).To(BeTrue())
 	})
 
+	It("discovers through the scope's provider and reports what the provider can do", func() {
+		reconcileScope()
+
+		By("reaching each account with the read identity its provider maps it to")
+		discoverer.mu.Lock()
+		own, spoke := discoverer.targets[accountA+"/"+region], discoverer.targets[accountB+"/"+region]
+		discoverer.mu.Unlock()
+		Expect(own.Provider).To(Equal(networkv1beta1.ProviderAWS))
+		Expect(own.OwnIdentity()).To(BeTrue())
+		Expect(spoke.OwnIdentity()).To(BeFalse())
+		Expect(spoke.Identity.String()).To(Equal("arn:aws:iam::" + accountB + ":role/aws-subnet-operator-readonly"))
+
+		By("reporting the provider's capabilities and ownership model on the scope")
+		scope := getScope()
+		Expect(scope.Status.Capabilities).To(Equal([]networkv1beta1.Capability{
+			networkv1beta1.CapabilityCreateSubnet, networkv1beta1.CapabilityIPUsage}))
+		Expect(scope.Status.Ownership).To(Equal(&networkv1beta1.Ownership{
+			Networks: networkv1beta1.OwnershipResourceTags, Subnets: networkv1beta1.OwnershipResourceTags}))
+
+		By("saying where each subnet's ownership came from")
+		s := &networkv1beta1.Subnet{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "subnet-a1"}, s)).To(Succeed())
+		Expect(s.Status.OwnershipSource).To(Equal(networkv1beta1.OwnershipSourceSubnet))
+	})
+
+	It("keeps IP usage the provider could not report unknown, down to the network", func() {
+		snap := snapshotA()
+		snap.Subnets[1].AvailableIPs = nil
+		discoverer.snapshots[accountA+"/"+region] = snap
+		reconcileScope()
+
+		s := &networkv1beta1.Subnet{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "subnet-a2"}, s)).To(Succeed())
+		Expect(s.Status.TotalIPs).To(HaveValue(Equal(int64(251))))
+		Expect(s.Status.AvailableIPs).To(BeNil())
+		Expect(s.Status.UtilizationPercent).To(BeNil())
+		v := &networkv1beta1.Network{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "vpc-aaa"}, v)).To(Succeed())
+		Expect(v.Status.TotalIPs).To(HaveValue(Equal(int64(502))))
+		Expect(v.Status.AvailableIPs).To(BeNil(), "a sum that left a subnet out would look precise and be wrong")
+	})
+
+	It("does not sync a scope whose provider the operator does not run", func() {
+		reconciler.Providers = provider.MustRegistry()
+		res, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: scopeName}})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(res.RequeueAfter).To(BeZero(), "enabling a provider restarts the operator, which reconciles again")
+
+		Expect(discoverer.calls).To(BeEmpty())
+		ready := meta.FindStatusCondition(getScope().Status.Conditions, ConditionReady)
+		Expect(ready).NotTo(BeNil())
+		Expect(ready.Status).To(Equal(metav1.ConditionFalse))
+		Expect(ready.Reason).To(Equal(ReasonProviderNotEnabled))
+		Expect(ready.Message).To(ContainSubstring(`provider "AWS" is not enabled`))
+	})
+
 	It("deletes objects that disappeared from AWS but keeps objects of failed targets", func() {
 		reconcileScope()
 		firstSync := getScope().Status.Targets[1].LastSyncTime
@@ -233,8 +296,8 @@ var _ = Describe("NetworkScope Controller", func() {
 		By("changing both accounts in AWS but reporting only account A")
 		discoverer.mu.Lock()
 		snap := snapshotA()
-		snap.Subnets = append(snap.Subnets, inventory.Subnet{ID: "subnet-a3", VPCID: "vpc-aaa", Account: accountA,
-			Region: region, CIDRBlock: "10.0.3.0/24", AvailableIPs: 251})
+		snap.Subnets = append(snap.Subnets, inventory.Subnet{ID: "subnet-a3", NetworkID: "vpc-aaa", Account: accountA,
+			Region: region, CIDRBlock: "10.0.3.0/24", TotalIPs: new(int64(251)), AvailableIPs: new(int64(251))})
 		discoverer.snapshots[accountA+"/"+region] = snap
 		discoverer.snapshots[accountB+"/"+region] = &inventory.Snapshot{}
 		discoverer.mu.Unlock()

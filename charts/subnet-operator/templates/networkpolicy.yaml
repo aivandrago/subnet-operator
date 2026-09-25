@@ -1,5 +1,6 @@
 {{- if .Values.networkPolicy.enabled }}
 {{- $egress := .Values.networkPolicy.egress }}
+{{- $podIdentity := include "subnet-operator.aws.podIdentity" . | fromYaml }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -64,14 +65,14 @@ spec:
             matchLabels:
               kubernetes.io/metadata.name: {{ $egress.dns.namespace }}
     {{- end }}
-    {{- if $egress.podIdentity.enabled }}
+    {{- if and .Values.providers.aws.enabled $podIdentity.enabled }}
     # EKS Pod Identity agent, which hands out the AWS credentials.
     - ports:
-        - port: {{ $egress.podIdentity.port }}
+        - port: {{ $podIdentity.port }}
           protocol: TCP
       to:
         - ipBlock:
-            cidr: {{ $egress.podIdentity.cidr }}
+            cidr: {{ $podIdentity.cidr }}
     {{- end }}
     {{- with .Values.networkPolicy.extraEgress }}
     {{- toYaml . | nindent 4 }}

@@ -7,9 +7,10 @@ the operator mirrors what it finds as `Network` and `Subnet` objects
 Prometheus metrics.
 
 Until 0.7 this chart was called `aws-subnet-operator` and the API was
-`aws.hypersurgery/v1alpha1`. An existing release is upgraded in place to this chart and the
-operator migrates its objects: see the
-[upgrade guide](https://github.com/aivandrago/subnet-operator/blob/main/docs/operations/upgrades.md#upgrading-from-07-to-08).
+`aws.hypersurgery/v1alpha1`. 0.8 migrated the old objects; 0.9 no longer serves that group, and
+does not start its controllers while an old object 0.8 never migrated exists. Upgrade from 0.7
+through 0.8: see the
+[upgrade guide](https://github.com/aivandrago/subnet-operator/blob/main/docs/operations/upgrades.md#upgrading-from-08-to-09).
 
 The core only calls `ec2:Describe*`. Nothing in your cloud is modified.
 
@@ -56,16 +57,19 @@ CRDs are installed from `crds/` and, as Helm requires, are **not** removed on un
 kubectl apply -f charts/subnet-operator/crds/
 ```
 
-In 0.8, `crds/` holds both API groups: `network.hypersurgery.dev` and the deprecated
-`aws.hypersurgery`, which the operator migrates from and 0.9 drops.
+`crds/` holds `network.hypersurgery.dev` only. The `aws.hypersurgery` CRDs that 0.8 installed
+are not removed by an upgrade; delete them once nothing is left to migrate, as the
+[upgrade guide](https://github.com/aivandrago/subnet-operator/blob/main/docs/operations/upgrades.md#the-old-crds)
+says.
 
 ## AWS access
 
 The operator needs `ec2:DescribeVpcs`, `ec2:DescribeSubnets` and `ec2:DescribeRouteTables` in
 its own account and `sts:AssumeRole` on the read-only roles of the others
 (`deploy/iam/` in the repository has the policy and a StackSet template).
-Attach the role with EKS Pod Identity, or with IRSA through
-`serviceAccount.annotations."eks.amazonaws.com/role-arn"`.
+Attach the role with EKS Pod Identity (nothing to set here), or with IRSA through
+`providers.aws.irsaRoleARN`, which becomes the service account's `eks.amazonaws.com/role-arn`
+annotation.
 
 ## Values
 
@@ -74,14 +78,18 @@ Attach the role with EKS Pod Identity, or with IRSA through
 | `replicaCount` | `2` | Manager replicas: one leader, one standby. More than one only makes sense with `leaderElection.enabled`. |
 | `image.repository` / `image.tag` | `ghcr.io/aivandrago/subnet-operator` / chart `appVersion` | Manager image. Public, multi-arch, signed with cosign. |
 | `imagePullSecrets` | `[]` | Not needed: the image is public. Set it only if you mirror the image somewhere that requires a login. |
-| `serviceAccount.create` / `.name` / `.annotations` | `true` / `""` / `{}` | Service account; annotate for IRSA. Empty `name` uses the release's full name, which changed with the chart's name in 0.8: pin the old one when upgrading if a Pod Identity association or an IRSA trust policy names it. |
+| `serviceAccount.create` / `.name` / `.annotations` | `true` / `""` / `{}` | Service account. Extra annotations win over the ones `providers.*` set. Empty `name` uses the release's full name, which changed with the chart's name in 0.8: pin the old one when upgrading if a Pod Identity association or an IRSA trust policy names it. |
 | `rbac.credentialSecretNamespaces` | `[]` | Extra namespaces where the operator may read credential Secrets. The release namespace, and the namespace of a `SheetExport` created by this chart, are covered already. |
 | `discovery.concurrency` | `4` | Account/region pairs discovered in parallel, across all `NetworkScope`s. The defaults are sized for about 100 accounts at 4 regions; raise it in proportion for more (see the [capacity notes](../../docs/operations/limits.md#accounts-and-regions-per-instance)). |
-| `events.queueUrl` | `""` | SQS queue fed by EventBridge. Empty means the resync interval is the only trigger. |
-| `events.debounce` | `10s` | How long events are collected before the affected targets resync. |
+| `providers.aws.enabled` | `true` | Run the AWS provider (`--providers=aws`). A `NetworkScope` of a provider that is not enabled is reported `ProviderNotEnabled` and not synced. Only AWS exists in this release. |
+| `providers.aws.irsaRoleARN` | `""` | The operator's own role with IRSA, written as the `eks.amazonaws.com/role-arn` annotation. EKS Pod Identity needs nothing. |
+| `providers.aws.events.queueUrl` | `""` | SQS queue fed by EventBridge with EC2 change events. Empty means the resync interval is the only trigger. |
+| `providers.aws.events.debounce` | `""` (10s) | How long events are collected before the affected targets resync. |
+| `providers.aws.region` | `""` | Region for the operator's own calls (STS, SQS). |
+| `providers.aws.endpointURL` | `""` | Non-AWS endpoint, for testing against emulators. |
+| `providers.aws.podIdentity.enabled` / `.cidr` / `.port` | `true` / `169.254.170.23/32` / `80` | With `networkPolicy.enabled`, egress to the EKS Pod Identity agent; IRSA does not need it. Deprecated, removed in 0.10: the 0.8 name `networkPolicy.egress.podIdentity`, which still works; a key set here wins. |
+| `events.queueUrl` / `.debounce`, `aws.region` / `.endpointURL` | `""` | Deprecated 0.8 names of the `providers.aws` values above, removed in 0.10. They still work; the `providers.aws` value wins when both are set. |
 | `audit.sink` | `stdout` | Audit trail: one JSON line per decision on stdout, or `off`. See [docs/audit.md](../../docs/audit.md). |
-| `aws.region` | `""` | Region for the operator's own calls. |
-| `aws.endpointURL` | `""` | Non-AWS endpoint, for testing against emulators. |
 | `writes.enabled` | `false` | Let `SubnetClaim`s in Create mode create subnets. Allocation works without it. |
 | `leaderElection.enabled` | `true` | Leader election lease in the release namespace. |
 | `leaderElection.leaseDuration` | `15s` | How long a standby waits before replacing a leader that crashed. A leader that is stopped hands the lease over at once, so this does not slow a drain or a rollout. |
@@ -100,7 +108,7 @@ Attach the role with EKS Pod Identity, or with IRSA through
 | `prometheusRule.thresholds.subnetUsedRatio` | `0.85` | When a subnet counts as nearly full. |
 | `prometheusRule.thresholds.staleSyncSeconds` | `3600` | When the inventory counts as stale. |
 | `prometheusRule.thresholds.notReadyFor` | `30m` | How long a `SubnetClaim` or `ResourceImport` may stay unfulfilled before it alerts. |
-| `prometheusRule.thresholds.throttledFor` | `30m` | How long an account/region may stay throttled by AWS, and backed off, before `SubnetInventoryTargetThrottled` fires. |
+| `prometheusRule.thresholds.throttledFor` | `30m` | How long an account/region may stay throttled by its cloud, and backed off, before `SubnetInventoryTargetThrottled` fires. |
 | `prometheusRule.operatorDown.job` | `""` | Scrape job the operator's metrics arrive under. Empty uses the chart's `ServiceMonitor` job; without either, `SubnetOperatorDown` is not rendered. |
 | `prometheusRule.operatorDown.for` | `10m` | How long no replica may be up before `SubnetOperatorDown` fires. |
 | `grafanaDashboard.enabled` | `false` | ConfigMap with the dashboard, for the Grafana sidecar. |
@@ -116,8 +124,8 @@ Attach the role with EKS Pod Identity, or with IRSA through
 | `networkPolicy.enabled` | `false` | Restrict the operator to the API server, the AWS endpoints, DNS, the metrics scrape, the kubelet probes and, with the webhooks on, admission review calls. |
 | `networkPolicy.metricsFrom` | `[]` | Sources allowed to scrape metrics. Empty means any source. |
 | `networkPolicy.egress.cidrs` / `.ports` | `0.0.0.0/0` / `443, 6443` | Where the API server and the AWS endpoints are reached. |
-| `networkPolicy.egress.dns` / `.podIdentity` | enabled | DNS in `kube-system`, and the EKS Pod Identity link-local address. |
-| `networkScope.create` | `false` | Also create a `NetworkScope` with the release (provider AWS). `networkScope.accounts[]` take their roles in an `aws` member; `roleARN`, `externalID` and `writeRoleARN` next to the `id`, as in 0.7, are moved there. `networkScope.networkSelector.matchTags` selects the VPCs; the 0.7 `vpcTagSelector` still works and wins when set. |
+| `networkPolicy.egress.dns` | enabled | DNS in `kube-system`. |
+| `networkScope.create` | `false` | Also create a `NetworkScope` with the release (provider AWS). `networkScope.accounts[]` take their roles in an `aws` member. `networkScope.networkSelector.matchTags` selects the VPCs. The 0.7 forms, `roleARN`, `externalID` and `writeRoleARN` next to the `id` and `vpcTagSelector`, were removed in 0.9 and fail the render. |
 | `networkScope.namespaceSelector` | `null` | Namespaces whose `SubnetClaim`s and `ResourceImport`s may use that scope. `null` leaves the field unset, which allows **no** namespace; `{}` allows every namespace (what 0.7 did with it unset) and is warned about; see [Permissions](#permissions). |
 | `sheetExport.create` | `false` | Also create a `SheetExport` (Google Sheet mirror). |
 | `resources` | 500m / 512Mi limits | Container resources. |
@@ -166,8 +174,8 @@ another label (`team: payments`) is only as strong as the RBAC on updating names
 Without a selector no namespace may use the scope; it only takes inventory, and the webhook
 says so. An empty selector (`{}`) allows every namespace on purpose, and the webhook and a
 `NamespacesUnrestricted` Event on the scope say so. (In `aws.hypersurgery/v1alpha1` an unset
-selector allowed every namespace; the migration writes `{}` into such scopes so nobody is
-locked out, and leaves it to you to narrow it.) `networkScope.namespaceSelector` in the values
+selector allowed every namespace; the migration in 0.8 and `manager migrate-manifests` write
+`{}` into such scopes so nobody is locked out, and leave it to you to narrow it.) `networkScope.namespaceSelector` in the values
 follows the same rule: `null`, the default, leaves it unset.
 
 Narrowing a selector later never deletes anything and never undoes what AWS already has. A
@@ -212,13 +220,9 @@ feedback, not correctness.
 The webhooks also record who created each `SubnetClaim` and `ResourceImport`: the mutating
 webhook writes the user the API server authenticated into the `network.hypersurgery.dev/created-by`
 annotation, whatever the object carried, and the validating webhook refuses a create where it
-does not match and any update that changes it. The one exception is the migration from
-`aws.hypersurgery`: a copy the operator's own service account creates, marked
-`network.hypersurgery.dev/migrated-from`, keeps the creator the old object recorded.
-
-In 0.8 the webhooks also serve `aws.hypersurgery/v1alpha1`: old objects keep their created-by
-annotation and are checked with the new group's rules, and the spec of a migrated object can no
-longer change. The audit trail's `created_by` field comes from
+does not match and any update that changes it, with no exception. (0.8 made one for the copies
+its migration from `aws.hypersurgery` created; 0.9 migrates nothing.) The audit trail's
+`created_by` field comes from
 that annotation, and says `unknown` with `webhook.enabled=false` ([docs/audit.md](https://github.com/aivandrago/subnet-operator/blob/main/docs/audit.md)).
 
 **Use cert-manager in production and with GitOps** (`webhook.certificate.certManager=true`). The
@@ -312,3 +316,8 @@ checkout of this repository: `kubectl proxy --www=site --www-prefix=/ui/`, then
 `grafana_dashboard: "1"`, which the kube-prometheus-stack Grafana sidecar imports on its own.
 `prometheusRule.enabled=true` adds the alerts; set the labels your Prometheus selects on
 (usually `release: kube-prometheus-stack`).
+
+Both read the `hs_*` metrics, which carry a `provider` label. 0.9 no longer exports the
+`hs_aws_*` names of 0.8 and renamed the alert `VPCCIDROverlap` to `NetworkCIDROverlap`; see the
+[upgrade notes](../../docs/operations/upgrades.md#upgrading-from-08-to-09) for moving rules,
+dashboards, routes and silences of your own.

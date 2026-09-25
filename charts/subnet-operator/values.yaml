@@ -29,18 +29,51 @@ rbac:
 serviceAccount:
   create: true
   name: ""
-  # For IRSA, set eks.amazonaws.com/role-arn here. EKS Pod Identity needs no annotation.
+  # Extra annotations. The cloud identities of the operator itself are set per provider under
+  # providers.<name> (for IRSA, providers.aws.irsaRoleARN); an annotation set here wins.
   annotations: {}
 
 # Discovery
 discovery:
-  # Account/region pairs discovered in parallel, across all NetworkScopes of the instance.
+  # Account/region pairs discovered in parallel, across all NetworkScopes and providers.
   concurrency: 4
 
-# EC2 change events (EventBridge -> SQS). Leave queueUrl empty to rely on the resync interval.
+# The clouds the operator runs with. A NetworkScope selects one with spec.provider; a scope of a
+# provider that is not enabled here is reported (Ready=False, ProviderNotEnabled) and not synced.
+# Each provider has its own identity for the operator and its own change events. Only AWS is
+# implemented; GCP and Azure are added here by the releases that implement them.
+providers:
+  aws:
+    enabled: true
+    # The operator's own AWS identity, which reads the account it runs in and assumes the roles
+    # of every other account (spec.accounts[].aws.roleARN / writeRoleARN in the NetworkScope).
+    # EKS Pod Identity needs nothing here: associate the service account with the role. For
+    # IRSA, the role ARN goes here and becomes the eks.amazonaws.com/role-arn annotation.
+    irsaRoleARN: ""
+    # Region for the operator's own calls (STS, SQS); each NetworkScope target sets its own.
+    region: ""
+    # Non-AWS endpoint, for testing against emulators.
+    endpointURL: ""
+    # EC2 change events (EventBridge -> SQS, deploy/events). Leave queueUrl empty to rely on
+    # the resync interval.
+    events:
+      queueUrl: ""
+      # How long events are collected before the affected targets resync. Empty means 10s.
+      debounce: ""
+    # EKS Pod Identity hands out the operator's credentials on a link-local address. With
+    # networkPolicy.enabled, the NetworkPolicy allows egress to it; IRSA does not need it, so
+    # set enabled: false there. Unset keys take the defaults shown.
+    podIdentity: {}
+      # enabled: true
+      # cidr: 169.254.170.23/32
+      # port: 80
+
+# Deprecated, removed in 0.10: the 0.8 names of providers.aws.events.queueUrl / .debounce and
+# providers.aws.region / .endpointURL. They still work; the providers.aws value wins when set.
+# (networkPolicy.egress.podIdentity, the 0.8 name of providers.aws.podIdentity, is the same.)
 events:
   queueUrl: ""
-  debounce: 10s
+  debounce: ""
 
 # Audit trail. "stdout" writes one JSON line per import, allocation and policy decision to
 # stdout, apart from the operational log on stderr, so it can be shipped to a SIEM on its own.
@@ -49,13 +82,12 @@ audit:
   sink: stdout
 
 aws:
-  # Region for the operator's own API calls; each NetworkScope target sets its own.
   region: ""
-  # Non-AWS endpoint, for testing against emulators.
   endpointURL: ""
 
-# SubnetClaims. Allocation always works; creating subnets in AWS needs this switch and a
-# write role per account (spec.accounts[].writeRoleARN in the NetworkScope).
+# SubnetClaims and ResourceImports. Allocation always works; creating subnets and writing
+# ownership needs this switch and, per account, the provider's write identity (on AWS
+# spec.accounts[].aws.writeRoleARN in the NetworkScope).
 writes:
   enabled: false
 
@@ -138,7 +170,7 @@ prometheusRule:
     # How long a SubnetClaim or ResourceImport may stay unfulfilled before it alerts: long enough
     # to ride out a retry or two, short enough that nobody waits a day on a request.
     notReadyFor: 30m
-    # How long an account/region may stay throttled by AWS before it alerts. The operator backs a
+    # How long an account/region may stay throttled by its cloud before it alerts. The operator backs a
     # throttled target off and retries it on its own (after about 1, 2, 4, 8 and 16 minutes), so
     # this is several retries that did not get through, not one busy moment.
     throttledFor: 30m
@@ -170,11 +202,9 @@ networkPolicy:
     # cidrs to the API server endpoint and your VPC endpoints where you know them.
     cidrs: [0.0.0.0/0]
     ports: [443, 6443]
-    # EKS Pod Identity serves credentials on a link-local address; IRSA does not need it.
-    podIdentity:
-      enabled: true
-      cidr: 169.254.170.23/32
-      port: 80
+    # Egress to the EKS Pod Identity agent is providers.aws.podIdentity. Deprecated, removed in
+    # 0.10: its 0.8 name here, podIdentity: {enabled, cidr, port}, which still works; a key set
+    # under providers.aws.podIdentity wins.
     dns:
       enabled: true
       # Namespace CoreDNS runs in, matched by the kubernetes.io/metadata.name label.
@@ -263,16 +293,16 @@ dashboard:
 networkScope:
   create: false
   name: organization
-  # AWS accounts. The read and write roles go in an aws member. Deprecated, removed in 0.9: the
-  # 0.7 form, with roleARN, externalID and writeRoleARN next to the id, which is moved there.
+  # AWS accounts. The read and write roles go in an aws member. (The 0.7 form, with roleARN,
+  # externalID and writeRoleARN next to the id, was removed in 0.9 and is refused.)
   accounts: []
   # - id: "111111111111"
   # - id: "222222222222"
   #   aws:
   #     roleARN: arn:aws:iam::222222222222:role/aws-subnet-operator-readonly
   regions: []
-  # Only networks (VPCs) carrying all of these tags are discovered. Deprecated, removed in 0.9:
-  # vpcTagSelector, the 0.7 name, which still works and wins when set.
+  # Only networks (VPCs) carrying all of these tags are discovered. (vpcTagSelector, the 0.7
+  # name, was removed in 0.9 and is refused.)
   networkSelector:
     matchTags:
       hs/managed: "true"

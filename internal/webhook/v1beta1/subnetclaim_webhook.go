@@ -21,9 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
-	"regexp"
 	"slices"
-	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/util/validation/field"
@@ -34,34 +32,31 @@ import (
 
 	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
 	"hypersurgery.dev/subnet-operator/internal/allocator"
+	"hypersurgery.dev/subnet-operator/internal/provider"
 )
 
 var subnetclaimlog = logf.Log.WithName("subnetclaim-resource")
 
 // SetupSubnetClaimWebhookWithManager registers the webhook for SubnetClaim in the manager.
 // writesEnabled mirrors the manager's --enable-writes switch: the webhook only warns about
-// it, so that a claim applied to a read-only operator says so at apply time. operator is the
-// user the operator authenticates as, which may carry a migrated claim's creator over.
-func SetupSubnetClaimWebhookWithManager(mgr ctrl.Manager, writesEnabled bool, operator string) error {
+// it, so that a claim applied to a read-only operator says so at apply time.
+func SetupSubnetClaimWebhookWithManager(mgr ctrl.Manager, providers *provider.Registry, writesEnabled bool) error {
 	return ctrl.NewWebhookManagedBy(mgr, &networkv1beta1.SubnetClaim{}).
-		WithValidator(&SubnetClaimValidator{Client: mgr.GetClient(), WritesEnabled: writesEnabled, Operator: operator}).
-		WithDefaulter(&SubnetClaimDefaulter{Operator: operator}).
+		WithValidator(&SubnetClaimValidator{Client: mgr.GetClient(), Providers: providers, WritesEnabled: writesEnabled}).
+		WithDefaulter(&SubnetClaimDefaulter{}).
 		Complete()
 }
 
 // +kubebuilder:webhook:path=/mutate-network-hypersurgery-dev-v1beta1-subnetclaim,mutating=true,failurePolicy=ignore,sideEffects=None,groups=network.hypersurgery.dev,resources=subnetclaims,verbs=create;update,versions=v1beta1,name=msubnetclaim-v1beta1.kb.io,admissionReviewVersions=v1
 
 // SubnetClaimDefaulter fills in the fields a claim can work out for itself.
-type SubnetClaimDefaulter struct {
-	// Operator is the user the operator authenticates as; see keepsCopiedCreator.
-	Operator string
-}
+type SubnetClaimDefaulter struct{}
 
 // Default records who created the claim and writes the name prefix into the spec. The
 // controller already falls back to the claim's name; doing it here as well means the Name tag
 // the subnets will carry is visible in the object instead of only in the operator's head.
 func (d *SubnetClaimDefaulter) Default(ctx context.Context, obj *networkv1beta1.SubnetClaim) error {
-	stampCreatedBy(ctx, d.Operator, obj)
+	stampCreatedBy(ctx, obj)
 	if obj.Spec.NamePrefix == "" && obj.Name != "" {
 		obj.Spec.NamePrefix = obj.Name
 	}
@@ -78,21 +73,19 @@ func (d *SubnetClaimDefaulter) Default(ctx context.Context, obj *networkv1beta1.
 type SubnetClaimValidator struct {
 	// Client reads the scope and the inventory the claim is checked against.
 	Client client.Reader
+	// Providers are the clouds the operator runs with; the claim's scope picks the one whose
+	// rules the claim is checked against.
+	Providers *provider.Registry
 	// WritesEnabled is the manager's --enable-writes switch.
 	WritesEnabled bool
-	// Operator is the user the operator authenticates as; see keepsCopiedCreator.
-	Operator string
 }
 
 // ValidateCreate checks a new claim.
 func (v *SubnetClaimValidator) ValidateCreate(ctx context.Context, obj *networkv1beta1.SubnetClaim) (
 	admission.Warnings, error) {
 	subnetclaimlog.V(1).Info("Validating SubnetClaim on create", "name", obj.GetName())
-	if e := validateCreatedByOnCreate(ctx, v.Operator, obj); e != nil {
+	if e := validateCreatedByOnCreate(ctx, obj); e != nil {
 		return nil, invalidError("SubnetClaim", obj.Name, field.ErrorList{e})
-	}
-	if createdByMigration(ctx, v.Operator, obj) {
-		return nil, nil
 	}
 	return v.Validate(ctx, obj)
 }
@@ -138,15 +131,13 @@ func (v *SubnetClaimValidator) ValidateDelete(_ context.Context, _ *networkv1bet
 	return nil, nil
 }
 
-// Validate is everything that is checked on both create and update. The webhook for
-// aws.hypersurgery/v1alpha1 runs it on the converted form of an old object.
+// Validate is everything that is checked on both create and update.
 func (v *SubnetClaimValidator) Validate(ctx context.Context, claim *networkv1beta1.SubnetClaim) (
 	admission.Warnings, error) {
 	spec := field.NewPath("spec")
 	var errs field.ErrorList
 	var warnings admission.Warnings
 
-	errs = append(errs, validateTags(spec.Child("tags"), claim.Spec.Tags)...)
 	if _, ok := claim.Spec.Tags["Name"]; ok {
 		warnings = append(warnings, "the Name tag is overwritten with namePrefix plus the zone")
 	}
@@ -155,13 +146,13 @@ func (v *SubnetClaimValidator) Validate(ctx context.Context, claim *networkv1bet
 	if e != nil {
 		return warnings, invalidError("SubnetClaim", claim.Name, append(errs, e))
 	}
-	// What the fields must look like depends on the provider, which is the scope's.
-	if scope.Spec.Provider != networkv1beta1.ProviderAWS {
-		return warnings, invalidError("SubnetClaim", claim.Name, append(errs, field.Invalid(spec.Child("scopeRef"),
-			claim.Spec.ScopeRef, fmt.Sprintf("NetworkScope %q has provider %q, which this operator does not support",
-				scope.Name, scope.Spec.Provider))))
+	// What the fields and tags must look like depends on the provider, which is the scope's.
+	p, e := providerFor(v.Providers, scope, claim.Spec.ScopeRef)
+	if e != nil {
+		return warnings, invalidError("SubnetClaim", claim.Name, append(errs, e))
 	}
-	errs = append(errs, validateAWSClaim(claim)...)
+	errs = append(errs, p.ValidateTags(spec.Child("tags"), claim.Spec.Tags)...)
+	errs = append(errs, p.ValidateClaim(claim)...)
 	if e := validateNamespace(ctx, v.Client, scope, claim.Namespace); e != nil {
 		return warnings, invalidError("SubnetClaim", claim.Name, append(errs, e))
 	}
@@ -172,15 +163,21 @@ func (v *SubnetClaimValidator) Validate(ctx context.Context, claim *networkv1bet
 		return warnings, invalidError("SubnetClaim", claim.Name, errs)
 	}
 
-	// Create mode needs a write role of its own in every account the operator reaches through
-	// sts:AssumeRole. Without one the claim would allocate and then stop.
+	// Create mode needs a provider that can create subnets, and a write identity of its own in
+	// every account the operator reaches with a read identity of its own (on AWS, through
+	// sts:AssumeRole). Without one the claim would allocate and then stop.
 	if claim.Spec.Mode == networkv1beta1.ClaimModeCreate {
-		account, _ := scope.Account(claim.Spec.Account)
-		if account.AWSAccount().WriteRoleARN == "" && scope.AccountHasReadRole(claim.Spec.Account) {
+		switch {
+		case !provider.HasCapability(p, networkv1beta1.CapabilityCreateSubnet):
 			errs = append(errs, field.Invalid(spec.Child("mode"), claim.Spec.Mode,
-				fmt.Sprintf("account %s has no aws.writeRoleARN in NetworkScope %q, so subnets cannot be created there; "+
-					"set one, or use mode Allocate to only reserve CIDRs", claim.Spec.Account, scope.Name)))
-		} else if !v.WritesEnabled {
+				fmt.Sprintf("provider %s cannot create subnets in this release; use mode Allocate to only reserve CIDRs",
+					p.Name())))
+		case provider.MissingWriteIdentity(p, scope, claim.Spec.Account):
+			errs = append(errs, field.Invalid(spec.Child("mode"), claim.Spec.Mode,
+				fmt.Sprintf("account %s has no %s in NetworkScope %q, so subnets cannot be created there; "+
+					"set one, or use mode Allocate to only reserve CIDRs", claim.Spec.Account, p.WriteIdentityField(),
+					scope.Name)))
+		case !v.WritesEnabled:
 			warnings = append(warnings,
 				writesDisabledWarning("the CIDRs are reserved but no subnet is created")...)
 		}
@@ -320,49 +317,4 @@ func largestPrefix(cidrs []string) (int, bool) {
 		}
 	}
 	return largest, found
-}
-
-// awsNetworkID is the shape of a VPC ID, which is what networkID is on AWS.
-var awsNetworkID = regexp.MustCompile(`^vpc-[0-9a-f]+$`)
-
-// AWS subnet sizes and the number of zones a claim may span.
-const (
-	awsMinPrefixLength = 16
-	awsMaxPrefixLength = 28
-	awsMaxZones        = 6
-)
-
-// validateAWSClaim checks what the schema cannot, because it depends on the scope's provider
-// being AWS: the account and ID formats, the region, one to six availability zones of that
-// region, and a prefix length AWS accepts.
-func validateAWSClaim(claim *networkv1beta1.SubnetClaim) field.ErrorList {
-	spec := field.NewPath("spec")
-	var errs field.ErrorList
-	if !awsAccountPattern.MatchString(claim.Spec.Account) {
-		errs = append(errs, field.Invalid(spec.Child("account"), claim.Spec.Account, "an AWS account ID is 12 digits"))
-	}
-	if e := validateRegion(spec.Child("region"), claim.Spec.Region); e != nil {
-		errs = append(errs, e)
-	}
-	if !awsNetworkID.MatchString(claim.Spec.NetworkID) {
-		errs = append(errs, field.Invalid(spec.Child("networkID"), claim.Spec.NetworkID, "not an AWS VPC ID, e.g. vpc-0abc"))
-	}
-	if claim.Spec.PrefixLength < awsMinPrefixLength || claim.Spec.PrefixLength > awsMaxPrefixLength {
-		errs = append(errs, field.Invalid(spec.Child("prefixLength"), claim.Spec.PrefixLength,
-			fmt.Sprintf("AWS subnets are between a /%d and a /%d", awsMinPrefixLength, awsMaxPrefixLength)))
-	}
-	switch {
-	case len(claim.Spec.Zones) == 0:
-		errs = append(errs, field.Required(spec.Child("zones"),
-			"AWS subnets are zonal: list one to six availability zones, e.g. eu-central-1a"))
-	case len(claim.Spec.Zones) > awsMaxZones:
-		errs = append(errs, field.TooMany(spec.Child("zones"), len(claim.Spec.Zones), awsMaxZones))
-	}
-	for i, zone := range claim.Spec.Zones {
-		if !strings.HasPrefix(zone, claim.Spec.Region) {
-			errs = append(errs, field.Invalid(spec.Child("zones").Index(i), zone,
-				fmt.Sprintf("not an availability zone of region %s", claim.Spec.Region)))
-		}
-	}
-	return errs
 }

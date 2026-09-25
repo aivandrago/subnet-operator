@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 	"maps"
-	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -41,6 +40,7 @@ import (
 	"hypersurgery.dev/subnet-operator/internal/audit"
 	"hypersurgery.dev/subnet-operator/internal/inventory"
 	"hypersurgery.dev/subnet-operator/internal/metrics"
+	"hypersurgery.dev/subnet-operator/internal/provider"
 	"hypersurgery.dev/subnet-operator/internal/tenancy"
 )
 
@@ -54,9 +54,10 @@ type ResourceImportReconciler struct {
 	Scheme *runtime.Scheme
 	// APIReader reads the scope straight from the API server when the cache may lag.
 	APIReader client.Reader
-	// Writer applies the tags. Nil means imports can only be dry runs.
-	Writer inventory.TagWriter
-	// WritesEnabled gates every call to Writer.
+	// Providers are the clouds the operator runs with; the import's scope picks one, which
+	// checks the import and writes the tags where it keeps ownership.
+	Providers *provider.Registry
+	// WritesEnabled gates every ownership write.
 	WritesEnabled bool
 	// Notify asks the scope controller to resync the target, so the freshly tagged resource
 	// shows up in the inventory within seconds rather than at the next full sync.
@@ -69,9 +70,6 @@ type ResourceImportReconciler struct {
 	// created-by annotation and refuse changes to it. Only then does the audit trail repeat
 	// the annotation; otherwise anybody could have written it, and the line says "unknown".
 	WebhooksEnabled bool
-	// Legacy knows about aws.hypersurgery/v1alpha1 objects that are not migrated yet. Nil
-	// when the old group is not served.
-	Legacy Legacy
 }
 
 // +kubebuilder:rbac:groups=network.hypersurgery.dev,resources=resourceimports,verbs=get;list;watch;create
@@ -93,9 +91,6 @@ func (r *ResourceImportReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		// Tags stay on the resource: deleting the object is not a request to untag anything.
 		return ctrl.Result{}, nil
 	}
-	if wait, err := waitingForMigration(ctx, r.Legacy, r.reader(), imp); err != nil || wait {
-		return ctrl.Result{RequeueAfter: migrationRetryInterval}, client.IgnoreNotFound(err)
-	}
 
 	status, requeue, err := r.reconcile(ctx, imp)
 	if err != nil {
@@ -105,7 +100,7 @@ func (r *ResourceImportReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, statusErr
 	}
 	// From the status just written, so the metric never says something the object does not.
-	metrics.ImportReady(req.Namespace, req.Name, status.State, status.Conditions)
+	metrics.ImportReady(req.Namespace, req.Name, scopeProvider(ctx, r, imp.Spec.ScopeRef), status.State, status.Conditions)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -147,10 +142,15 @@ func (r *ResourceImportReconciler) reconcile(ctx context.Context, imp *networkv1
 	} else if refusal != "" {
 		return fail(networkv1beta1.ImportFailed, tenancy.ReasonNamespaceNotAllowed, refusal)
 	}
-	if reason, msg := importInvalidForProvider(imp, scope.Spec.Provider); reason != "" {
+	p, ok := r.Providers.Get(scope.Spec.Provider)
+	if !ok {
+		return fail(networkv1beta1.ImportFailed, ReasonProviderNotEnabled, r.Providers.NotEnabled(scope.Spec.Provider))
+	}
+	// The webhook refuses the same imports at apply time.
+	if reason, msg := p.ImportRefusal(imp); reason != "" {
 		return fail(networkv1beta1.ImportFailed, reason, msg)
 	}
-	target, ok := targetFor(scope, imp.Spec.Account, imp.Spec.Region)
+	target, ok := writeTarget(scope, p, imp.Spec.Account, imp.Spec.Region)
 	if !ok {
 		return fail(networkv1beta1.ImportFailed, "AccountNotInScope",
 			fmt.Sprintf("account %s in %s is not covered by NetworkScope %q",
@@ -167,17 +167,17 @@ func (r *ResourceImportReconciler) reconcile(ctx context.Context, imp *networkv1
 		r.record(ctx, imp, audit.ResultDryRun, "")
 		return status, 0, nil
 	}
-	if !r.WritesEnabled || r.Writer == nil {
+	if !r.WritesEnabled {
 		return fail(networkv1beta1.ImportPending, "WritesDisabled",
 			"the operator runs read-only; start it with --enable-writes to apply tags")
 	}
-	if target.RoleARN == "" && scope.AccountHasReadRole(imp.Spec.Account) {
+	if provider.MissingWriteIdentity(p, scope, imp.Spec.Account) {
 		return fail(networkv1beta1.ImportPending, "NoWriteRole",
-			fmt.Sprintf("account %s has no aws.writeRoleARN in NetworkScope %q; a role with ec2:CreateTags is enough",
-				imp.Spec.Account, scope.Name))
+			fmt.Sprintf("account %s has no %s in NetworkScope %q; one with %s alone is enough",
+				imp.Spec.Account, p.WriteIdentityField(), scope.Name, p.OwnershipPermission()))
 	}
 
-	if err := r.Writer.ApplyTags(ctx, target, imp.Spec.ResourceID, imp.Spec.Tags); err != nil {
+	if err := p.WriteOwnership(ctx, target, imp.Spec.ResourceID, imp.Spec.Tags); err != nil {
 		status.Error = err.Error()
 		r.record(ctx, imp, audit.ResultFailed, err.Error())
 		return fail(networkv1beta1.ImportFailed, "TagsNotApplied", err.Error())
@@ -298,24 +298,4 @@ func (r *ResourceImportReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&networkv1beta1.ResourceImport{}).
 		Named("resourceimport").
 		Complete(r)
-}
-
-// awsResourceID is the shape of what a ResourceImport can tag on AWS: a VPC or a subnet.
-var awsResourceID = regexp.MustCompile(`^(vpc|subnet)-[0-9a-f]+$`)
-
-// importInvalidForProvider refuses an import the scope's provider cannot carry out, with a
-// reason and a message for the status. The webhook refuses the same imports at apply time.
-func importInvalidForProvider(imp *networkv1beta1.ResourceImport, provider networkv1beta1.Provider) (string, string) {
-	switch provider {
-	case networkv1beta1.ProviderAWS:
-		if imp.Spec.Region == "" {
-			return "RegionRequired", "every AWS network and subnet is regional: set spec.region"
-		}
-		if !awsResourceID.MatchString(imp.Spec.ResourceID) {
-			return "InvalidResourceID", fmt.Sprintf("%q is not an AWS VPC or subnet ID (vpc-… or subnet-…)", imp.Spec.ResourceID)
-		}
-		return "", ""
-	default:
-		return "ProviderNotSupported", fmt.Sprintf("provider %q is not supported by this release of the operator", provider)
-	}
 }

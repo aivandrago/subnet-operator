@@ -33,6 +33,7 @@ import (
 
 	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
 	"hypersurgery.dev/subnet-operator/internal/inventory"
+	"hypersurgery.dev/subnet-operator/internal/provider"
 )
 
 // fakeTagWriter records what would be applied, and can fail.
@@ -48,7 +49,7 @@ type taggedResource struct {
 	tags       map[string]string
 }
 
-func (f *fakeTagWriter) ApplyTags(_ context.Context, target inventory.Target, resourceID string, tags map[string]string) error {
+func (f *fakeTagWriter) WriteOwnership(_ context.Context, target inventory.Target, resourceID string, tags map[string]string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.failErr != nil {
@@ -113,7 +114,7 @@ var _ = Describe("ResourceImport Controller", func() {
 		writer = &fakeTagWriter{}
 		notified = nil
 		reconciler = &ResourceImportReconciler{
-			Client: k8sClient, Scheme: k8sClient.Scheme(), Writer: writer, WritesEnabled: true,
+			Client: k8sClient, Scheme: k8sClient.Scheme(), Providers: awsProviders(nil, nil, writer), WritesEnabled: true,
 			Notify: func(_ context.Context, keys []inventory.TargetKey) error {
 				notified = append(notified, keys...)
 				return nil
@@ -147,7 +148,7 @@ var _ = Describe("ResourceImport Controller", func() {
 		Expect(writer.calls).To(HaveLen(1))
 		Expect(writer.calls[0].resourceID).To(Equal(resourceID))
 		Expect(writer.calls[0].tags).To(Equal(map[string]string{"hs/managed": "true", "hs/owner": "team-data"}))
-		Expect(writer.calls[0].target.RoleARN).To(BeEmpty(), "the operator's own account uses its own credentials")
+		Expect(writer.calls[0].target.OwnIdentity()).To(BeTrue(), "the operator's own account uses its own credentials")
 		Expect(notified).To(Equal([]inventory.TargetKey{{Account: hubAccount, Region: importRegion}}))
 
 		imp := getImport()
@@ -199,7 +200,7 @@ var _ = Describe("ResourceImport Controller", func() {
 		Expect(readyCond(imp).Reason).To(Equal("WritesDisabled"))
 
 		By("and an import that cannot happen is visible to Prometheus, with its state and reason")
-		Expect(readySeries("hs_aws_resource_import_ready", importName)).To(
+		Expect(readySeries("hs_resource_import_ready", importName)).To(
 			Equal(map[string]float64{"Pending/WritesDisabled": 0}))
 	})
 
@@ -211,6 +212,14 @@ var _ = Describe("ResourceImport Controller", func() {
 		imp := getImport()
 		Expect(readyCond(imp).Reason).To(Equal("NoWriteRole"))
 		Expect(readyCond(imp).Message).To(ContainSubstring("ec2:CreateTags"))
+	})
+
+	It("refuses an import whose scope's provider the operator does not run", func() {
+		reconciler.Providers = provider.MustRegistry()
+		createImport(nil)
+		Expect(reconcileImport()).To(Succeed())
+		Expect(writer.calls).To(BeEmpty())
+		Expect(readyCond(getImport()).Reason).To(Equal(ReasonProviderNotEnabled))
 	})
 
 	It("reports a scope that does not cover the account", func() {
@@ -226,7 +235,7 @@ var _ = Describe("ResourceImport Controller", func() {
 		Expect(readyCond(getImport()).Reason).To(Equal("ScopeNotFound"))
 
 		By("the metric follows the new reason instead of keeping both")
-		series := readySeries("hs_aws_resource_import_ready", importName)
+		series := readySeries("hs_resource_import_ready", importName)
 		Expect(series).To(HaveLen(1))
 		Expect(series).To(HaveKeyWithValue(HaveSuffix("/ScopeNotFound"), 0.0))
 	})

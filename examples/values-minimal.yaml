@@ -3,10 +3,8 @@
 image:
   repository: ghcr.io/aivandrago/subnet-operator
 
-serviceAccount:
-  annotations:
+providers:
+  aws:
     # IRSA. With EKS Pod Identity, drop this and create an association instead.
-    eks.amazonaws.com/role-arn: arn:aws:iam::111111111111:role/aws-subnet-operator
-
-aws:
-  region: eu-central-1
+    irsaRoleARN: arn:aws:iam::111111111111:role/aws-subnet-operator
+    region: eu-central-1

@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 	"maps"
-	"regexp"
 	"slices"
 	"strings"
 
@@ -32,16 +31,18 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
+	"hypersurgery.dev/subnet-operator/internal/provider"
 )
 
 var resourceimportlog = logf.Log.WithName("resourceimport-resource")
 
 // SetupResourceImportWebhookWithManager registers the webhook for ResourceImport in the
 // manager. writesEnabled mirrors the manager's --enable-writes switch.
-func SetupResourceImportWebhookWithManager(mgr ctrl.Manager, writesEnabled bool, operator string) error {
+func SetupResourceImportWebhookWithManager(mgr ctrl.Manager, providers *provider.Registry, writesEnabled bool) error {
 	return ctrl.NewWebhookManagedBy(mgr, &networkv1beta1.ResourceImport{}).
-		WithValidator(&ResourceImportValidator{Client: mgr.GetClient(), WritesEnabled: writesEnabled, Operator: operator}).
-		WithDefaulter(&ResourceImportDefaulter{Operator: operator}).
+		WithValidator(&ResourceImportValidator{Client: mgr.GetClient(), Providers: providers,
+			WritesEnabled: writesEnabled}).
+		WithDefaulter(&ResourceImportDefaulter{}).
 		Complete()
 }
 
@@ -49,10 +50,7 @@ func SetupResourceImportWebhookWithManager(mgr ctrl.Manager, writesEnabled bool,
 
 // ResourceImportDefaulter records who asked for an import and labels it like the auto-import
 // policy does.
-type ResourceImportDefaulter struct {
-	// Operator is the user the operator authenticates as; see keepsCopiedCreator.
-	Operator string
-}
+type ResourceImportDefaulter struct{}
 
 // Default labels the import with the resource it refers to, records who created it and fills
 // in requestedBy.
@@ -66,7 +64,7 @@ type ResourceImportDefaulter struct {
 // and defaults to the same user, because "who asked for this" is the question a reviewer asks
 // of an import months later, and the person applying it rarely thinks to write their own name.
 func (d *ResourceImportDefaulter) Default(ctx context.Context, obj *networkv1beta1.ResourceImport) error {
-	stampCreatedBy(ctx, d.Operator, obj)
+	stampCreatedBy(ctx, obj)
 	if obj.Spec.ResourceID != "" {
 		if obj.Labels == nil {
 			obj.Labels = map[string]string{}
@@ -76,8 +74,7 @@ func (d *ResourceImportDefaulter) Default(ctx context.Context, obj *networkv1bet
 		setIfEmpty(obj.Labels, networkv1beta1.LabelAccount, obj.Spec.Account)
 		setIfEmpty(obj.Labels, networkv1beta1.LabelRegion, obj.Spec.Region)
 	}
-	// A migrated import names whoever it named before; the operator only copied it.
-	if obj.Spec.RequestedBy == "" && !createdByMigration(ctx, d.Operator, obj) {
+	if obj.Spec.RequestedBy == "" {
 		if req, err := admission.RequestFromContext(ctx); err == nil && req.UserInfo.Username != "" {
 			obj.Spec.RequestedBy = req.UserInfo.Username
 		}
@@ -98,26 +95,24 @@ func setIfEmpty(labels map[string]string, key, value string) {
 
 // +kubebuilder:webhook:path=/validate-network-hypersurgery-dev-v1beta1-resourceimport,mutating=false,failurePolicy=fail,sideEffects=None,groups=network.hypersurgery.dev,resources=resourceimports,verbs=create;update,versions=v1beta1,name=vresourceimport-v1beta1.kb.io,admissionReviewVersions=v1
 
-// ResourceImportValidator refuses imports that would fail in AWS, or that point at a
+// ResourceImportValidator refuses imports that would fail in the cloud, or that point at a
 // resource no scope can reach.
 type ResourceImportValidator struct {
 	// Client reads the scopes and the inventory.
 	Client client.Reader
+	// Providers are the clouds the operator runs with; the import's scope picks the one whose
+	// rules the import is checked against.
+	Providers *provider.Registry
 	// WritesEnabled is the manager's --enable-writes switch.
 	WritesEnabled bool
-	// Operator is the user the operator authenticates as; see keepsCopiedCreator.
-	Operator string
 }
 
 // ValidateCreate checks a new import.
 func (v *ResourceImportValidator) ValidateCreate(ctx context.Context, obj *networkv1beta1.ResourceImport) (
 	admission.Warnings, error) {
 	resourceimportlog.V(1).Info("Validating ResourceImport on create", "name", obj.GetName())
-	if e := validateCreatedByOnCreate(ctx, v.Operator, obj); e != nil {
+	if e := validateCreatedByOnCreate(ctx, obj); e != nil {
 		return nil, invalidError("ResourceImport", obj.Name, field.ErrorList{e})
-	}
-	if createdByMigration(ctx, v.Operator, obj) {
-		return nil, nil
 	}
 	return v.Validate(ctx, obj)
 }
@@ -164,27 +159,24 @@ func (v *ResourceImportValidator) ValidateDelete(_ context.Context, _ *networkv1
 	return nil, nil
 }
 
-// Validate is everything that is checked on both create and update. The webhook for
-// aws.hypersurgery/v1alpha1 runs it on the converted form of an old object.
+// Validate is everything that is checked on both create and update.
 func (v *ResourceImportValidator) Validate(ctx context.Context, imp *networkv1beta1.ResourceImport) (
 	admission.Warnings, error) {
 	spec := field.NewPath("spec")
 	var errs field.ErrorList
 	var warnings admission.Warnings
 
-	errs = append(errs, validateTags(spec.Child("tags"), imp.Spec.Tags)...)
-
 	scope, e := scopeFor(ctx, v.Client, spec.Child("scopeRef"), imp.Spec.ScopeRef)
 	if e != nil {
 		return warnings, invalidError("ResourceImport", imp.Name, append(errs, e))
 	}
-	// What the fields must look like depends on the provider, which is the scope's.
-	if scope.Spec.Provider != networkv1beta1.ProviderAWS {
-		return warnings, invalidError("ResourceImport", imp.Name, append(errs, field.Invalid(spec.Child("scopeRef"),
-			imp.Spec.ScopeRef, fmt.Sprintf("NetworkScope %q has provider %q, which this operator does not support",
-				scope.Name, scope.Spec.Provider))))
+	// What the fields and tags must look like depends on the provider, which is the scope's.
+	p, e := providerFor(v.Providers, scope, imp.Spec.ScopeRef)
+	if e != nil {
+		return warnings, invalidError("ResourceImport", imp.Name, append(errs, e))
 	}
-	errs = append(errs, validateAWSImport(imp)...)
+	errs = append(errs, p.ValidateTags(spec.Child("tags"), imp.Spec.Tags)...)
+	errs = append(errs, p.ValidateImport(imp)...)
 	if e := validateNamespace(ctx, v.Client, scope, imp.Namespace); e != nil {
 		return warnings, invalidError("ResourceImport", imp.Name, append(errs, e))
 	}
@@ -319,28 +311,4 @@ func missingRequiredTags(scope *networkv1beta1.NetworkScope, wanted, existing ma
 		missing = append(missing, key)
 	}
 	return missing
-}
-
-// awsResourceID is the shape of what an import can tag on AWS: a VPC or a subnet.
-var awsResourceID = regexp.MustCompile(`^(vpc|subnet)-[0-9a-f]+$`)
-
-// validateAWSImport checks what the schema cannot, because it depends on the scope's provider
-// being AWS: the account and resource ID formats, and a region, which every AWS network and
-// subnet has.
-func validateAWSImport(imp *networkv1beta1.ResourceImport) field.ErrorList {
-	spec := field.NewPath("spec")
-	var errs field.ErrorList
-	if !awsAccountPattern.MatchString(imp.Spec.Account) {
-		errs = append(errs, field.Invalid(spec.Child("account"), imp.Spec.Account, "an AWS account ID is 12 digits"))
-	}
-	if imp.Spec.Region == "" {
-		errs = append(errs, field.Required(spec.Child("region"), "every AWS network and subnet is regional"))
-	} else if e := validateRegion(spec.Child("region"), imp.Spec.Region); e != nil {
-		errs = append(errs, e)
-	}
-	if !awsResourceID.MatchString(imp.Spec.ResourceID) {
-		errs = append(errs, field.Invalid(spec.Child("resourceID"), imp.Spec.ResourceID,
-			"not an AWS VPC or subnet ID, e.g. vpc-0abc or subnet-0abc"))
-	}
-	return errs
 }

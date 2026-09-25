@@ -68,6 +68,16 @@ type Discoverer struct {
 
 	// retryBackoff replaces the SDK's delay between attempts; tests set it to zero.
 	retryBackoff retry.BackoffDelayer
+	// testEC2, when set, replaces the EC2 client of every call; the contract suite points it
+	// at an in-memory EC2.
+	testEC2 func(target inventory.Target) ec2Client
+}
+
+// ec2Client is every EC2 call the provider makes.
+type ec2Client interface {
+	EC2API
+	EC2WriteAPI
+	EC2TagAPI
 }
 
 var _ inventory.Discoverer = (*Discoverer)(nil)
@@ -79,6 +89,12 @@ func NewDiscoverer(ctx context.Context) (*Discoverer, error) {
 		return nil, fmt.Errorf("load AWS config: %w", err)
 	}
 	return newDiscoverer(cfg), nil
+}
+
+// NewDiscovererFromConfig uses the given AWS configuration instead of the default one, for
+// an emulator such as Moto.
+func NewDiscovererFromConfig(cfg aws.Config) *Discoverer {
+	return newDiscoverer(cfg)
 }
 
 func newDiscoverer(cfg aws.Config) *Discoverer {
@@ -96,7 +112,11 @@ func (d *Discoverer) Discover(ctx context.Context, target inventory.Target) (*in
 	if err != nil {
 		return nil, err
 	}
-	snap, err := DiscoverTarget(ctx, d.ec2Client(target, creds), target)
+	var api EC2API = d.ec2Client(target, creds)
+	if d.testEC2 != nil {
+		api = d.testEC2(target)
+	}
+	snap, err := DiscoverTarget(ctx, api, target)
 	if err != nil && isThrottle(err) {
 		return nil, fmt.Errorf("%w: %w", inventory.ErrThrottled, err)
 	}
@@ -165,7 +185,11 @@ func isThrottle(err error) bool {
 // credentialsFor returns cached credentials for the target and makes sure they belong
 // to the target account, so a misconfigured scope never reports another account's networks.
 func (d *Discoverer) credentialsFor(ctx context.Context, target inventory.Target) (aws.CredentialsProvider, error) {
-	if target.RoleARN == "" {
+	id, err := identityOf(target)
+	if err != nil {
+		return nil, err
+	}
+	if id.Own() {
 		own, err := d.callerAccount(ctx)
 		if err != nil {
 			return nil, err
@@ -176,25 +200,25 @@ func (d *Discoverer) credentialsFor(ctx context.Context, target inventory.Target
 		return d.base.Credentials, nil
 	}
 
-	parsed, err := arn.Parse(target.RoleARN)
+	parsed, err := arn.Parse(id.RoleARN)
 	if err != nil {
 		return nil, fmt.Errorf("parse roleARN: %w", err)
 	}
 	if parsed.AccountID != target.Account {
-		return nil, fmt.Errorf("roleARN %s belongs to account %s, not %s", target.RoleARN, parsed.AccountID, target.Account)
+		return nil, fmt.Errorf("roleARN %s belongs to account %s, not %s", id.RoleARN, parsed.AccountID, target.Account)
 	}
 
-	key := target.RoleARN + "|" + target.ExternalID
+	key := id.RoleARN + "|" + id.ExternalID
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if p, ok := d.credentials[key]; ok {
 		return p, nil
 	}
-	p := aws.NewCredentialsCache(stscreds.NewAssumeRoleProvider(sts.NewFromConfig(d.base), target.RoleARN,
+	p := aws.NewCredentialsCache(stscreds.NewAssumeRoleProvider(sts.NewFromConfig(d.base), id.RoleARN,
 		func(o *stscreds.AssumeRoleOptions) {
 			o.RoleSessionName = SessionName
-			if target.ExternalID != "" {
-				o.ExternalID = aws.String(target.ExternalID)
+			if id.ExternalID != "" {
+				o.ExternalID = aws.String(id.ExternalID)
 			}
 		}))
 	d.credentials[key] = p

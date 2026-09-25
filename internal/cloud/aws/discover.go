@@ -27,8 +27,12 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 
+	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
 	"hypersurgery.dev/subnet-operator/internal/inventory"
 )
+
+// ReservedIPs is the number of addresses AWS reserves in every IPv4 subnet.
+const ReservedIPs = 5
 
 // EC2API is the subset of the EC2 client used for discovery.
 type EC2API interface {
@@ -40,16 +44,16 @@ type EC2API interface {
 // maxFilterValues keeps vpc-id filters well under the EC2 per-filter value limit.
 const maxFilterValues = 100
 
-// DiscoverTarget reads the VPCs matching the target's tag selector, all their subnets,
+// DiscoverTarget reads the VPCs matching the target's network selector, all their subnets,
 // and their route tables (to tell public subnets from private ones).
 //
 // With DiscoverUnmanaged the VPCs the selector leaves out are read in the same call and
 // reported separately, together with their subnets: one DescribeVpcs either way, because
 // the selector is cheap to apply in Go and a second round trip is not.
 func DiscoverTarget(ctx context.Context, api EC2API, target inventory.Target) (*inventory.Snapshot, error) {
-	unmanagedWanted := target.DiscoverUnmanaged && len(target.VPCTagSelector) > 0
+	unmanagedWanted := target.DiscoverUnmanaged && len(target.NetworkSelector) > 0
 
-	listFilters := tagFilters(target.VPCTagSelector)
+	listFilters := tagFilters(target.NetworkSelector)
 	if unmanagedWanted {
 		listFilters = nil // ask for everything, then split
 	}
@@ -59,11 +63,11 @@ func DiscoverTarget(ctx context.Context, api EC2API, target inventory.Target) (*
 	}
 
 	vpcs := all
-	var unmanagedVPCs []inventory.VPC
+	var unmanagedVPCs []inventory.Network
 	if unmanagedWanted {
 		vpcs = nil
 		for _, v := range all {
-			if matchesSelector(v.Tags, target.VPCTagSelector) {
+			if matchesSelector(v.Tags, target.NetworkSelector) {
 				vpcs = append(vpcs, v)
 			} else {
 				unmanagedVPCs = append(unmanagedVPCs, v)
@@ -71,7 +75,7 @@ func DiscoverTarget(ctx context.Context, api EC2API, target inventory.Target) (*
 		}
 	}
 
-	snap := &inventory.Snapshot{VPCs: vpcs, UnmanagedVPCs: unmanagedVPCs}
+	snap := &inventory.Snapshot{Networks: vpcs, UnmanagedNetworks: unmanagedVPCs}
 	if len(unmanagedVPCs) > 0 {
 		subnets, err := describeSubnetsOfVPCs(ctx, api, target, unmanagedVPCs)
 		if err != nil {
@@ -85,7 +89,7 @@ func DiscoverTarget(ctx context.Context, api EC2API, target inventory.Target) (*
 
 	// Without a selector every VPC is in scope, so no vpc-id filter is needed.
 	var vpcIDChunks [][]string
-	if len(target.VPCTagSelector) == 0 {
+	if len(target.NetworkSelector) == 0 {
 		vpcIDChunks = [][]string{nil}
 	} else {
 		ids := make([]string, 0, len(vpcs))
@@ -151,7 +155,7 @@ func matchesSelector(tags, selector map[string]string) bool {
 // describeSubnetsOfVPCs lists the subnets of the given VPCs. Route tables are not read: an
 // unmanaged subnet is only counted and offered for import, so public or private does not
 // matter until somebody takes it under management.
-func describeSubnetsOfVPCs(ctx context.Context, api EC2API, target inventory.Target, vpcs []inventory.VPC) ([]inventory.Subnet, error) {
+func describeSubnetsOfVPCs(ctx context.Context, api EC2API, target inventory.Target, vpcs []inventory.Network) ([]inventory.Subnet, error) {
 	ids := make([]string, 0, len(vpcs))
 	for _, v := range vpcs {
 		ids = append(ids, v.ID)
@@ -167,8 +171,8 @@ func describeSubnetsOfVPCs(ctx context.Context, api EC2API, target inventory.Tar
 	return out, nil
 }
 
-func describeVPCs(ctx context.Context, api EC2API, target inventory.Target, filters []ec2types.Filter) ([]inventory.VPC, error) {
-	var out []inventory.VPC
+func describeVPCs(ctx context.Context, api EC2API, target inventory.Target, filters []ec2types.Filter) ([]inventory.Network, error) {
+	var out []inventory.Network
 	p := ec2.NewDescribeVpcsPaginator(api, &ec2.DescribeVpcsInput{Filters: filters})
 	for p.HasMorePages() {
 		page, err := p.NextPage(ctx)
@@ -176,13 +180,13 @@ func describeVPCs(ctx context.Context, api EC2API, target inventory.Target, filt
 			return nil, err
 		}
 		for _, v := range page.Vpcs {
-			vpc := inventory.VPC{
-				ID:        aws.ToString(v.VpcId),
-				Account:   target.Account,
-				Region:    target.Region,
-				State:     string(v.State),
-				IsDefault: aws.ToBool(v.IsDefault),
-				Tags:      tagMap(v.Tags),
+			vpc := inventory.Network{
+				ID:      aws.ToString(v.VpcId),
+				Account: target.Account,
+				Region:  target.Region,
+				State:   string(v.State),
+				Tags:    tagMap(v.Tags),
+				AWS:     &networkv1beta1.AWSNetworkStatus{IsDefault: aws.ToBool(v.IsDefault)},
 			}
 			// The primary CIDR first, then additional associated blocks.
 			if c := aws.ToString(v.CidrBlock); c != "" {
@@ -261,16 +265,22 @@ func describeSubnets(ctx context.Context, api EC2API, target inventory.Target, v
 		}
 		for _, s := range page.Subnets {
 			sn := inventory.Subnet{
-				ID:                 aws.ToString(s.SubnetId),
-				VPCID:              aws.ToString(s.VpcId),
-				Account:            target.Account,
-				Region:             target.Region,
-				State:              string(s.State),
-				CIDRBlock:          aws.ToString(s.CidrBlock),
-				AvailabilityZone:   aws.ToString(s.AvailabilityZone),
-				AvailabilityZoneID: aws.ToString(s.AvailabilityZoneId),
-				AvailableIPs:       int64(aws.ToInt32(s.AvailableIpAddressCount)),
-				Tags:               tagMap(s.Tags),
+				ID:        aws.ToString(s.SubnetId),
+				NetworkID: aws.ToString(s.VpcId),
+				Account:   target.Account,
+				Region:    target.Region,
+				State:     string(s.State),
+				CIDRBlock: aws.ToString(s.CidrBlock),
+				Zone:      aws.ToString(s.AvailabilityZone),
+				TotalIPs:  new(inventory.UsableIPv4(aws.ToString(s.CidrBlock), ReservedIPs)),
+				// A subnet's tags are its own on AWS: nothing is inherited from the VPC.
+				OwnershipSource: networkv1beta1.OwnershipSourceSubnet,
+				Tags:            tagMap(s.Tags),
+				AWS:             &networkv1beta1.AWSSubnetStatus{AvailabilityZoneID: aws.ToString(s.AvailabilityZoneId)},
+			}
+			// A count EC2 left out is unknown, not zero: zero would read as a full subnet.
+			if s.AvailableIpAddressCount != nil {
+				sn.AvailableIPs = new(int64(*s.AvailableIpAddressCount))
 			}
 			for _, a := range s.Ipv6CidrBlockAssociationSet {
 				if a.Ipv6CidrBlockState == nil || !isAssociated(string(a.Ipv6CidrBlockState.State)) {
@@ -281,9 +291,9 @@ func describeSubnets(ctx context.Context, api EC2API, target inventory.Target, v
 			// A subnet without an explicit association uses the VPC main route table.
 			info, ok := routes[sn.ID]
 			if !ok {
-				info = mainRoutes[sn.VPCID]
+				info = mainRoutes[sn.NetworkID]
 			}
-			sn.RouteTableID, sn.Public = info.tableID, info.public
+			sn.AWS.RouteTableID, sn.AWS.Public = info.tableID, info.public
 			out = append(out, sn)
 		}
 	}

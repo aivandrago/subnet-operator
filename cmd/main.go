@@ -23,6 +23,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
@@ -42,16 +43,14 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	awsv1alpha1 "hypersurgery.dev/subnet-operator/api/v1alpha1"
 	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
 	"hypersurgery.dev/subnet-operator/internal/audit"
 	awscloud "hypersurgery.dev/subnet-operator/internal/cloud/aws"
 	"hypersurgery.dev/subnet-operator/internal/controller"
-	"hypersurgery.dev/subnet-operator/internal/events"
 	"hypersurgery.dev/subnet-operator/internal/inventory"
 	"hypersurgery.dev/subnet-operator/internal/metrics"
 	"hypersurgery.dev/subnet-operator/internal/migration"
-	webhookv1alpha1 "hypersurgery.dev/subnet-operator/internal/webhook/v1alpha1"
+	"hypersurgery.dev/subnet-operator/internal/provider"
 	webhookv1beta1 "hypersurgery.dev/subnet-operator/internal/webhook/v1beta1"
 	// +kubebuilder:scaffold:imports
 )
@@ -65,15 +64,13 @@ func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
 	utilruntime.Must(networkv1beta1.AddToScheme(scheme))
-	// The deprecated group, for the migration (0.8 only).
-	utilruntime.Must(awsv1alpha1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 
 // nolint:gocyclo
 func main() {
 	// `manager migrate-manifests` rewrites aws.hypersurgery/v1alpha1 manifests for the new
-	// group, from stdin to stdout, with the same mapping the in-cluster migration uses.
+	// group, from stdin to stdout, with the mapping 0.8's in-cluster migration used.
 	if len(os.Args) > 1 && os.Args[1] == "migrate-manifests" {
 		os.Exit(migrateManifests(os.Args[2:]))
 	}
@@ -83,12 +80,12 @@ func main() {
 	var webhookCertPath, webhookCertName, webhookCertKey string
 	var webhookPort int
 	var discoveryConcurrency int
-	var eventsQueueURL string
-	var eventsDebounce time.Duration
+	var providerNames string
+	var awsEventsQueueURL, eventsQueueURL string
+	var awsEventsDebounce, eventsDebounce time.Duration
 	var auditSink string
 	var enableWrites bool
 	var enableWebhooks bool
-	var migrateV1alpha1 bool
 	var enableLeaderElection bool
 	var probeAddr string
 	var secureMetrics bool
@@ -119,12 +116,20 @@ func main() {
 	flag.IntVar(&webhookPort, "webhook-port", 9443, "Port the webhook server listens on. "+
 		"Defaults to 9443. Set -1 to disable the webhook server.")
 	flag.IntVar(&discoveryConcurrency, "discovery-concurrency", 4,
-		"Number of AWS account/region pairs discovered in parallel, across all NetworkScopes.")
+		"Number of account/region pairs discovered in parallel, across all NetworkScopes and providers.")
+	flag.StringVar(&providerNames, "providers", "aws",
+		"Comma-separated list of the clouds the operator runs with ("+strings.Join(knownProviders(), ", ")+"). "+
+			"A NetworkScope of any other provider is reported as not enabled and not synced.")
+	flag.StringVar(&awsEventsQueueURL, "aws-events-queue-url", "",
+		"AWS: SQS queue fed by EventBridge with EC2 change events. When set, changed accounts/regions are "+
+			"resynced within seconds instead of waiting for the resync interval.")
+	flag.DurationVar(&awsEventsDebounce, "aws-events-debounce", 0,
+		"AWS: how long EC2 change events are collected before the affected accounts/regions are resynced "+
+			"(default 10s).")
 	flag.StringVar(&eventsQueueURL, "events-queue-url", os.Getenv("EVENTS_QUEUE_URL"),
-		"SQS queue fed by EventBridge with EC2 change events. When set, changed accounts/regions are "+
-			"resynced within seconds instead of waiting for the resync interval. Defaults to $EVENTS_QUEUE_URL.")
+		"Deprecated, use --aws-events-queue-url (removed in 0.10). Defaults to $EVENTS_QUEUE_URL.")
 	flag.DurationVar(&eventsDebounce, "events-debounce", 10*time.Second,
-		"How long EC2 change events are collected before the affected accounts/regions are resynced.")
+		"Deprecated, use --aws-events-debounce (removed in 0.10).")
 	flag.StringVar(&auditSink, "audit-sink", audit.ModeStdout,
 		"Where the audit trail goes: 'stdout' writes one JSON line per import, allocation and policy "+
 			"decision to stdout, apart from the operational log on stderr; 'off' writes none. "+
@@ -133,9 +138,6 @@ func main() {
 		"Allow SubnetClaims in Create mode to create subnets in AWS. Off by default: the operator is read-only.")
 	flag.BoolVar(&enableWebhooks, "enable-webhooks", true,
 		"Serve the admission webhooks. They need a serving certificate and stay off without one.")
-	flag.BoolVar(&migrateV1alpha1, "migrate-v1alpha1", true,
-		"Migrate aws.hypersurgery/v1alpha1 objects to network.hypersurgery.dev/v1beta1, and serve the old group's "+
-			"webhooks, while the API server still serves the old group. Removed in 0.9 with the group.")
 	flag.StringVar(&metricsCertPath, "metrics-cert-path", "",
 		"The directory that contains the metrics server certificate.")
 	flag.StringVar(&metricsCertName, "metrics-cert-name", "tls.crt", "The name of the metrics server certificate file.")
@@ -231,7 +233,18 @@ func main() {
 		os.Exit(1)
 	}
 
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+	cfg := ctrl.GetConfigOrDie()
+
+	// 0.8 migrated aws.hypersurgery/v1alpha1 objects into network.hypersurgery.dev; this release
+	// neither serves nor migrates that group. An old object 0.8 never got to would be ignored —
+	// a claim's reservations handed out again — so while one exists the operator runs without
+	// its controllers and webhooks, not ready, and says why (runBlocked).
+	guard := &migration.Guard{Client: uncachedClient(cfg)}
+	checkCtx, cancelCheck := context.WithTimeout(context.Background(), 30*time.Second)
+	blocked := !guard.Check(checkCtx)
+	cancelCheck()
+
+	options := ctrl.Options{
 		Scheme:                 scheme,
 		Metrics:                metricsServerOptions,
 		WebhookServer:          webhookServer,
@@ -248,9 +261,20 @@ func main() {
 		// manager, and main returns as soon as Start does. The manager also waits for in-flight
 		// reconciles before it releases, so two leaders never reconcile at once.
 		LeaderElectionReleaseOnCancel: true,
-	})
+	}
+	if blocked {
+		os.Exit(runBlocked(cfg, options, guard))
+	}
+
+	mgr, err := ctrl.NewManager(cfg, options)
 	if err != nil {
 		setupLog.Error(err, "Failed to start manager")
+		os.Exit(1)
+	}
+	// Keeps hs_migration_pending_objects current, and warns about an old object applied later.
+	if err := mgr.Add(&migration.Watcher{Client: mgr.GetAPIReader(),
+		Recorder: mgr.GetEventRecorder("network.hypersurgery.dev/migration")}); err != nil {
+		setupLog.Error(err, "Failed to add the check for unmigrated objects")
 		os.Exit(1)
 	}
 
@@ -284,86 +308,59 @@ func main() {
 	// the name the API server knows the operator by.
 	identity := whoAmI(mgr.GetConfig())
 
-	// The old group is migrated only while the API server serves it: after its CRDs are
-	// deleted there is nothing left to migrate, and watching a kind that does not exist would
-	// keep the manager from starting.
-	var legacy controller.Legacy
-	if migrateV1alpha1 {
-		served, err := migration.Served(mgr.GetRESTMapper())
-		if err != nil {
-			setupLog.Error(err, "Failed to find out whether aws.hypersurgery/v1alpha1 is served")
-			os.Exit(1)
-		}
-		migrateV1alpha1 = served
+	if awsEventsQueueURL == "" {
+		awsEventsQueueURL = eventsQueueURL
 	}
-	if migrateV1alpha1 {
-		legacy = &migration.Legacy{Client: mgr.GetClient()}
-		if err := migration.SetupWithManager(mgr, mgr.GetEventRecorder("network.hypersurgery.dev/migration")); err != nil {
-			setupLog.Error(err, "Failed to create the migration controllers")
-			os.Exit(1)
-		}
-		if err := mgr.Add(&migration.PendingCounter{Client: mgr.GetClient()}); err != nil {
-			setupLog.Error(err, "Failed to add the migration counter")
-			os.Exit(1)
-		}
-		if identity == "" {
-			setupLog.Info("The operator does not know its own name, so objects it migrates record the operator " +
-				"as their creator instead of the original one")
-		}
-		setupLog.Info("Migrating aws.hypersurgery/v1alpha1 objects to network.hypersurgery.dev/v1beta1")
+	if awsEventsDebounce <= 0 {
+		awsEventsDebounce = eventsDebounce
 	}
-
-	discoverer, err := awscloud.NewDiscoverer(context.Background())
+	providers, err := newProviders(context.Background(), providerNames, providerConfig{
+		aws: awscloud.Options{
+			EventsQueueURL: awsEventsQueueURL,
+			EventsDebounce: awsEventsDebounce,
+			OnThrottle: func(t inventory.Target, operation string) {
+				metrics.APIThrottled(t.Scope, t.Provider, t.Account, t.Region, operation)
+			},
+			Log: ctrl.Log.WithName("events").WithValues("provider", "aws"),
+		},
+	})
 	if err != nil {
-		setupLog.Error(err, "Failed to load AWS configuration")
+		setupLog.Error(err, "Failed to set up the providers", "providers", providerNames)
 		os.Exit(1)
 	}
-	discoverer.OnThrottle = func(t inventory.Target, operation string) {
-		metrics.APIThrottled(t.Scope, t.Account, t.Region, operation)
-	}
-	// Shared between the event poller, which fills it, and the scope controller, whose
+	// Shared between the event sources, which fill it, and the scope controller, whose
 	// auto-import policy asks it who created a resource nobody has tagged.
 	creators := &controller.CreatorCache{}
 	scopeReconciler := &controller.NetworkScopeReconciler{
 		Client:      mgr.GetClient(),
 		Scheme:      mgr.GetScheme(),
-		Discoverer:  discoverer,
+		Providers:   providers,
 		APIReader:   mgr.GetAPIReader(),
 		Concurrency: discoveryConcurrency,
 		Creators:    creators,
 		Recorder:    mgr.GetEventRecorder("network.hypersurgery.dev/networkscope"),
 		Audit:       auditor,
 		Identity:    identity,
-		Legacy:      legacy,
 	}
 	if err := scopeReconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "networkscope")
 		os.Exit(1)
 	}
-	if eventsQueueURL != "" {
-		sqsClient, err := awscloud.NewSQSClient(context.Background(), eventsQueueURL)
-		if err != nil {
-			setupLog.Error(err, "Failed to create the SQS client")
+	for _, p := range providers.All() {
+		source := p.Events(provider.EventSink{Changed: scopeReconciler.NotifyChanged, Created: creators.Record})
+		if source == nil {
+			continue
+		}
+		if err := mgr.Add(source); err != nil {
+			setupLog.Error(err, "Failed to add the change event source", "provider", p.Name())
 			os.Exit(1)
 		}
-		if err := mgr.Add(&events.Poller{
-			SQS:      sqsClient,
-			QueueURL: eventsQueueURL,
-			Sink:     scopeReconciler.NotifyChanged,
-			OnCreate: creators.Record,
-			Debounce: eventsDebounce,
-			Log:      ctrl.Log.WithName("events"),
-		}); err != nil {
-			setupLog.Error(err, "Failed to add the events poller")
-			os.Exit(1)
-		}
-		setupLog.Info("Consuming EC2 change events", "queue", eventsQueueURL)
+		setupLog.Info("Consuming change events", "provider", p.Name())
 	}
 	if err := (&controller.SheetExportReconciler{
 		Client:    mgr.GetClient(),
 		Scheme:    mgr.GetScheme(),
 		APIReader: mgr.GetAPIReader(),
-		Legacy:    legacy,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "sheetexport")
 		os.Exit(1)
@@ -372,53 +369,45 @@ func main() {
 		Client:          mgr.GetClient(),
 		Scheme:          mgr.GetScheme(),
 		APIReader:       mgr.GetAPIReader(),
-		Writer:          discoverer,
+		Providers:       providers,
 		WritesEnabled:   enableWrites,
 		Notify:          scopeReconciler.NotifyChanged,
 		Recorder:        mgr.GetEventRecorder("network.hypersurgery.dev/subnetclaim"),
 		Audit:           auditor,
 		WebhooksEnabled: enableWebhooks,
-		Legacy:          legacy,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "subnetclaim")
 		os.Exit(1)
 	}
 	if enableWrites {
-		setupLog.Info("Writes are enabled: SubnetClaims can create subnets and ResourceImports can tag resources")
+		setupLog.Info("Writes are enabled: SubnetClaims can create subnets and ResourceImports can write ownership")
 	}
 	if err := (&controller.ResourceImportReconciler{
 		Client:          mgr.GetClient(),
 		Scheme:          mgr.GetScheme(),
 		APIReader:       mgr.GetAPIReader(),
-		Writer:          discoverer,
+		Providers:       providers,
 		WritesEnabled:   enableWrites,
 		Notify:          scopeReconciler.NotifyChanged,
 		Recorder:        mgr.GetEventRecorder("network.hypersurgery.dev/resourceimport"),
 		Audit:           auditor,
 		WebhooksEnabled: enableWebhooks,
-		Legacy:          legacy,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "resourceimport")
 		os.Exit(1)
 	}
 	if enableWebhooks {
-		if err := webhookv1beta1.SetupNetworkScopeWebhookWithManager(mgr, identity); err != nil {
+		if err := webhookv1beta1.SetupNetworkScopeWebhookWithManager(mgr, providers); err != nil {
 			setupLog.Error(err, "Failed to create webhook", "webhook", "NetworkScope")
 			os.Exit(1)
 		}
-		if err := webhookv1beta1.SetupSubnetClaimWebhookWithManager(mgr, enableWrites, identity); err != nil {
+		if err := webhookv1beta1.SetupSubnetClaimWebhookWithManager(mgr, providers, enableWrites); err != nil {
 			setupLog.Error(err, "Failed to create webhook", "webhook", "SubnetClaim")
 			os.Exit(1)
 		}
-		if err := webhookv1beta1.SetupResourceImportWebhookWithManager(mgr, enableWrites, identity); err != nil {
+		if err := webhookv1beta1.SetupResourceImportWebhookWithManager(mgr, providers, enableWrites); err != nil {
 			setupLog.Error(err, "Failed to create webhook", "webhook", "ResourceImport")
 			os.Exit(1)
-		}
-		if migrateV1alpha1 {
-			if err := webhookv1alpha1.SetupWebhooksWithManager(mgr, enableWrites); err != nil {
-				setupLog.Error(err, "Failed to create the aws.hypersurgery/v1alpha1 webhooks")
-				os.Exit(1)
-			}
 		}
 	}
 	// +kubebuilder:scaffold:builder
@@ -437,6 +426,58 @@ func main() {
 		setupLog.Error(err, "Failed to run manager")
 		os.Exit(1)
 	}
+}
+
+// runBlocked runs the operator while unmigrated aws.hypersurgery/v1alpha1 objects exist: the
+// metrics (hs_migration_pending_objects) and the probes, no controllers, no webhooks, and no
+// leader election, so that a 0.8 replica still running during a rolling upgrade keeps the lease
+// and can finish the migration. The readiness probe fails with the reason, so the rollout
+// stops here and the 0.8 replicas stay. Once nothing is left, it exits, and the container is
+// restarted into normal operation. It returns the exit code.
+func runBlocked(cfg *rest.Config, options ctrl.Options, guard *migration.Guard) int {
+	setupLog.Info("Not starting the controllers and webhooks: aws.hypersurgery/v1alpha1 objects are waiting for a "+
+		"migration this release does not do; checking again every 30s", "guide", migration.UpgradeGuide)
+	options.LeaderElection = false
+	mgr, err := ctrl.NewManager(cfg, options)
+	if err != nil {
+		setupLog.Error(err, "Failed to start manager")
+		return 1
+	}
+	guard.Recorder = mgr.GetEventRecorder("network.hypersurgery.dev/migration")
+	if err := mgr.Add(guard); err != nil {
+		setupLog.Error(err, "Failed to add the check for unmigrated objects")
+		return 1
+	}
+	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
+		setupLog.Error(err, "Failed to set up health check")
+		return 1
+	}
+	if err := mgr.AddReadyzCheck("migration", guard.Ready); err != nil {
+		setupLog.Error(err, "Failed to set up ready check")
+		return 1
+	}
+	err = mgr.Start(ctrl.SetupSignalHandler())
+	switch {
+	case errors.Is(err, migration.ErrCleared):
+		// Exiting is the simplest way to start everything the normal way: the kubelet restarts
+		// the container, and the next start finds nothing in the way.
+		return 0
+	case err != nil:
+		setupLog.Error(err, "Failed to run manager")
+		return 1
+	}
+	return 0
+}
+
+// uncachedClient reads from the API server directly: the guard runs before the manager and
+// its caches exist, and must not watch a group this release no longer serves.
+func uncachedClient(cfg *rest.Config) client.Reader {
+	c, err := client.New(cfg, client.Options{Scheme: scheme})
+	if err != nil {
+		setupLog.Error(err, "Failed to create a client")
+		os.Exit(1)
+	}
+	return c
 }
 
 // whoAmI asks the API server who the operator is, with a SelfSubjectReview, which every
@@ -470,10 +511,11 @@ func migrateManifests(args []string) int {
 		_, _ = fmt.Fprint(fs.Output(), `Usage: manager migrate-manifests < old.yaml > new.yaml
 
 Rewrites aws.hypersurgery/v1alpha1 NetworkScope, SubnetClaim, ResourceImport and SheetExport
-documents as network.hypersurgery.dev/v1beta1, with the mapping the operator's own migration
-uses. VPC and Subnet documents are left out: the operator discovers them. Every other document
-is copied unchanged. Comments inside converted documents are not kept. Notes about what changed
-(for example an unset namespaceSelector made explicit) go to stderr.
+documents as network.hypersurgery.dev/v1beta1, with the mapping the in-cluster migration of
+0.8 used. VPC and Subnet documents are left out: the operator discovers them. Every other
+document is copied unchanged. Comments inside converted documents are not kept, and neither is
+status: objects in a cluster, with their reservations and history, are migrated by 0.8 only.
+Notes about what changed (for example an unset namespaceSelector made explicit) go to stderr.
 `)
 	}
 	if err := fs.Parse(args); err != nil {

@@ -20,22 +20,7 @@ rules:
   - sheetexports
   - subnetclaims
   verbs:
-  - get
   - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - aws.hypersurgery
-  resources:
-  - subnets
-  - vpcs
-  verbs:
-  - delete
-  - deletecollection
-  - get
-  - list
-  - watch
 - apiGroups:
   - events.k8s.io
   resources:
@@ -73,11 +58,9 @@ rules:
   - network.hypersurgery.dev
   resources:
   - networkscopes
-  - resourceimports
   - sheetexports
   - subnetclaims
   verbs:
-  - create
   - get
   - list
   - watch
@@ -87,6 +70,15 @@ rules:
   - networkscopes/finalizers
   verbs:
   - update
+- apiGroups:
+  - network.hypersurgery.dev
+  resources:
+  - resourceimports
+  verbs:
+  - create
+  - get
+  - list
+  - watch
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role

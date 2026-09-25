@@ -67,8 +67,8 @@ type SubnetStatus struct {
 	// for providers whose subnets are regional.
 	// +optional
 	Zone string `json:"zone,omitempty"`
-	// totalIPs is the number of usable IPv4 addresses (AWS reserves 5 per subnet). Unset when
-	// unknown.
+	// totalIPs is the number of usable IPv4 addresses, as the provider counts them (AWS
+	// reserves 5 per subnet). Unset when unknown.
 	// +optional
 	TotalIPs *int64 `json:"totalIPs,omitempty"`
 	// availableIPs is the number of free IPv4 addresses. Unset when the provider could not
@@ -87,6 +87,11 @@ type SubnetStatus struct {
 	// tier is read from the tier tag configured in the NetworkScope.
 	// +optional
 	Tier string `json:"tier,omitempty"`
+	// ownershipSource says where owner, env and tier were read from: Subnet (the subnet's own
+	// metadata) or Network (inherited from its network, on providers whose subnets cannot
+	// carry metadata of their own).
+	// +optional
+	OwnershipSource OwnershipSource `json:"ownershipSource,omitempty"`
 	// tags are the subnet's tags at the provider.
 	// +optional
 	Tags map[string]string `json:"tags,omitempty"`

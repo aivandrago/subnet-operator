@@ -184,7 +184,7 @@ var _ = Describe("ResourceImport webhook", func() {
 
 		obj := importOf("reassign", map[string]string{networkv1beta1.DefaultOwnerTagKey: "payments", "hs/env": "prod"})
 		obj.Spec.ResourceID = "subnet-0def1"
-		validator := &ResourceImportValidator{Client: k8sClient, WritesEnabled: true}
+		validator := &ResourceImportValidator{Client: k8sClient, Providers: testProviders, WritesEnabled: true}
 		warnings, err := validator.ValidateCreate(ctx, obj)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(warnings).To(ConsistOf(`subnet-0def1 already carries hs/owner="team-data"; the import replaces it with "payments"`),
@@ -203,7 +203,7 @@ var _ = Describe("ResourceImport webhook", func() {
 	It("warns that a read-only operator will not apply the tags", func() {
 		obj := importOf("read-only-operator", map[string]string{networkv1beta1.DefaultOwnerTagKey: "payments"})
 
-		validator := &ResourceImportValidator{Client: k8sClient, WritesEnabled: false}
+		validator := &ResourceImportValidator{Client: k8sClient, Providers: testProviders, WritesEnabled: false}
 		warnings, err := validator.ValidateCreate(ctx, obj)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(warnings).To(ContainElement(ContainSubstring("--enable-writes")))
@@ -213,7 +213,7 @@ var _ = Describe("ResourceImport webhook", func() {
 		obj := importOf("not-discovered", map[string]string{networkv1beta1.DefaultOwnerTagKey: "payments"})
 		obj.Spec.ResourceID = "subnet-0fb2c"
 
-		validator := &ResourceImportValidator{Client: k8sClient, WritesEnabled: true}
+		validator := &ResourceImportValidator{Client: k8sClient, Providers: testProviders, WritesEnabled: true}
 		warnings, err := validator.ValidateCreate(ctx, obj)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(warnings).To(ContainElement(ContainSubstring("not in the inventory")))

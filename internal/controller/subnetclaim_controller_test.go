@@ -32,6 +32,7 @@ import (
 
 	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
 	"hypersurgery.dev/subnet-operator/internal/inventory"
+	"hypersurgery.dev/subnet-operator/internal/provider"
 )
 
 // fakeWriter records subnet creations and can fail on demand.
@@ -129,7 +130,7 @@ var _ = Describe("SubnetClaim Controller", func() {
 		writer = &fakeWriter{conflictOnce: map[string]bool{}}
 		notified = nil
 		reconciler = &SubnetClaimReconciler{
-			Client: k8sClient, Scheme: k8sClient.Scheme(), Writer: writer, WritesEnabled: true,
+			Client: k8sClient, Scheme: k8sClient.Scheme(), Providers: awsProviders(nil, writer, nil), WritesEnabled: true,
 			Notify: func(_ context.Context, keys []inventory.TargetKey) error {
 				notified = append(notified, keys...)
 				return nil
@@ -185,7 +186,7 @@ var _ = Describe("SubnetClaim Controller", func() {
 
 		Expect(writer.requests).To(HaveLen(2))
 		req := writer.requests[0]
-		Expect(req.VPCID).To(Equal(claimVPC))
+		Expect(req.NetworkID).To(Equal(claimVPC))
 		Expect(req.Tags).To(HaveKeyWithValue("Name", claimName+"-a"))
 		Expect(req.Tags).To(HaveKeyWithValue("hs/owner", "team-payments"), "the claim's owner wins over spec.tags")
 		Expect(req.Tags).To(HaveKeyWithValue("hs/env", "prod"))
@@ -193,7 +194,7 @@ var _ = Describe("SubnetClaim Controller", func() {
 		Expect(req.Tags).To(HaveKeyWithValue("cost-center", "cc-42"))
 		Expect(req.Tags).To(HaveKeyWithValue(networkv1beta1.TagManagedBy, networkv1beta1.TagManagedByValue))
 		Expect(req.Tags).To(HaveKeyWithValue(networkv1beta1.TagClaim, "default/"+claimName))
-		Expect(writer.targets[0].RoleARN).To(BeEmpty(), "the operator's own account uses its own credentials")
+		Expect(writer.targets[0].OwnIdentity()).To(BeTrue(), "the operator's own account uses its own credentials")
 		Expect(notified).To(Equal([]inventory.TargetKey{{Account: claimAccount, Region: claimRegion}}))
 
 		By("a second pass creates nothing more")
@@ -221,7 +222,7 @@ var _ = Describe("SubnetClaim Controller", func() {
 		Expect(writer.requests).To(BeEmpty())
 
 		By("and a claim that cannot be fulfilled is visible to Prometheus, not only in its status")
-		Expect(readySeries("hs_aws_subnet_claim_ready", claimName)).To(
+		Expect(readySeries("hs_subnet_claim_ready", claimName)).To(
 			Equal(map[string]float64{"WritesDisabled": 0}))
 	})
 
@@ -249,7 +250,7 @@ var _ = Describe("SubnetClaim Controller", func() {
 		c := getClaim()
 		Expect(cond(c, ConditionReady).Reason).To(Equal("CreateFailed"))
 		Expect(c.Status.Allocations).To(HaveLen(1), "the conflicting reservation was dropped")
-		Expect(readySeries("hs_aws_subnet_claim_ready", claimName)).To(
+		Expect(readySeries("hs_subnet_claim_ready", claimName)).To(
 			Equal(map[string]float64{"CreateFailed": 0}))
 
 		// The winner shows up in the inventory before the next pass.
@@ -262,7 +263,7 @@ var _ = Describe("SubnetClaim Controller", func() {
 		Expect(cidrs).To(ConsistOf("10.50.3.0/24", "10.50.4.0/24"))
 
 		By("the recovered claim reports ready, and the old failure is not left behind as a series")
-		Expect(readySeries("hs_aws_subnet_claim_ready", claimName)).To(
+		Expect(readySeries("hs_subnet_claim_ready", claimName)).To(
 			Equal(map[string]float64{cond(c, ConditionReady).Reason: 1}))
 	})
 
@@ -270,11 +271,11 @@ var _ = Describe("SubnetClaim Controller", func() {
 		reconciler.WritesEnabled = false
 		createClaim(nil)
 		Expect(reconcileClaim()).To(Succeed())
-		Expect(readySeries("hs_aws_subnet_claim_ready", claimName)).NotTo(BeEmpty())
+		Expect(readySeries("hs_subnet_claim_ready", claimName)).NotTo(BeEmpty())
 
 		Expect(k8sClient.Delete(ctx, getClaim())).To(Succeed())
 		Expect(reconcileClaim()).To(Succeed())
-		Expect(readySeries("hs_aws_subnet_claim_ready", claimName)).To(BeEmpty(),
+		Expect(readySeries("hs_subnet_claim_ready", claimName)).To(BeEmpty(),
 			"a deleted claim must not keep an alert firing")
 	})
 
@@ -301,7 +302,7 @@ var _ = Describe("SubnetClaim Controller", func() {
 		Expect(a.CIDRBlock).To(Equal("10.50.9.0/24"))
 		Expect(a.State).To(Equal(networkv1beta1.AllocationCreated))
 		Expect(writer.requests).To(HaveLen(1), "only the other AZ is created")
-		Expect(writer.requests[0].AvailabilityZone).To(Equal(claimRegion + "b"))
+		Expect(writer.requests[0].Zone).To(Equal(claimRegion + "b"))
 	})
 
 	It("reports a VPC that was not discovered", func() {
@@ -339,78 +340,19 @@ var _ = Describe("SubnetClaim Controller", func() {
 		Expect(getClaim().Status.Allocations).To(BeEmpty())
 	})
 
+	It("refuses a claim whose scope's provider the operator does not run", func() {
+		reconciler.Providers = provider.MustRegistry()
+		createClaim(nil)
+		Expect(reconcileClaim()).To(Succeed())
+		Expect(cond(getClaim(), ConditionReady).Reason).To(Equal(ReasonProviderNotEnabled))
+		Expect(getClaim().Status.Allocations).To(BeEmpty())
+		Expect(writer.requests).To(BeEmpty())
+	})
+
 	It("refuses a prefix length AWS does not accept", func() {
 		createClaim(func(c *networkv1beta1.SubnetClaim) { c.Spec.PrefixLength = 30 })
 		Expect(reconcileClaim()).To(Succeed())
 		Expect(cond(getClaim(), ConditionReady).Reason).To(Equal("InvalidPrefixLength"))
 		Expect(writer.requests).To(BeEmpty())
 	})
-
-	Describe("while aws.hypersurgery/v1alpha1 is being migrated", func() {
-		It("leaves a claim alone until its old counterpart is migrated", func() {
-			reconciler.Legacy = &fakeLegacy{pending: true}
-			createClaim(nil)
-
-			res, err := reconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: types.NamespacedName{Name: claimName, Namespace: "default"}})
-			Expect(err).NotTo(HaveOccurred())
-			Expect(res.RequeueAfter).To(Equal(migrationRetryInterval))
-			c := getClaim()
-			Expect(c.Status.Allocations).To(BeEmpty(), "nothing reserved before the old reservations arrive")
-			Expect(c.Status.Conditions).To(BeEmpty(), "and nothing written that the copy could race with")
-			Expect(writer.requests).To(BeEmpty())
-		})
-
-		It("works from the copied reservations, even when they arrived after it read the claim", func() {
-			createClaim(nil)
-			// The migration copies the status and then marks the old claim; a reconcile that
-			// read the claim before the copy sees the mark afterwards. It must read again.
-			reconciler.Legacy = &fakeLegacy{onPending: func() {
-				c := getClaim()
-				c.Status.Allocations = []networkv1beta1.SubnetAllocation{
-					{Name: claimName + "-a", Zone: claimRegion + "a", CIDRBlock: "10.50.20.0/24", SubnetID: "subnet-old-a",
-						State: networkv1beta1.AllocationCreated},
-					{Name: claimName + "-b", Zone: claimRegion + "b", CIDRBlock: "10.50.21.0/24", SubnetID: "subnet-old-b",
-						State: networkv1beta1.AllocationCreated},
-				}
-				Expect(k8sClient.Status().Update(ctx, c)).To(Succeed())
-			}}
-
-			Expect(reconcileClaim()).To(Succeed())
-			c := getClaim()
-			Expect(c.Status.Allocations).To(HaveLen(2))
-			Expect(c.Status.Allocations[0].CIDRBlock).To(Equal("10.50.20.0/24"))
-			Expect(c.Status.Allocations[1].CIDRBlock).To(Equal("10.50.21.0/24"))
-			Expect(writer.requests).To(BeEmpty(), "the subnets exist; nothing is created twice")
-		})
-
-		It("keeps clear of what unmigrated old claims reserved", func() {
-			// 10.50.0.0/24 and 10.50.1.0/24 are taken by subnets; 10.50.2.0/24 only by an old claim.
-			reconciler.Legacy = &fakeLegacy{reservations: []string{"10.50.2.0/24"}}
-			createClaim(func(c *networkv1beta1.SubnetClaim) {
-				c.Spec.Mode = networkv1beta1.ClaimModeAllocate
-				c.Spec.Zones = []string{claimRegion + "a"}
-			})
-			Expect(reconcileClaim()).To(Succeed())
-			Expect(getClaim().Status.Allocations[0].CIDRBlock).To(Equal("10.50.3.0/24"))
-		})
-	})
 })
-
-// fakeLegacy stands in for the migration's view of aws.hypersurgery/v1alpha1.
-type fakeLegacy struct {
-	pending      bool
-	onPending    func()
-	reservations []string
-}
-
-func (f *fakeLegacy) Pending(context.Context, client.Object) (bool, error) {
-	if f.onPending != nil {
-		f.onPending()
-	}
-	return f.pending, nil
-}
-
-func (f *fakeLegacy) Reservations(context.Context, string) ([]string, error) {
-	return f.reservations, nil
-}

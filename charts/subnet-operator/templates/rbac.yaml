@@ -8,14 +8,10 @@ rules:
   - apiGroups: [network.hypersurgery.dev]
     resources: [networkscopes, sheetexports, subnetclaims]
     verbs: [get, list, watch]
-  # The auto-import policy writes ResourceImports; it never deletes one. The migration from
-  # aws.hypersurgery creates the new group's copies of claims, imports, scopes and exports.
+  # The auto-import policy writes ResourceImports; it never deletes one.
   - apiGroups: [network.hypersurgery.dev]
     resources: [resourceimports]
     verbs: [get, list, watch, create]
-  - apiGroups: [network.hypersurgery.dev]
-    resources: [networkscopes, sheetexports, subnetclaims]
-    verbs: [create]
   - apiGroups: [network.hypersurgery.dev]
     resources: [networkscopes/status, sheetexports/status, subnetclaims/status, resourceimports/status,
                 networks/status, subnets/status]
@@ -26,14 +22,12 @@ rules:
   - apiGroups: [network.hypersurgery.dev]
     resources: [networks, subnets]
     verbs: [get, list, watch, create, update, patch, delete]
-  # The deprecated group, for the migration (0.8 only): old objects are read and marked
-  # migrated-to, and the VPC and Subnet objects of a migrated scope are deleted.
+  # The group removed in 0.9, listed only: the operator does not start its controllers while
+  # objects 0.8 never migrated exist, and needs to see them to know. Nothing of it is read in
+  # full or written. Without the CRDs, the rule matches nothing.
   - apiGroups: [aws.hypersurgery]
     resources: [networkscopes, sheetexports, subnetclaims, resourceimports]
-    verbs: [get, list, watch, update, patch]
-  - apiGroups: [aws.hypersurgery]
-    resources: [vpcs, subnets]
-    verbs: [get, list, watch, delete, deletecollection]
+    verbs: [list]
   # A NetworkScope's namespaceSelector is matched against namespace labels, by the webhooks
   # and the controllers alike. Labels only: nothing in a namespace is read.
   - apiGroups: [""]

@@ -20,20 +20,18 @@ import (
 	"net/netip"
 )
 
-// awsReservedIPs is the number of addresses AWS reserves in every IPv4 subnet.
-const awsReservedIPs = 5
-
-// UsableIPv4 returns the number of usable addresses in an AWS IPv4 subnet CIDR.
-func UsableIPv4(cidr string) int64 {
+// UsableIPv4 returns the number of usable addresses in an IPv4 subnet CIDR of which the
+// provider reserves `reserved` for itself (5 on AWS and Azure, 4 on GCP).
+func UsableIPv4(cidr string, reserved int64) int64 {
 	p, err := netip.ParsePrefix(cidr)
 	if err != nil || !p.Addr().Is4() {
 		return 0
 	}
 	n := int64(1) << (32 - p.Bits())
-	if n <= awsReservedIPs {
+	if n <= reserved {
 		return 0
 	}
-	return n - awsReservedIPs
+	return n - reserved
 }
 
 // UtilizationPercent returns the share of used addresses, rounded down, 0-100.

@@ -16,7 +16,7 @@ tests:
   - name: a vanished inventory is silent to the stale-sync rule
     interval: 1m
     input_series:
-      - series: 'hs_aws_scope_last_sync_timestamp_seconds{scope="org"}'
+      - series: 'hs_scope_last_sync_timestamp_seconds{provider="aws", scope="org"}'
         values: '0 _x120'
     alert_rule_test:
       - eval_time: 90m
@@ -119,7 +119,7 @@ tests:
   - name: a genuinely full IPv4 subnet still pages
     interval: 1m
     input_series:
-      - series: 'hs_aws_subnet_available_ips{subnet_id="subnet-full", cidr="10.0.9.0/24", account="111111111111", region="eu-central-1"}'
+      - series: 'hs_subnet_available_ips{provider="aws", subnet_id="subnet-full", cidr="10.0.9.0/24", account="111111111111", region="eu-central-1"}'
         values: '0x30'
     alert_rule_test:
       - eval_time: 20m
@@ -127,20 +127,21 @@ tests:
         exp_alerts:
           - exp_labels:
               severity: critical
+              provider: aws
               subnet_id: subnet-full
               cidr: 10.0.9.0/24
               account: "111111111111"
               region: eu-central-1
             exp_annotations:
               summary: Subnet subnet-full has no free addresses
-              description: 10.0.9.0/24 in 111111111111/eu-central-1 cannot take another ENI.
+              description: 10.0.9.0/24 in 111111111111/eu-central-1 (aws) cannot take another network interface.
 
   # Claims and imports are requests someone is waiting on; before these gauges existed, a stuck
   # one was visible only in its status.
   - name: a claim stuck on NoSpace pages after the threshold
     interval: 1m
     input_series:
-      - series: 'hs_aws_subnet_claim_ready{namespace="payments", name="checkout", reason="NoSpace"}'
+      - series: 'hs_subnet_claim_ready{provider="aws", namespace="payments", name="checkout", reason="NoSpace"}'
         values: '0x60'
     alert_rule_test:
       - eval_time: 25m
@@ -151,6 +152,7 @@ tests:
         exp_alerts:
           - exp_labels:
               severity: warning
+              provider: aws
               namespace: payments
               name: checkout
               reason: NoSpace
@@ -165,19 +167,19 @@ tests:
   - name: a claim that is slow but gets there never pages
     interval: 1m
     input_series:
-      - series: 'hs_aws_subnet_claim_ready{namespace="web", name="edge", reason="Created"}'
+      - series: 'hs_subnet_claim_ready{provider="aws", namespace="web", name="edge", reason="Created"}'
         values: '0x20 1x40'
     alert_rule_test:
       - eval_time: 55m
         alertname: SubnetClaimNotReady
         exp_alerts: []
 
-  - name: an import AWS keeps refusing pages, a dry run does not
+  - name: an import the cloud keeps refusing pages, a dry run does not
     interval: 1m
     input_series:
-      - series: 'hs_aws_resource_import_ready{namespace="default", name="subnet-0a-import", state="Failed", reason="TagsNotApplied"}'
+      - series: 'hs_resource_import_ready{provider="aws", namespace="default", name="subnet-0a-import", state="Failed", reason="TagsNotApplied"}'
         values: '0x60'
-      - series: 'hs_aws_resource_import_ready{namespace="default", name="subnet-0b-import", state="Skipped", reason="DryRun"}'
+      - series: 'hs_resource_import_ready{provider="aws", namespace="default", name="subnet-0b-import", state="Skipped", reason="DryRun"}'
         values: '1x60'
     alert_rule_test:
       - eval_time: 35m
@@ -185,6 +187,7 @@ tests:
         exp_alerts:
           - exp_labels:
               severity: warning
+              provider: aws
               namespace: default
               name: subnet-0a-import
               state: Failed
@@ -198,14 +201,14 @@ tests:
               runbook_url: https://github.com/aivandrago/subnet-operator/blob/main/docs/operations/runbook.md#resourceimportnotsettled
 
   # Throttled and unreachable are different problems with different fixes, so they are different
-  # alerts that never fire for the same target: a throttled target reports hs_aws_target_up 1
-  # (it answered, only not fast enough) and hs_aws_target_throttled 1.
+  # alerts that never fire for the same target: a throttled target reports hs_target_up 1
+  # (it answered, only not fast enough) and hs_target_throttled 1.
   - name: a throttled target alerts as throttled, not as down
     interval: 1m
     input_series:
-      - series: 'hs_aws_target_up{scope="org", account="111111111111", region="eu-central-1"}'
+      - series: 'hs_target_up{provider="aws", scope="org", account="111111111111", region="eu-central-1"}'
         values: '1x60'
-      - series: 'hs_aws_target_throttled{scope="org", account="111111111111", region="eu-central-1"}'
+      - series: 'hs_target_throttled{provider="aws", scope="org", account="111111111111", region="eu-central-1"}'
         values: '1x60'
     alert_rule_test:
       - eval_time: 25m
@@ -216,15 +219,16 @@ tests:
         exp_alerts:
           - exp_labels:
               severity: warning
+              provider: aws
               scope: org
               account: "111111111111"
               region: eu-central-1
             exp_annotations:
-              summary: Discovery of 111111111111/eu-central-1 is throttled by AWS
+              summary: Discovery of 111111111111/eu-central-1 is throttled by the cloud provider
               description: >-
-                EC2 has been rate-limiting this account and region for 30m,
+                The aws API has been rate-limiting this account and region for 30m,
                 so its inventory is stale. The operator keeps retrying with backoff. Something else
-                in the account is using up its EC2 API budget, or this instance serves too many targets.
+                in the account is using up its API budget, or this instance serves too many targets.
               runbook_url: https://github.com/aivandrago/subnet-operator/blob/main/docs/operations/runbook.md#subnetinventorytargetthrottled
       - eval_time: 35m
         alertname: SubnetInventoryTargetDown
@@ -233,9 +237,9 @@ tests:
   - name: an unreachable target alerts as down, not as throttled
     interval: 1m
     input_series:
-      - series: 'hs_aws_target_up{scope="org", account="222222222222", region="eu-central-1"}'
+      - series: 'hs_target_up{provider="aws", scope="org", account="222222222222", region="eu-central-1"}'
         values: '0x60'
-      - series: 'hs_aws_target_throttled{scope="org", account="222222222222", region="eu-central-1"}'
+      - series: 'hs_target_throttled{provider="aws", scope="org", account="222222222222", region="eu-central-1"}'
         values: '0x60'
     alert_rule_test:
       - eval_time: 35m
@@ -243,14 +247,16 @@ tests:
         exp_alerts:
           - exp_labels:
               severity: warning
+              provider: aws
               scope: org
               account: "222222222222"
               region: eu-central-1
             exp_annotations:
               summary: Discovery of 222222222222/eu-central-1 is failing
               description: >-
-                The inventory of this account and region is stale. Check the NetworkScope status
-                for the error, usually an IAM or trust policy problem.
+                The inventory of this aws account and region is stale.
+                Check the NetworkScope status for the error, usually a credentials or permissions
+                problem (on AWS, the IAM role or its trust policy).
       - eval_time: 35m
         alertname: SubnetInventoryTargetThrottled
         exp_alerts: []
@@ -260,9 +266,9 @@ tests:
   - name: a target throttled for a while that then gets through never alerts
     interval: 1m
     input_series:
-      - series: 'hs_aws_target_up{scope="org", account="333333333333", region="eu-central-1"}'
+      - series: 'hs_target_up{provider="aws", scope="org", account="333333333333", region="eu-central-1"}'
         values: '1x60'
-      - series: 'hs_aws_target_throttled{scope="org", account="333333333333", region="eu-central-1"}'
+      - series: 'hs_target_throttled{provider="aws", scope="org", account="333333333333", region="eu-central-1"}'
         values: '1x20 0x40'
     alert_rule_test:
       - eval_time: 45m
@@ -271,3 +277,221 @@ tests:
       - eval_time: 45m
         alertname: SubnetInventoryTargetDown
         exp_alerts: []
+
+  # The full-subnet rules read free against usable addresses. A subnet at the threshold warns, one
+  # below it does not, and an IPv6-only subnet (no IPv4 capacity series at all) says nothing.
+  - name: a subnet past the used ratio warns, one below it does not
+    interval: 1m
+    input_series:
+      - series: 'hs_subnet_available_ips{provider="aws", scope="org", account="111111111111", region="eu-central-1", network_id="vpc-1", subnet_id="subnet-busy", cidr="10.0.1.0/24", zone="eu-central-1a", owner="payments"}'
+        values: '25x30'
+      - series: 'hs_subnet_total_ips{provider="aws", scope="org", account="111111111111", region="eu-central-1", network_id="vpc-1", subnet_id="subnet-busy", cidr="10.0.1.0/24", zone="eu-central-1a", owner="payments"}'
+        values: '251x30'
+      - series: 'hs_subnet_available_ips{provider="aws", scope="org", account="111111111111", region="eu-central-1", network_id="vpc-1", subnet_id="subnet-calm", cidr="10.0.2.0/24", zone="eu-central-1b", owner="payments"}'
+        values: '200x30'
+      - series: 'hs_subnet_total_ips{provider="aws", scope="org", account="111111111111", region="eu-central-1", network_id="vpc-1", subnet_id="subnet-calm", cidr="10.0.2.0/24", zone="eu-central-1b", owner="payments"}'
+        values: '251x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: SubnetNearlyFull
+        exp_alerts: []          # not for the full 15m yet
+      - eval_time: 20m
+        alertname: SubnetNearlyFull
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              provider: aws
+              scope: org
+              account: "111111111111"
+              region: eu-central-1
+              network_id: vpc-1
+              subnet_id: subnet-busy
+              cidr: 10.0.1.0/24
+              zone: eu-central-1a
+              owner: payments
+            exp_annotations:
+              summary: Subnet subnet-busy is 90.04% full
+              description: >-
+                10.0.1.0/24 in 111111111111/eu-central-1
+                (aws, owner payments) is running out of addresses.
+      - eval_time: 20m
+        alertname: SubnetFull
+        exp_alerts: []          # nearly full is not full
+
+  - name: a subnet with addresses left is not full
+    interval: 1m
+    input_series:
+      - series: 'hs_subnet_available_ips{provider="aws", subnet_id="subnet-ok", cidr="10.0.3.0/24", account="111111111111", region="eu-central-1"}'
+        values: '0x5 3x30'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: SubnetFull
+        exp_alerts: []
+
+  - name: overlapping networks warn after half an hour, separate ones never
+    interval: 1m
+    input_series:
+      - series: 'hs_network_cidr_overlaps{provider="aws", scope="org", account="111111111111", region="eu-central-1", network_id="vpc-hub", name="hub", owner="network", env="prod"}'
+        values: '1x60'
+      - series: 'hs_network_cidr_overlaps{provider="aws", scope="org", account="222222222222", region="eu-central-1", network_id="vpc-spoke", name="spoke", owner="web", env="prod"}'
+        values: '0x60'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: NetworkCIDROverlap
+        exp_alerts: []
+      - eval_time: 35m
+        alertname: NetworkCIDROverlap
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              provider: aws
+              scope: org
+              account: "111111111111"
+              region: eu-central-1
+              network_id: vpc-hub
+              name: hub
+              owner: network
+              env: prod
+            exp_annotations:
+              summary: Network vpc-hub overlaps another network
+              description: >-
+                vpc-hub in 111111111111/eu-central-1
+                (aws) has CIDRs that overlap another network in the scope.
+                Overlapping CIDRs break peering and transit routing between them.
+                See status.overlapsWith on the Network object.
+
+  # Complements the first test: a scope whose sync stopped while the operator keeps exporting
+  # its last timestamp is stale, and says so.
+  - name: a scope that stopped syncing is stale, one that keeps syncing is not
+    interval: 1m
+    input_series:
+      # Unix time 0 at the start, then no longer moving: an hour and more behind by minute 61.
+      - series: 'hs_scope_last_sync_timestamp_seconds{provider="aws", scope="stuck"}'
+        values: '0x100'
+      # Syncing every minute: always as new as the evaluation time.
+      - series: 'hs_scope_last_sync_timestamp_seconds{provider="aws", scope="healthy"}'
+        values: '0+60x100'
+    alert_rule_test:
+      - eval_time: 65m
+        alertname: SubnetInventoryStale
+        exp_alerts: []          # stale since 60m, not for the full 10m yet
+      - eval_time: 75m
+        alertname: SubnetInventoryStale
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              provider: aws
+              scope: stuck
+            exp_annotations:
+              summary: Scope stuck has not fully synced recently
+              description: >-
+                The operator is not completing full resyncs. Check that it is running and
+                that its credentials still work.
+
+  # The counter rises once per resource first seen. A step is something new nobody owns; a flat
+  # counter, however high, is resources the operator already reported.
+  - name: a newly unmanaged network alerts, a known one does not
+    interval: 1m
+    input_series:
+      - series: 'hs_unmanaged_resources_total{provider="aws", scope="org", account="111111111111", region="eu-central-1", kind="network"}'
+        values: '3x5 4x60'
+      - series: 'hs_unmanaged_resources_total{provider="aws", scope="org", account="111111111111", region="eu-central-1", kind="subnet"}'
+        values: '7x65'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: UnmanagedNetworkResource
+        exp_alerts: []          # pending: new since minute 6
+      # One new resource is enough. With the old 10m window it never was: the increase lasted
+      # 10 minutes minus one evaluation, one short of the for.
+      - eval_time: 17m
+        alertname: UnmanagedNetworkResource
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              provider: aws
+              scope: org
+              account: "111111111111"
+              region: eu-central-1
+              kind: network
+            exp_annotations:
+              summary: 1 new unmanaged network resources in 111111111111/eu-central-1
+              description: >-
+                Something was created without the hs/managed tag.
+                Import it to take it under management, or add an auto-import rule so the next one
+                is tagged on its own. The dashboard lists them:
+                https://hypersurgery.dev/dashboard/
+              runbook_url: https://hypersurgery.dev/docs/#unmanaged
+      # Once the step has left the window, the alert resolves.
+      - eval_time: 40m
+        alertname: UnmanagedNetworkResource
+        exp_alerts: []
+
+  - name: an import that settled never pages
+    interval: 1m
+    input_series:
+      - series: 'hs_resource_import_ready{provider="aws", namespace="default", name="subnet-0c-import", state="Applied", reason="Applied"}'
+        values: '0x10 1x50'
+    alert_rule_test:
+      - eval_time: 55m
+        alertname: ResourceImportNotSettled
+        exp_alerts: []
+
+  # Informational: a digest of the day, and only for imports that were applied.
+  - name: applied auto-imports make a digest, dry runs and skips do not
+    interval: 1h
+    input_series:
+      - series: 'hs_auto_imports_total{provider="aws", scope="org", account="111111111111", region="eu-central-1", result="applied"}'
+        values: '0 0 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2'
+      - series: 'hs_auto_imports_total{provider="aws", scope="org", account="222222222222", region="eu-central-1", result="dryrun"}'
+        values: '0+1x50'
+      - series: 'hs_auto_imports_total{provider="aws", scope="org", account="222222222222", region="eu-central-1", result="skipped"}'
+        values: '0+1x50'
+    alert_rule_test:
+      - eval_time: 3h
+        alertname: AutoImportedResources
+        exp_alerts:
+          - exp_labels:
+              severity: info
+              provider: aws
+              scope: org
+              account: "111111111111"
+              region: eu-central-1
+              result: applied
+            exp_annotations:
+              summary: 2 resources auto-imported in 111111111111/eu-central-1
+              description: >-
+                The auto-import policy tagged these itself. Review them with
+                kubectl get resourceimports -A.
+      # A day after the last one there is nothing left to report.
+      - eval_time: 48h
+        alertname: AutoImportedResources
+        exp_alerts: []
+
+  # Why the operator exports every auto-import result at 0 as soon as a scope runs the policy.
+  # After a restart the counters start again from nothing. The target whose series is there at 0
+  # before its first import shows that import; the one whose series first appears at 1, as it
+  # did before 0.9, has not increased as far as Prometheus can tell, and the digest leaves it
+  # out.
+  - name: the first auto-import after a restart is in the digest when its series starts at zero
+    interval: 1h
+    input_series:
+      - series: 'hs_auto_imports_total{provider="aws", scope="org", account="111111111111", region="eu-central-1", result="applied"}'
+        values: '_ _ 0 1 1 1 1 1 1 1 1'
+      - series: 'hs_auto_imports_total{provider="aws", scope="org", account="222222222222", region="eu-central-1", result="applied"}'
+        values: '_ _ _ 1 1 1 1 1 1 1 1'
+    alert_rule_test:
+      - eval_time: 5h
+        alertname: AutoImportedResources
+        exp_alerts:
+          - exp_labels:
+              severity: info
+              provider: aws
+              scope: org
+              account: "111111111111"
+              region: eu-central-1
+              result: applied
+            exp_annotations:
+              summary: 1 resources auto-imported in 111111111111/eu-central-1
+              description: >-
+                The auto-import policy tagged these itself. Review them with
+                kubectl get resourceimports -A.

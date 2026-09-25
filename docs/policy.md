@@ -74,17 +74,20 @@ stream gaining fields ([audit.md](audit.md) documents the ones that exist).
 ## API versions
 
 Since 0.8 every kind is `network.hypersurgery.dev/v1beta1`, the version stored. Up to 0.7 the
-API was `aws.hypersurgery/v1alpha1`; 0.8 still serves it, deprecated, and 0.9 removes it
-([ADR 0002](adr/0002-multi-cloud-model.md) §10). A conversion webhook cannot move objects between
-two groups, so the operator migrates them itself: it copies every old object into the new group,
-status included, and `manager migrate-manifests` rewrites manifests kept in git
-([operations/upgrades.md](operations/upgrades.md#upgrading-from-07-to-08)).
+API was `aws.hypersurgery/v1alpha1`. A conversion webhook cannot move objects between two
+groups, so 0.8 served both, deprecated the old one and migrated every old object into the new
+group itself, status included ([operations/upgrades.md](operations/upgrades.md#upgrading-from-07-to-08)).
+0.9 removes the old group ([ADR 0002](adr/0002-multi-cloud-model.md) §10): it neither serves nor
+migrates it, and does not start its controllers while an old object 0.8 never migrated exists, so
+**0.7 upgrades through 0.8** ([operations/upgrades.md](operations/upgrades.md#upgrading-from-08-to-09)).
+`manager migrate-manifests`, which rewrites manifests kept in git, stays.
 
 What each version promises:
 
-- **`v1alpha1`** (the old group) promised nothing, and what the project promised and tested
-  instead held: **upgrading from one release to the next keeps your objects and their status**.
-  The [upgrade test](#the-upgrade-test) checks that across the move to the new group too.
+- **`v1alpha1`** (the old group, removed in 0.9) promised nothing, and what the project promised
+  and tested instead held: **upgrading from one release to the next keeps your objects and their
+  status**. The [upgrade test](#the-upgrade-test) checked that across the move to the new group
+  (0.7 to 0.8), and checks that what 0.8 migrated survives 0.9.
 - **`v1beta1`**: no field removed or changed in meaning within `v1beta1`. Fields may be
   deprecated and are then kept for the deprecation period below. `provider` is an open enum:
   values for new clouds are added, and a client must skip a value it does not know. Provider
@@ -112,12 +115,33 @@ A deprecated field, flag, metric, alert or chart value:
 A renamed metric is exported under both names during the deprecation period, so dashboards and
 alerts can move at their own pace.
 
-Deprecated today, removed in 0.9:
+Deprecated in 0.8, removed in 0.9:
 
-- the `aws.hypersurgery/v1alpha1` API group (the CRDs say so with a warning on every request);
+- the `aws.hypersurgery/v1alpha1` API group: its CRDs are no longer in the chart (the ones in a
+  cluster stay until somebody deletes them), and nothing serves or migrates it;
 - the chart values `networkScope.vpcTagSelector` and `roleARN`, `externalID` and `writeRoleARN`
-  next to an account's `id` (now `networkScope.networkSelector.matchTags` and an `aws` member);
-- the manager flag `--migrate-v1alpha1`, which goes with the migration.
+  next to an account's `id` (now `networkScope.networkSelector.matchTags` and an `aws` member),
+  which the chart now refuses;
+- the manager flag `--migrate-v1alpha1`, which went with the migration.
+
+Removed in 0.9 without a deprecation period, as an exception to the rule above: the project
+had no users yet when the neutral metrics were ready, and keeping both names would have doubled
+every series for a release that nobody needed.
+
+- the `hs_aws_*` metrics, with their labels `vpc_id` and `az` and the unmanaged `kind="vpc"`,
+  replaced by `hs_*` with `provider`, `network_id`, `zone` and `kind="network"`;
+- the alert `VPCCIDROverlap`, renamed `NetworkCIDROverlap`.
+
+[upgrades.md](operations/upgrades.md#upgrading-from-08-to-09) has the mapping and what to change
+in rules, dashboards, routes and silences of your own.
+
+Deprecated in 0.9, removed in 0.10:
+
+- the chart values `events.queueUrl`, `events.debounce`, `aws.region` and `aws.endpointURL`
+  (now under `providers.aws`), and the manager flags `--events-queue-url` and
+  `--events-debounce` with `EVENTS_QUEUE_URL` (now `--aws-events-queue-url` and
+  `--aws-events-debounce`), deprecated by the provider registry (#43);
+- the chart value `networkPolicy.egress.podIdentity` (now `providers.aws.podIdentity`).
 
 The chart's old name, `aws-subnet-operator`, is not published any more from 0.8 on.
 
@@ -133,20 +157,26 @@ in [operations/upgrades.md](operations/upgrades.md).
 `make test-upgrade` (and the `upgrade` job in `.gitea/workflows/ci.yml`, on every pull request,
 every push to `master` and weekly) runs `test/e2e/upgrade_test.go` in Kind against Moto:
 
-1. installs the **latest published chart** with its own published image — for 0.8, the last one
-   under the old name, `oci://ghcr.io/aivandrago/charts/aws-subnet-operator` (`UPGRADE_FROM=<version>`
-   picks another version; `UPGRADE_CHART` another chart reference);
+1. installs the **latest published chart**, `oci://ghcr.io/aivandrago/charts/subnet-operator`,
+   with its own published image (`UPGRADE_FROM=<version>` picks another version; `UPGRADE_CHART`
+   another chart reference). For 0.9 that is 0.8, the release that migrates
+   `aws.hypersurgery/v1alpha1`;
 2. creates a `NetworkScope` across two accounts, a `SubnetClaim` that creates subnets, applied and
-   dry-run `ResourceImport`s and a `SheetExport`, and waits for the `VPC` and `Subnet` objects;
+   dry-run `ResourceImport`s and a `SheetExport` in the old group, the way a user coming from 0.7
+   has them, and waits until 0.8 has migrated every one and the copies have settled;
 3. applies the CRDs of the build under test and runs `helm upgrade` of the same release to the
-   local, renamed chart and image, the way the upgrade guide says;
-4. checks that the old chart's objects are gone and every old object was migrated: the copies
-   in `network.hypersurgery.dev` carry the old spec (converted), status and creator; the scope
-   keeps syncing and stays Ready with the same networks and subnets; claims keep their
-   reservations and stay Ready, and nothing is created or tagged again in AWS; the new release's
-   webhooks accept an update of every object and refuse a spec change of a migrated one;
-   `hs_aws_unmanaged_resources_total` does not rise for unmanaged resources the previous release
-   already knew, and does rise, by one, for one created after the upgrade.
+   local chart and image, the way the upgrade guide says;
+4. checks that the old CRDs are still there and no webhook serves the old group any more; that
+   the scope keeps syncing and stays Ready with the same networks and subnets, claims keep their
+   reservations and creator and stay Ready, imports are not applied again, and nothing is created
+   or tagged again in AWS; that the new release's webhooks accept an update of every object;
+   that `hs_unmanaged_resources_total` does not rise for unmanaged resources the previous release
+   already knew, and does rise, by one, for one created after the upgrade;
+5. creates an old-group object that nothing migrates, and checks that the running operator
+   counts it (`hs_migration_pending_objects`) and records an Event on it, that a restarted pod
+   stays not ready, says why and leaves the lease and the old pods alone, and that the rollout
+   completes once the object is deleted;
+6. deletes the old CRDs, as the upgrade guide says, and checks that the operator carries on.
 
 It skips itself, saying why, only when the checkout is the release commit of the latest
 published version, where there is nothing to upgrade from.

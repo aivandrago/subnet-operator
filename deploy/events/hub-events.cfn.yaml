@@ -76,7 +76,7 @@ Resources:
         detail-type: [AWS API Call via CloudTrail]
         detail:
           eventSource: [ec2.amazonaws.com]
-          # Keep in sync with relevantEvents in internal/events/events.go.
+          # Keep in sync with relevantEvents in internal/cloud/aws/events/events.go.
           eventName:
             - CreateVpc
             - DeleteVpc
@@ -105,7 +105,7 @@ Resources:
 
 Outputs:
   QueueUrl:
-    Description: Pass to the operator as --events-queue-url (or EVENTS_QUEUE_URL).
+    Description: Set as the chart value providers.aws.events.queueUrl (the operator flag --aws-events-queue-url).
     Value: !Ref EventsQueue
   EventBusArn:
     Description: Pass to spoke-events.cfn.yaml as HubEventBusArn.

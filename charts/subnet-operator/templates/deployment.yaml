@@ -52,12 +52,14 @@ spec:
             - --leader-elect-retry-period={{ .Values.leaderElection.retryPeriod }}
             {{- end }}
             - --discovery-concurrency={{ .Values.discovery.concurrency }}
+            - --providers={{ include "subnet-operator.providers" . }}
             {{- if .Values.writes.enabled }}
             - --enable-writes
             {{- end }}
-            {{- if .Values.events.queueUrl }}
-            - --events-queue-url={{ .Values.events.queueUrl }}
-            - --events-debounce={{ .Values.events.debounce }}
+            {{- $awsQueue := include "subnet-operator.aws.eventsQueueUrl" . }}
+            {{- if and .Values.providers.aws.enabled $awsQueue }}
+            - --aws-events-queue-url={{ $awsQueue }}
+            - --aws-events-debounce={{ include "subnet-operator.aws.eventsDebounce" . }}
             {{- end }}
             - --audit-sink={{ .Values.audit.sink }}
             {{- if .Values.webhook.enabled }}
@@ -70,13 +72,15 @@ spec:
             {{- toYaml . | nindent 12 }}
             {{- end }}
           env:
-            {{- with .Values.aws.region }}
+            {{- $awsRegion := include "subnet-operator.aws.region" . }}
+            {{- $awsEndpoint := include "subnet-operator.aws.endpointURL" . }}
+            {{- if and .Values.providers.aws.enabled $awsRegion }}
             - name: AWS_REGION
-              value: {{ . | quote }}
+              value: {{ $awsRegion | quote }}
             {{- end }}
-            {{- with .Values.aws.endpointURL }}
+            {{- if and .Values.providers.aws.enabled $awsEndpoint }}
             - name: AWS_ENDPOINT_URL
-              value: {{ . | quote }}
+              value: {{ $awsEndpoint | quote }}
             {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}

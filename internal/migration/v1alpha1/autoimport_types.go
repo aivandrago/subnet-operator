@@ -17,7 +17,6 @@ limitations under the License.
 package v1alpha1
 
 // AutoImportMode says how far the policy goes on its own.
-// +kubebuilder:validation:Enum=Off;DryRun;Apply
 type AutoImportMode string
 
 const (
@@ -41,26 +40,18 @@ type CreatorRule struct {
 	// principalPrefix is matched against the CloudTrail principal, e.g.
 	// "arn:aws:sts::222222222222:assumed-role/payments-deploy/". A prefix, not a pattern:
 	// the operator never guesses an owner from a partial match in the middle of an ARN.
-	// +kubebuilder:validation:MinLength=1
-	// +required
 	PrincipalPrefix string `json:"principalPrefix"`
 
 	// tags are applied when the prefix matches.
-	// +kubebuilder:validation:MinProperties=1
-	// +required
 	Tags map[string]string `json:"tags"`
 }
 
 // AccountDefault gives an account a set of fallback tags.
 type AccountDefault struct {
 	// account is the 12-digit AWS account ID.
-	// +kubebuilder:validation:Pattern=`^[0-9]{12}$`
-	// +required
 	Account string `json:"account"`
 
 	// tags are applied to resources in that account when nothing more specific matched.
-	// +kubebuilder:validation:MinProperties=1
-	// +required
 	Tags map[string]string `json:"tags"`
 }
 
@@ -68,74 +59,44 @@ type AccountDefault struct {
 // reason: tagging a resource it manages makes the next plan want to remove the tags again.
 type SkipRule struct {
 	// tagKey, when present on the resource, skips it. With tagValue set, only that value skips.
-	// +optional
 	TagKey string `json:"tagKey,omitempty"`
 
 	// tagValue narrows tagKey to one value.
-	// +optional
 	TagValue string `json:"tagValue,omitempty"`
 
 	// principalPrefix skips resources created by a matching principal, e.g. a CI role.
-	// +optional
 	PrincipalPrefix string `json:"principalPrefix,omitempty"`
 }
 
 // AutoImportPolicy decides which unmanaged resources get tagged, and with what.
 type AutoImportPolicy struct {
 	// mode is Off (report only), DryRun (record what would be applied) or Apply.
-	// +kubebuilder:default=Off
-	// +optional
 	Mode AutoImportMode `json:"mode,omitempty"`
 
 	// namespace holds the generated ResourceImport objects.
-	// +kubebuilder:default=default
-	// +optional
 	Namespace string `json:"namespace,omitempty"`
 
 	// fromCreator derives tags from the principal that created the resource, which CloudTrail
 	// reports. Rules are tried in order and the first match wins.
-	// +listType=atomic
-	// +optional
 	FromCreator []CreatorRule `json:"fromCreator,omitempty"`
 
 	// inheritFromVPC copies these tag keys from the parent VPC onto an unmanaged subnet.
 	// Tried after fromCreator, for the common case of a subnet added by hand to a VPC that
 	// already has an owner.
-	// +listType=set
-	// +optional
 	InheritFromVPC []string `json:"inheritFromVPC,omitempty"`
 
 	// accountDefaults are the last resort, per account.
-	// +listType=atomic
-	// +optional
 	AccountDefaults []AccountDefault `json:"accountDefaults,omitempty"`
 
 	// skip keeps the policy away from matching resources entirely.
-	// +listType=atomic
-	// +optional
 	Skip []SkipRule `json:"skip,omitempty"`
 
 	// requiredTags must all be resolved before anything is imported. Defaults to the owner
 	// tag: a resource nobody owns stays unmanaged, and the alert asks a human to decide.
-	// +listType=set
-	// +optional
 	RequiredTags []string `json:"requiredTags,omitempty"`
 
 	// managedTag and managedValue are added to every generated import, because that is what
 	// makes the resource part of the inventory.
-	// +kubebuilder:default="hs/managed"
-	// +optional
-	ManagedTag string `json:"managedTag,omitempty"`
-	// +kubebuilder:default="true"
-	// +optional
+	ManagedTag   string `json:"managedTag,omitempty"`
 	ManagedValue string `json:"managedValue,omitempty"`
-}
-
-// ImportNamespace is where the policy writes its ResourceImports. The CRD defaults the field;
-// an object written while that default did not apply still means "default".
-func (p *AutoImportPolicy) ImportNamespace() string {
-	if p.Namespace == "" {
-		return "default"
-	}
-	return p.Namespace
 }

@@ -14,33 +14,35 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Package migration moves objects from aws.hypersurgery/v1alpha1 to
-// network.hypersurgery.dev/v1beta1 (ADR 0002 §9).
+// Package migration is what is left of the move from aws.hypersurgery/v1alpha1 to
+// network.hypersurgery.dev/v1beta1 (ADR 0002 §9) once the old group is gone (0.9).
 //
-// A conversion webhook cannot do it: it converts between versions of one CRD, and the two
-// groups are different CRDs. So the objects are copied. The mapping is one set of pure
-// functions in this file, used both by the migration controller inside the operator and by
-// `manager migrate-manifests`, which rewrites manifests kept in git.
+// 0.8 served both groups and copied every object, status included, into the new one with a
+// migration controller. 0.9 serves only the new group. Two things remain:
 //
-// Only what people write is migrated: NetworkScope, SubnetClaim, ResourceImport and
-// SheetExport. VPC and Subnet objects are a cache that the new NetworkScope rebuilds as
+//   - the mapping, as pure functions in this file, used by `manager migrate-manifests` to
+//     rewrite manifests kept in git. Manifests carry no state, so only metadata and spec are
+//     converted;
+//   - the guard (guard.go), which keeps the operator from running next to old objects that
+//     0.8 never migrated, whose state would otherwise be ignored.
+//
+// Only what people write is converted: NetworkScope, SubnetClaim, ResourceImport and
+// SheetExport. VPC and Subnet objects were a cache that the new NetworkScope rebuilds as
 // Network and Subnet objects.
 package migration
 
 import (
 	"maps"
-	"slices"
 	"strings"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	awsv1alpha1 "hypersurgery.dev/subnet-operator/api/v1alpha1"
 	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
+	awsv1alpha1 "hypersurgery.dev/subnet-operator/internal/migration/v1alpha1"
 )
 
-// OldAPIVersion is the apiVersion objects are migrated from, and the value of the
-// migrated-from annotation on the objects the migration creates.
-const OldAPIVersion = "aws.hypersurgery/v1alpha1"
+// OldAPIVersion is the apiVersion manifests are converted from.
+const OldAPIVersion = awsv1alpha1.APIVersion
 
 // oldPrefix and newPrefix are the label and annotation key prefixes of the two groups.
 const (
@@ -61,67 +63,26 @@ const (
 	kindSheetExport    = "SheetExport"
 )
 
-// Target says where a converted object is going, which decides the metadata it keeps.
-type Target int
-
-const (
-	// ForCluster is an object the migration controller creates next to the old one. It drops
-	// the metadata of tools that track the old object (kubectl apply, Argo CD, Flux, Helm): a
-	// copy carrying it would look like theirs, and a tool pruning what is not in git would
-	// delete it.
-	ForCluster Target = iota
-	// ForManifest is a manifest rewritten for a git repository. Its metadata is what the
-	// author wrote and stays, apart from the keys of the old group, which are renamed.
-	ForManifest
-)
-
-// droppedAnnotationPrefixes and droppedLabels are the tool-tracking metadata ForCluster drops.
-var (
-	droppedAnnotationPrefixes = []string{
-		"argocd.argoproj.io/",
-		"meta.helm.sh/",
-		"kustomize.toolkit.fluxcd.io/",
-		"helm.toolkit.fluxcd.io/",
-	}
-	droppedLabels = []string{
-		"app.kubernetes.io/instance",
-		"app.kubernetes.io/managed-by",
-		"helm.sh/chart",
-	}
-	droppedLabelPrefixes = []string{
-		"kustomize.toolkit.fluxcd.io/",
-		"helm.toolkit.fluxcd.io/",
-	}
-)
-
 // Notes are what a conversion wants a human to know: a changed default made explicit, a field
-// that had to move. The controller puts them in an Event, migrate-manifests on stderr.
+// that had to move. migrate-manifests writes them to stderr.
 type Notes []string
 
 func (n *Notes) add(format string) { *n = append(*n, format) }
 
-// objectMeta converts the metadata of an old object.
-func objectMeta(old metav1.ObjectMeta, target Target) metav1.ObjectMeta {
-	meta := metav1.ObjectMeta{
+// objectMeta converts the metadata of an old object: what the author wrote stays, apart from
+// the keys of the old group, which are renamed.
+func objectMeta(old metav1.ObjectMeta) metav1.ObjectMeta {
+	return metav1.ObjectMeta{
 		Name:        old.Name,
 		Namespace:   old.Namespace,
-		Labels:      convertKeys(old.Labels, target, false),
-		Annotations: convertKeys(old.Annotations, target, true),
+		Labels:      convertKeys(old.Labels),
+		Annotations: convertKeys(old.Annotations),
 	}
-	// The value is the old object's group and version: which object it came from is the name
-	// and namespace, the same on both sides.
-	if target == ForCluster {
-		if meta.Annotations == nil {
-			meta.Annotations = map[string]string{}
-		}
-		meta.Annotations[networkv1beta1.AnnotationMigratedFrom] = OldAPIVersion
-	}
-	return meta
 }
 
-// convertKeys renames the old group's keys and, for the cluster, drops tool-tracking ones.
-// The migration's own markers never carry over: migrated-to belongs to the old object.
-func convertKeys(in map[string]string, target Target, annotations bool) map[string]string {
+// convertKeys renames the old group's keys. The migration's own markers never carry over:
+// migrated-to belonged to the old object, migrated-from to a copy 0.8 made in the cluster.
+func convertKeys(in map[string]string) map[string]string {
 	if len(in) == 0 {
 		return nil
 	}
@@ -132,10 +93,7 @@ func convertKeys(in map[string]string, target Target, annotations bool) map[stri
 		}
 		if k == "kubectl.kubernetes.io/last-applied-configuration" {
 			// It describes the old object: a kubectl apply of the new manifest would compute
-			// its three-way diff against an object of another kind. Dropped either way.
-			continue
-		}
-		if target == ForCluster && dropped(k, annotations) {
+			// its three-way diff against an object of another kind.
 			continue
 		}
 		out[convertKey(k)] = v
@@ -144,26 +102,6 @@ func convertKeys(in map[string]string, target Target, annotations bool) map[stri
 		return nil
 	}
 	return out
-}
-
-func dropped(key string, annotation bool) bool {
-	if annotation {
-		for _, p := range droppedAnnotationPrefixes {
-			if strings.HasPrefix(key, p) {
-				return true
-			}
-		}
-		return false
-	}
-	if slices.Contains(droppedLabels, key) {
-		return true
-	}
-	for _, p := range droppedLabelPrefixes {
-		if strings.HasPrefix(key, p) {
-			return true
-		}
-	}
-	return false
 }
 
 func convertKey(k string) string {
@@ -182,7 +120,7 @@ func convertKey(k string) string {
 // unset allowed every namespace in the old group and allows none in the new one, and a
 // migration must not lock teams out of their scope — the note says so, because {} is exactly
 // the permissive setting the new default exists to avoid.
-func NetworkScope(old *awsv1alpha1.NetworkScope, target Target) (*networkv1beta1.NetworkScope, Notes) {
+func NetworkScope(old *awsv1alpha1.NetworkScope) (*networkv1beta1.NetworkScope, Notes) {
 	var notes Notes
 	o := old.Spec
 	spec := networkv1beta1.NetworkScopeSpec{
@@ -214,26 +152,8 @@ func NetworkScope(old *awsv1alpha1.NetworkScope, target Target) (*networkv1beta1
 
 	scope := &networkv1beta1.NetworkScope{
 		TypeMeta:   metav1.TypeMeta{APIVersion: networkv1beta1.GroupVersion.String(), Kind: kindNetworkScope},
-		ObjectMeta: objectMeta(old.ObjectMeta, target),
+		ObjectMeta: objectMeta(old.ObjectMeta),
 		Spec:       spec,
-	}
-	s := old.Status
-	scope.Status = networkv1beta1.NetworkScopeStatus{
-		// The new object has a generation of its own; zero makes its first reconcile a full
-		// sync, which is what creates its Network and Subnet objects.
-		ObservedGeneration: 0,
-		LastSyncTime:       s.LastSyncTime.DeepCopy(),
-		Networks:           s.VPCs,
-		Subnets:            s.Subnets,
-		Unmanaged:          s.Unmanaged,
-		Conditions:         cloneConditions(s.Conditions),
-	}
-	for _, t := range s.Targets {
-		scope.Status.Targets = append(scope.Status.Targets, networkv1beta1.TargetStatus{
-			Account: t.Account, Region: t.Region, Networks: t.VPCs, Subnets: t.Subnets,
-			UnmanagedNetworks: t.UnmanagedVPCs, UnmanagedSubnets: t.UnmanagedSubnets,
-			UnmanagedIDs: cloneSlice(t.UnmanagedIDs), LastSyncTime: t.LastSyncTime.DeepCopy(), Error: t.Error,
-		})
 	}
 	return scope, notes
 }
@@ -285,15 +205,13 @@ func autoImport(p *awsv1alpha1.AutoImportPolicy) *networkv1beta1.AutoImportPolic
 	return out
 }
 
-// SubnetClaim converts a claim, reservations included: vpcID becomes networkID,
-// availabilityZones becomes zones, and the AWS-only options move into aws. Each allocation is
-// keyed by the name the claim's subnet in that zone has (namePrefix and the zone suffix), which
-// is the Name tag the operator already gave the subnets it created.
-func SubnetClaim(old *awsv1alpha1.SubnetClaim, target Target) (*networkv1beta1.SubnetClaim, Notes) {
+// SubnetClaim converts a claim: vpcID becomes networkID,
+// availabilityZones becomes zones, and the AWS-only options move into aws.
+func SubnetClaim(old *awsv1alpha1.SubnetClaim) (*networkv1beta1.SubnetClaim, Notes) {
 	o := old.Spec
 	claim := &networkv1beta1.SubnetClaim{
 		TypeMeta:   metav1.TypeMeta{APIVersion: networkv1beta1.GroupVersion.String(), Kind: kindSubnetClaim},
-		ObjectMeta: objectMeta(old.ObjectMeta, target),
+		ObjectMeta: objectMeta(old.ObjectMeta),
 		Spec: networkv1beta1.SubnetClaimSpec{
 			ScopeRef:     o.ScopeRef,
 			Account:      o.Account,
@@ -314,31 +232,16 @@ func SubnetClaim(old *awsv1alpha1.SubnetClaim, target Target) (*networkv1beta1.S
 			RouteTableID: o.RouteTableID, MapPublicIPOnLaunch: o.MapPublicIPOnLaunch}
 	}
 
-	prefix := claim.NamePrefixOrName()
-	claim.Status = networkv1beta1.SubnetClaimStatus{
-		ObservedGeneration: 0,
-		Conditions:         cloneConditions(old.Status.Conditions),
-	}
-	for _, a := range old.Status.Allocations {
-		claim.Status.Allocations = append(claim.Status.Allocations, networkv1beta1.SubnetAllocation{
-			Name:      networkv1beta1.SubnetName(prefix, o.Region, a.AvailabilityZone),
-			Zone:      a.AvailabilityZone,
-			CIDRBlock: a.CIDRBlock,
-			SubnetID:  a.SubnetID,
-			State:     a.State,
-			Error:     a.Error,
-		})
-	}
 	return claim, nil
 }
 
-// ResourceImport converts an import and its history. Nothing in it changes shape: resourceID
+// ResourceImport converts an import. Nothing in it changes shape: resourceID
 // already was the provider's ID.
-func ResourceImport(old *awsv1alpha1.ResourceImport, target Target) (*networkv1beta1.ResourceImport, Notes) {
+func ResourceImport(old *awsv1alpha1.ResourceImport) (*networkv1beta1.ResourceImport, Notes) {
 	o := old.Spec
 	imp := &networkv1beta1.ResourceImport{
 		TypeMeta:   metav1.TypeMeta{APIVersion: networkv1beta1.GroupVersion.String(), Kind: kindResourceImport},
-		ObjectMeta: objectMeta(old.ObjectMeta, target),
+		ObjectMeta: objectMeta(old.ObjectMeta),
 		Spec: networkv1beta1.ResourceImportSpec{
 			ScopeRef:    o.ScopeRef,
 			Account:     o.Account,
@@ -348,24 +251,16 @@ func ResourceImport(old *awsv1alpha1.ResourceImport, target Target) (*networkv1b
 			RequestedBy: o.RequestedBy,
 			DryRun:      o.DryRun,
 		},
-		Status: networkv1beta1.ResourceImportStatus{
-			ObservedGeneration: 0,
-			State:              old.Status.State,
-			AppliedTags:        maps.Clone(old.Status.AppliedTags),
-			AppliedTime:        old.Status.AppliedTime.DeepCopy(),
-			Error:              old.Status.Error,
-			Conditions:         cloneConditions(old.Status.Conditions),
-		},
 	}
 	return imp, nil
 }
 
 // SheetExport converts an export. It was cloud-neutral already.
-func SheetExport(old *awsv1alpha1.SheetExport, target Target) (*networkv1beta1.SheetExport, Notes) {
+func SheetExport(old *awsv1alpha1.SheetExport) (*networkv1beta1.SheetExport, Notes) {
 	o := old.Spec
 	exp := &networkv1beta1.SheetExport{
 		TypeMeta:   metav1.TypeMeta{APIVersion: networkv1beta1.GroupVersion.String(), Kind: kindSheetExport},
-		ObjectMeta: objectMeta(old.ObjectMeta, target),
+		ObjectMeta: objectMeta(old.ObjectMeta),
 		Spec: networkv1beta1.SheetExportSpec{
 			ScopeRef:      o.ScopeRef,
 			SpreadsheetID: o.SpreadsheetID,
@@ -374,13 +269,6 @@ func SheetExport(old *awsv1alpha1.SheetExport, target Target) (*networkv1beta1.S
 				Name: o.CredentialsSecretRef.Name, Namespace: o.CredentialsSecretRef.Namespace, Key: o.CredentialsSecretRef.Key},
 			ExtraTagColumns: cloneSlice(o.ExtraTagColumns),
 			RefreshInterval: cloneDuration(o.RefreshInterval),
-		},
-		Status: networkv1beta1.SheetExportStatus{
-			ObservedGeneration: 0,
-			LastExportTime:     old.Status.LastExportTime.DeepCopy(),
-			Rows:               old.Status.Rows,
-			URL:                old.Status.URL,
-			Conditions:         cloneConditions(old.Status.Conditions),
 		},
 	}
 	return exp, nil
@@ -407,15 +295,4 @@ func cloneBool(b *bool) *bool {
 	}
 	c := *b
 	return &c
-}
-
-func cloneConditions(c []metav1.Condition) []metav1.Condition {
-	if c == nil {
-		return nil
-	}
-	out := make([]metav1.Condition, len(c))
-	for i := range c {
-		c[i].DeepCopyInto(&out[i])
-	}
-	return out
 }

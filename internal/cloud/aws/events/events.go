@@ -14,8 +14,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Package events turns EC2 change events (CloudTrail API calls delivered by EventBridge to SQS)
-// into account/region pairs that need a resync.
+// Package events is the AWS provider's change-event source: it turns EC2 change events
+// (CloudTrail API calls delivered by EventBridge to SQS) into account/region pairs that need a
+// resync.
 package events
 
 import (
@@ -80,16 +81,6 @@ type envelope struct {
 	} `json:"detail"`
 }
 
-// Creation is a resource somebody just made, and the principal who made it. CloudTrail is
-// the only place that knows the latter, which is why the operator reads it here and not by
-// asking EC2 later.
-type Creation struct {
-	Target     inventory.TargetKey
-	ResourceID string
-	Principal  string
-	EventName  string
-}
-
 // Parse reads one EventBridge event. It returns ok=false for events that do not affect the
 // inventory: other sources, failed API calls, irrelevant API calls and tags on other resources.
 func Parse(body string) (key inventory.TargetKey, ok bool, err error) {
@@ -99,7 +90,7 @@ func Parse(body string) (key inventory.TargetKey, ok bool, err error) {
 
 // ParseWithCreation also reports the resource a CreateVpc or CreateSubnet call produced and
 // who called it, so an unmanaged resource can be attributed to a person later.
-func ParseWithCreation(body string) (key inventory.TargetKey, creation *Creation, ok bool, err error) {
+func ParseWithCreation(body string) (key inventory.TargetKey, creation *inventory.Creation, ok bool, err error) {
 	var e envelope
 	if err := json.Unmarshal([]byte(body), &e); err != nil {
 		return key, nil, false, fmt.Errorf("decode event: %w", err)
@@ -130,7 +121,7 @@ func ParseWithCreation(body string) (key inventory.TargetKey, creation *Creation
 	}
 
 	if id := createdResourceID(e); id != "" {
-		creation = &Creation{Target: key, ResourceID: id, Principal: principalOf(e), EventName: e.Detail.EventName}
+		creation = &inventory.Creation{Target: key, ResourceID: id, Principal: principalOf(e), EventName: e.Detail.EventName}
 	}
 	return key, creation, true, nil
 }

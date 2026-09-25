@@ -386,6 +386,19 @@ spec:
           status:
             description: status defines the observed state of NetworkScope
             properties:
+              capabilities:
+                description: |-
+                  capabilities lists what the scope's provider can do as the operator runs it:
+                  CreateSubnet, ChangeEvents, IPUsage. More values may be added; ignore unknown ones.
+                items:
+                  description: |-
+                    Capability is something a provider can do, as the operator runs it (ADR 0002 §8). The
+                    dashboard and the webhooks read it from NetworkScope.status.capabilities instead of guessing
+                    from the provider's name. More values may be added; a client must ignore values it does not
+                    know.
+                  type: string
+                type: array
+                x-kubernetes-list-type: set
               conditions:
                 description: 'conditions: Ready is True when every target synced successfully.'
                 items:
@@ -460,6 +473,17 @@ spec:
                   was last synced.
                 format: int64
                 type: integer
+              ownership:
+                description: ownership says where the provider keeps ownership metadata
+                  of networks and subnets.
+                properties:
+                  networks:
+                    description: networks is where the metadata of a network is kept.
+                    type: string
+                  subnets:
+                    description: subnets is where the metadata of a subnet is kept.
+                    type: string
+                type: object
               subnets:
                 description: subnets is the number of subnets discovered across all
                   targets.

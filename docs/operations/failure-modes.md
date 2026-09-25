@@ -19,7 +19,7 @@ skipped in the sync loop, the error is logged once, and the sync continues with 
   account does not look empty" (`updateStatus`).
 - The `Ready` condition goes `False` with reason `SyncFailed` and a message naming the failed
   targets.
-- `hs_aws_target_up == 0` and `hs_aws_target_sync_errors_total` increments (once per failed
+- `hs_target_up == 0` and `hs_target_sync_errors_total` increments (once per failed
   *attempted* sync, not once per reconcile).
 - Alert: [`SubnetInventoryTargetDown`](runbook.md#subnetinventorytargetdown).
 
@@ -36,7 +36,7 @@ skipped in the sync loop, the error is logged once, and the sync continues with 
 **One deliberate gap.** The unmanaged gauges of a failed target are *not* carried over: the
 sync clears them and only refills them for targets that succeeded
 (`reportUnmanaged`, `internal/controller/autoimport.go`). A missing series says "we do not
-know right now", which is true; a held-over number would read as current. `hs_aws_target_up`
+know right now", which is true; a held-over number would read as current. `hs_target_up`
 says why the gap is there.
 
 ## An account that AWS keeps throttling
@@ -57,9 +57,9 @@ that gets through resets the backoff.
 - The `Ready` condition goes `False` with reason `Throttled` (or `SyncFailed`, when another
   target is unreachable at the same time — that is the more urgent one).
 - A `TargetThrottled` Warning Event naming the time of the next attempt.
-- `hs_aws_target_throttled == 1` while `hs_aws_target_up` **stays 1**: the account answered.
-  `hs_aws_api_throttled_total` counts every throttled attempt, including those a retry rode
-  out, so pressure is visible before anything goes stale. `hs_aws_target_sync_errors_total`
+- `hs_target_throttled == 1` while `hs_target_up` **stays 1**: the account answered.
+  `hs_api_throttled_total` counts every throttled attempt, including those a retry rode
+  out, so pressure is visible before anything goes stale. `hs_target_sync_errors_total`
   does not count throttled discoveries.
 - Alert: [`SubnetInventoryTargetThrottled`](runbook.md#subnetinventorytargetthrottled), not
   `SubnetInventoryTargetDown`.
@@ -98,10 +98,12 @@ partial sync deletes nothing outside the targets it synced.
 |---|---|---|
 | `ScopeNotFound` | `spec.scopeRef` names no `NetworkScope` | fix the reference |
 | `AccountNotInScope` | the account/region pair is not covered by that scope | add it to the scope |
+| `ProviderNotEnabled` | the scope's `spec.provider` is not one the operator was started with (`--providers`, chart `providers.<name>.enabled`); the scope itself says the same | enable the provider |
 | `NetworkNotFound` | the network (VPC) has not been discovered (wrong ID, wrong account, or the network selector excludes it) | check `kubectl get hsnet`, the selector, and that the target is healthy |
 | `NoSpace` | the allocator found no free block: `wanted 3 x /24, found 1` | ask for a smaller prefix, fewer AZs, or add a CIDR to the VPC |
 | `WritesDisabled` | `mode: Create` but the manager runs without `--enable-writes` | the CIDRs *are* reserved — create the subnets yourself, or enable writes |
 | `NoWriteRole` | the account has no `writeRoleARN` | add one (`deploy/iam/spoke-write-role.cfn.yaml`) |
+| `CreateNotSupported` | `mode: Create` on a provider that cannot create subnets (none today; `status.capabilities` of the scope lacks `CreateSubnet`) | use `mode: Allocate` |
 | `CreateFailed` | AWS rejected at least one `CreateSubnet` | read `status.allocations[].error` |
 
 **What the operator does with an unsatisfiable claim.** Allocation is all-or-nothing per pass:
@@ -129,7 +131,7 @@ with the error, state `Failed` — precisely so the next pass does not create a 
 
 **Nothing is lost, and nothing is reverted.** The operator holds no state that AWS depends on.
 
-- **During the outage** the inventory freezes. `hs_aws_*` series stop being scraped, which is
+- **During the outage** the inventory freezes. `hs_*` series stop being scraped, which is
   why you want the `absent()` alert from the [runbook](runbook.md#subnetinventorystale) — the
   shipped `SubnetInventoryStale` rule cannot fire when the metric itself is gone.
 - **Events queue up.** EventBridge keeps delivering to SQS; messages are only deleted after
@@ -165,7 +167,7 @@ The two paths are designed to overlap harmlessly.
   resync produces no API-server writes and no metric churn.
 - **A partial sync cannot delete a healthy target's objects.** `deleteGone` is scoped to the
   account/region it just synced, and `deleteRemovedTargets` runs only on full syncs.
-- **Events are debounced** for `--events-debounce` (10s), so a burst of API calls causes one
+- **Events are debounced** for `--aws-events-debounce` (10s), so a burst of API calls causes one
   resync per target, and the poller only runs on the leader.
 - **A stale snapshot cannot resurrect a deleted subnet as a permanent object**: the next sync
   of that target reconciles the difference. The worst case is one resync interval of a subnet
@@ -179,7 +181,7 @@ winner. No subnet is deleted and no CIDR is reused.
 
 **Events the operator ignores on purpose.** Failed API calls (`errorCode` set), non-EC2
 sources, tag changes on resources that are not `vpc-`/`subnet-`/`rtb-`/`igw-`, and anything
-outside the list in `internal/events/events.go`. ENI churn is not an event: free-IP counts
+outside the list in `internal/cloud/aws/events/events.go`. ENI churn is not an event: free-IP counts
 move with every pod, so they are refreshed by the periodic resync instead.
 
 ## Two scopes covering the same account and region

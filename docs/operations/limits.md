@@ -187,10 +187,10 @@ else is using that account's budget; the operator backs that target off on its o
 more requests at the same one.
 
 Throttling adds requests, not just time: every throttled attempt is retried, up to 5 attempts
-per call, and each one counts in `hs_aws_api_throttled_total`.
+per call, and each one counts in `hs_api_throttled_total`.
 
 Event-driven partial syncs cost the same per target, but only for the targets an event named,
-after a `--events-debounce` window (10s).
+after a `--aws-events-debounce` window (10s).
 
 ### STS
 
@@ -243,8 +243,14 @@ capacity close to it.
 1. the controller-runtime informer cache: every `NetworkScope`, `VPC`, `Subnet`,
    `SubnetClaim` and `ResourceImport` in the cluster, with full status including the complete
    tag map of every resource;
-2. the metrics: every subnet has its own `hs_aws_subnet_*` series with a dozen labels, and
-   those label sets are the largest single item in a heap profile of the scale test;
+2. the metrics: every subnet has its own `hs_subnet_*` series with a dozen labels, and
+   those label sets are the largest single item in a heap profile of the scale test: three per
+   subnet (one for a subnet without IPv4), about 15,600 at the documented capacity, plus one
+   `hs_network_cidr_overlaps` per network. Per account/region target there are a few more:
+   `hs_target_up`, `hs_target_throttled` and `hs_target_sync_errors_total` (3),
+   `hs_unmanaged_resources` and `hs_unmanaged_resources_total` for each `kind` (4), and in a scope that runs the auto-import policy `hs_auto_imports_total` for
+   each of its four results, at 0 until something is counted (4) — at most 11 per target, 4,400
+   at 400 targets. `hs_api_throttled_total` adds one per throttled operation;
 3. the uncached lists each sync decodes (roughly a second copy of the inventory, transient);
 4. the `inventory.Snapshot` of **every** target of the sync: discovery finishes for all
    targets before the first object is written, so all snapshots are held until the sync
@@ -282,7 +288,7 @@ process_resident_memory_bytes{job=~".*subnet-operator.*"}
 go_memstats_heap_inuse_bytes{job=~".*subnet-operator.*"}
 ```
 
-Both Go metrics are on the operator's own metrics endpoint, next to the `hs_aws_*` ones. If
+Both Go metrics are on the operator's own metrics endpoint, next to the `hs_*` ones. If
 you raise the memory limit, consider setting `GOMEMLIMIT` through `extraEnv` to roughly 80% of
 it so the garbage collector works with the cgroup rather than against it.
 

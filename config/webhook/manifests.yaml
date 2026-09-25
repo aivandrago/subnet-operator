@@ -10,26 +10,6 @@ webhooks:
     service:
       name: webhook-service
       namespace: system
-      path: /mutate-aws-hypersurgery-v1alpha1-networkscope
-  failurePolicy: Ignore
-  name: mnetworkscope-v1alpha1.kb.io
-  rules:
-  - apiGroups:
-    - aws.hypersurgery
-    apiVersions:
-    - v1alpha1
-    operations:
-    - CREATE
-    - UPDATE
-    resources:
-    - networkscopes
-  sideEffects: None
-- admissionReviewVersions:
-  - v1
-  clientConfig:
-    service:
-      name: webhook-service
-      namespace: system
       path: /mutate-network-hypersurgery-dev-v1beta1-networkscope
   failurePolicy: Ignore
   name: mnetworkscope-v1beta1.kb.io
@@ -50,26 +30,6 @@ webhooks:
     service:
       name: webhook-service
       namespace: system
-      path: /mutate-aws-hypersurgery-v1alpha1-resourceimport
-  failurePolicy: Ignore
-  name: mresourceimport-v1alpha1.kb.io
-  rules:
-  - apiGroups:
-    - aws.hypersurgery
-    apiVersions:
-    - v1alpha1
-    operations:
-    - CREATE
-    - UPDATE
-    resources:
-    - resourceimports
-  sideEffects: None
-- admissionReviewVersions:
-  - v1
-  clientConfig:
-    service:
-      name: webhook-service
-      namespace: system
       path: /mutate-network-hypersurgery-dev-v1beta1-resourceimport
   failurePolicy: Ignore
   name: mresourceimport-v1beta1.kb.io
@@ -83,26 +43,6 @@ webhooks:
     - UPDATE
     resources:
     - resourceimports
-  sideEffects: None
-- admissionReviewVersions:
-  - v1
-  clientConfig:
-    service:
-      name: webhook-service
-      namespace: system
-      path: /mutate-aws-hypersurgery-v1alpha1-subnetclaim
-  failurePolicy: Ignore
-  name: msubnetclaim-v1alpha1.kb.io
-  rules:
-  - apiGroups:
-    - aws.hypersurgery
-    apiVersions:
-    - v1alpha1
-    operations:
-    - CREATE
-    - UPDATE
-    resources:
-    - subnetclaims
   sideEffects: None
 - admissionReviewVersions:
   - v1
@@ -136,26 +76,6 @@ webhooks:
     service:
       name: webhook-service
       namespace: system
-      path: /validate-aws-hypersurgery-v1alpha1-networkscope
-  failurePolicy: Fail
-  name: vnetworkscope-v1alpha1.kb.io
-  rules:
-  - apiGroups:
-    - aws.hypersurgery
-    apiVersions:
-    - v1alpha1
-    operations:
-    - CREATE
-    - UPDATE
-    resources:
-    - networkscopes
-  sideEffects: None
-- admissionReviewVersions:
-  - v1
-  clientConfig:
-    service:
-      name: webhook-service
-      namespace: system
       path: /validate-network-hypersurgery-dev-v1beta1-networkscope
   failurePolicy: Fail
   name: vnetworkscope-v1beta1.kb.io
@@ -176,26 +96,6 @@ webhooks:
     service:
       name: webhook-service
       namespace: system
-      path: /validate-aws-hypersurgery-v1alpha1-resourceimport
-  failurePolicy: Fail
-  name: vresourceimport-v1alpha1.kb.io
-  rules:
-  - apiGroups:
-    - aws.hypersurgery
-    apiVersions:
-    - v1alpha1
-    operations:
-    - CREATE
-    - UPDATE
-    resources:
-    - resourceimports
-  sideEffects: None
-- admissionReviewVersions:
-  - v1
-  clientConfig:
-    service:
-      name: webhook-service
-      namespace: system
       path: /validate-network-hypersurgery-dev-v1beta1-resourceimport
   failurePolicy: Fail
   name: vresourceimport-v1beta1.kb.io
@@ -209,26 +109,6 @@ webhooks:
     - UPDATE
     resources:
     - resourceimports
-  sideEffects: None
-- admissionReviewVersions:
-  - v1
-  clientConfig:
-    service:
-      name: webhook-service
-      namespace: system
-      path: /validate-aws-hypersurgery-v1alpha1-subnetclaim
-  failurePolicy: Fail
-  name: vsubnetclaim-v1alpha1.kb.io
-  rules:
-  - apiGroups:
-    - aws.hypersurgery
-    apiVersions:
-    - v1alpha1
-    operations:
-    - CREATE
-    - UPDATE
-    resources:
-    - subnetclaims
   sideEffects: None
 - admissionReviewVersions:
   - v1

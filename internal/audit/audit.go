@@ -46,7 +46,7 @@ const (
 )
 
 // Result is how the action ended. The values match the auto-import metric, so a spike in
-// hs_aws_auto_imports_total{result="no_owner"} and the audit lines behind it use one word.
+// hs_auto_imports_total{result="no_owner"} and the audit lines behind it use one word.
 const (
 	// ResultApplied means the change reached AWS.
 	ResultApplied = "applied"

@@ -24,12 +24,12 @@ Everything below rests on two properties that hold in the code today:
    call anywhere in the write path; `internal/cloud/aws/writer.go` has exactly `CreateSubnet`,
    `ModifySubnetAttribute`, `AssociateRouteTable` and `CreateTags`. The only `Delete*` call in
    the whole codebase is `DeleteMessageBatch` against the operator's own SQS queue
-   (`internal/events/poller.go`).
+   (`internal/cloud/aws/events/poller.go`).
 
 Both are greppable, and that is the point:
 
 ```sh
-# Expect: no hits. (CreateTags/DeleteTags in internal/events are CloudTrail event
+# Expect: no hits. (CreateTags/DeleteTags in internal/cloud/aws/events are CloudTrail event
 # names the operator reacts to, not calls it makes.)
 grep -rn "ec2.Delete" --include='*.go' internal cmd
 grep -rn "DeleteTags(" --include='*.go' internal cmd

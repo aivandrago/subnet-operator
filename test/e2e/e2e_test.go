@@ -49,9 +49,9 @@ const metricsServiceName = "subnet-operator-controller-manager-metrics-service"
 // deploymentName is the controller-manager Deployment
 const deploymentName = "subnet-operator-controller-manager"
 
-// The resources of the new group, named in full: while aws.hypersurgery is still installed,
-// `kubectl get networkscopes` means its NetworkScopes, because kubectl picks the group that
-// sorts first.
+// The resources of the new group, named in full: while aws.hypersurgery is still installed (a
+// cluster upgraded from 0.8 keeps its CRDs until somebody deletes them), `kubectl get
+// networkscopes` means its NetworkScopes, because kubectl picks the group that sorts first.
 const (
 	resScopes    = "networkscopes.network.hypersurgery.dev"
 	resNetworks  = "networks.network.hypersurgery.dev"
@@ -389,7 +389,7 @@ spec:
 			By("checking that the event was consumed")
 			out, err := utils.Run(exec.Command("kubectl", "logs", "deployment/"+deploymentName, "-n", namespace))
 			Expect(err).NotTo(HaveOccurred())
-			Expect(out).To(ContainSubstring("Consuming EC2 change events"))
+			Expect(out).To(MatchRegexp(`Consuming change events\s+\{"provider": "AWS"\}`))
 		})
 
 		It("creates the subnets a SubnetClaim asks for", func() {
@@ -557,25 +557,28 @@ spec:
 			metricsOutput, err := getMetricsOutput()
 			Expect(err).NotTo(HaveOccurred())
 			Expect(metricsOutput).To(MatchRegexp(
-				`hs_aws_subnet_available_ips\{[^}]*subnet_id="%s"[^}]*\} 251`, fix.publicSubnet))
+				`hs_subnet_available_ips\{[^}]*provider="aws"[^}]*subnet_id="%s"[^}]*\} 251`, fix.publicSubnet))
 			Expect(metricsOutput).To(MatchRegexp(
-				`hs_aws_vpc_cidr_overlaps\{[^}]*vpc_id="%s"[^}]*\} 1`, fix.hubVPC))
+				`hs_network_cidr_overlaps\{[^}]*network_id="%s"[^}]*provider="aws"[^}]*\} 1`, fix.hubVPC))
 			Expect(metricsOutput).To(ContainSubstring(
-				`hs_aws_target_up{account="333333333333",region="%s",scope="%s"} 0`, awsRegion, scopeName))
+				`hs_target_up{account="333333333333",provider="aws",region="%s",scope="%s"} 0`, awsRegion, scopeName))
 			Expect(metricsOutput).To(ContainSubstring(
-				`hs_aws_target_up{account="%s",region="%s",scope="%s"} 1`, spokeAccount, awsRegion, scopeName))
+				`hs_target_up{account="%s",provider="aws",region="%s",scope="%s"} 1`, spokeAccount, awsRegion, scopeName))
+
+			By("checking the hs_aws_* names of 0.8 are gone")
+			Expect(metricsOutput).NotTo(ContainSubstring("hs_aws_"))
 
 			By("checking the unmanaged resource metrics the onboarding alert reads")
 			// This spec is declared before the import specs, so the sandbox VPC and its subnet
 			// are still untagged here: both the gauge and the counter must see them.
 			Expect(metricsOutput).To(MatchRegexp(
-				`hs_aws_unmanaged_resources\{account="%s",[^}]*kind="vpc"[^}]*\} [1-9]`, hubAccount))
+				`hs_unmanaged_resources\{account="%s",[^}]*kind="network"[^}]*\} [1-9]`, hubAccount))
 			Expect(metricsOutput).To(MatchRegexp(
-				`hs_aws_unmanaged_resources\{account="%s",[^}]*kind="subnet"[^}]*\} [1-9]`, hubAccount))
+				`hs_unmanaged_resources\{account="%s",[^}]*kind="subnet"[^}]*\} [1-9]`, hubAccount))
 			Expect(metricsOutput).To(MatchRegexp(
-				`hs_aws_unmanaged_resources_total\{account="%s",[^}]*kind="vpc"[^}]*\} [1-9]`, hubAccount))
+				`hs_unmanaged_resources_total\{account="%s",[^}]*kind="network"[^}]*\} [1-9]`, hubAccount))
 			Expect(metricsOutput).To(MatchRegexp(
-				`hs_aws_unmanaged_resources_total\{account="%s",[^}]*kind="subnet"[^}]*\} [1-9]`, hubAccount))
+				`hs_unmanaged_resources_total\{account="%s",[^}]*kind="subnet"[^}]*\} [1-9]`, hubAccount))
 		})
 
 		It("takes an unmanaged VPC and its subnet over with ResourceImports", func() {
@@ -689,84 +692,6 @@ spec:
 			Consistently(func(g Gomega) {
 				g.Expect(tagsOf(context.Background(), subnet)).To(BeEmpty())
 			}, 15*time.Second, 3*time.Second).Should(Succeed())
-		})
-
-		It("migrates an aws.hypersurgery/v1alpha1 claim with its reservations", func() {
-			By("stopping the operator, which would migrate the claim before its status is written")
-			// A 0.7 claim has its reservations before 0.8 ever sees it. Written while the operator
-			// runs, the copy would be taken between the create and the status write.
-			scaleManager := func(replicas string) {
-				GinkgoHelper()
-				_, err := utils.Run(exec.Command("kubectl", "scale", "deployment/"+deploymentName, "-n", namespace,
-					"--replicas="+replicas))
-				Expect(err).NotTo(HaveOccurred())
-			}
-			scaleManager("0")
-			Eventually(func(g Gomega) {
-				out, err := utils.Run(exec.Command("kubectl", "get", "pods", "-l", "control-plane=controller-manager",
-					"-n", namespace, "-o", "name"))
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(strings.TrimSpace(out)).To(BeEmpty())
-			}, 2*time.Minute, 2*time.Second).Should(Succeed())
-
-			By("writing a claim the way 0.7 left it: in the old group, with a reserved CIDR in its status")
-			cmd := exec.Command("kubectl", "apply", "-f", "-")
-			cmd.Stdin = strings.NewReader(fmt.Sprintf(`
-apiVersion: aws.hypersurgery/v1alpha1
-kind: SubnetClaim
-metadata:
-  name: legacy
-  namespace: default
-  annotations:
-    aws.hypersurgery/created-by: jane@example.com
-spec:
-  scopeRef: %s
-  account: "%s"
-  region: %s
-  vpcID: %s
-  prefixLength: 24
-  availabilityZones: [%sa]
-  mode: Allocate
-  owner: team-legacy
-  namePrefix: legacy
-`, scopeName, hubAccount, awsRegion, fix.hubVPC, awsRegion))
-			_, err := utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred())
-			_, err = utils.Run(exec.Command("kubectl", "patch", resOldClaims, "legacy", "-n", "default",
-				"--subresource=status", "--type=merge", "-p",
-				fmt.Sprintf(`{"status":{"allocations":[{"availabilityZone":"%sa","cidrBlock":"10.0.200.0/24","state":"Pending"}]}}`,
-					awsRegion)))
-			Expect(err).NotTo(HaveOccurred())
-
-			By("starting the operator again")
-			scaleManager("1")
-			_, err = utils.Run(exec.Command("kubectl", "rollout", "status", "deployment/"+deploymentName,
-				"-n", namespace, "--timeout=3m"))
-			Expect(err).NotTo(HaveOccurred())
-			out, err := utils.Run(exec.Command("kubectl", "get", "pods", "-l", "control-plane=controller-manager",
-				"-n", namespace, "-o", "jsonpath={.items[0].metadata.name}"))
-			Expect(err).NotTo(HaveOccurred())
-			controllerPodName = strings.TrimSpace(out)
-
-			By("waiting for its copy in network.hypersurgery.dev, which keeps the reservation")
-			Eventually(func(g Gomega) {
-				claim := &networkv1beta1.SubnetClaim{}
-				g.Expect(getNamespaced(resClaims, "default", "legacy", claim)).To(Succeed())
-				g.Expect(claim.Annotations).To(HaveKeyWithValue(networkv1beta1.AnnotationCreatedBy, "jane@example.com"))
-				g.Expect(claim.Spec.NetworkID).To(Equal(fix.hubVPC))
-				g.Expect(claim.Status.Allocations).To(HaveLen(1))
-				g.Expect(claim.Status.Allocations[0].Name).To(Equal("legacy-a"))
-				g.Expect(claim.Status.Allocations[0].CIDRBlock).To(Equal("10.0.200.0/24"),
-					"the reservation is kept, not allocated again")
-				g.Expect(claimReady(claim)).NotTo(BeNil())
-				g.Expect(claimReady(claim).Status).To(Equal(metav1.ConditionTrue), claimReady(claim).Message)
-			}, 2*time.Minute, 2*time.Second).Should(Succeed())
-
-			By("finding the old claim marked as migrated")
-			out, err = kubectlOut("get", resOldClaims, "legacy", "-n", "default",
-				"-o", "jsonpath={.metadata.annotations.network\\.hypersurgery\\.dev/migrated-to}")
-			Expect(err).NotTo(HaveOccurred())
-			Expect(out).To(Equal("legacy"))
 		})
 
 		It("converts manifests with the image's migrate-manifests command", func() {

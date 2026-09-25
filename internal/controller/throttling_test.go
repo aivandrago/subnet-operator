@@ -42,7 +42,7 @@ import (
 // throttledError is what the AWS discoverer returns once the SDK has given up retrying
 // RequestLimitExceeded.
 func throttledError() error {
-	return fmt.Errorf("%w: describe VPCs: %w", inventory.ErrThrottled,
+	return fmt.Errorf("%w: describe Networks: %w", inventory.ErrThrottled,
 		&smithy.GenericAPIError{Code: "RequestLimitExceeded", Message: "Request limit exceeded."})
 }
 
@@ -85,7 +85,7 @@ func targetGauge(metric, scope, account string) float64 {
 			for _, l := range m.GetLabel() {
 				labels[l.GetName()] = l.GetValue()
 			}
-			if labels["scope"] == scope && labels["account"] == account && labels["region"] == region {
+			if labels["provider"] == "aws" && labels["scope"] == scope && labels["account"] == account && labels["region"] == region {
 				return m.GetGauge().GetValue()
 			}
 		}
@@ -141,7 +141,7 @@ var _ = Describe("NetworkScope Controller under API throttling", func() {
 		throttling = &throttlingDiscoverer{fakeDiscoverer: discoverer, remaining: map[string]int{}}
 		clk = clocktesting.NewFakeClock(time.Now().Truncate(time.Second))
 		reconciler = &NetworkScopeReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(),
-			Discoverer: throttling, Clock: clk}
+			Providers: awsProviders(throttling, nil, nil), Clock: clk}
 		// The top of each delay, so the schedule below is exact.
 		reconciler.backoff.jitter = func() float64 { return 0.999999 }
 
@@ -185,11 +185,11 @@ var _ = Describe("NetworkScope Controller under API throttling", func() {
 		Expect(cond.Reason).To(Equal("Throttled"))
 		Expect(cond.Message).To(ContainSubstring(accountB))
 
-		Expect(targetGauge("hs_aws_target_up", scopeName, accountB)).To(Equal(1.0),
+		Expect(targetGauge("hs_target_up", scopeName, accountB)).To(Equal(1.0),
 			"throttled is reachable: SubnetInventoryTargetDown must not fire")
-		Expect(targetGauge("hs_aws_target_throttled", scopeName, accountB)).To(Equal(1.0))
-		Expect(targetGauge("hs_aws_target_throttled", scopeName, accountA)).To(Equal(0.0))
-		Expect(targetGauge("hs_aws_target_up", scopeName, accountA)).To(Equal(1.0))
+		Expect(targetGauge("hs_target_throttled", scopeName, accountB)).To(Equal(1.0))
+		Expect(targetGauge("hs_target_throttled", scopeName, accountA)).To(Equal(0.0))
+		Expect(targetGauge("hs_target_up", scopeName, accountA)).To(Equal(1.0))
 
 		By("scheduling the retry of B for the end of its first delay, not the next full sync")
 		Expect(requeue).To(BeNumerically("~", throttleBackoffBase, time.Second))
@@ -216,7 +216,7 @@ var _ = Describe("NetworkScope Controller under API throttling", func() {
 		Expect(calls(accountA)).To(Equal(3))
 		Expect(calls(accountB)).To(Equal(4))
 		Expect(requeue).To(BeNumerically("~", 2*time.Minute, time.Second), "B is due at 12m")
-		Expect(targetGauge("hs_aws_target_throttled", scopeName, accountB)).To(Equal(1.0))
+		Expect(targetGauge("hs_target_throttled", scopeName, accountB)).To(Equal(1.0))
 
 		By("B getting through at 12m: current again, and back on the normal cadence")
 		requeue = reconcileAt(2 * time.Minute) // t = 12m
@@ -226,8 +226,8 @@ var _ = Describe("NetworkScope Controller under API throttling", func() {
 		Expect(b.Error).To(BeEmpty())
 		Expect(b.LastSyncTime.Time).To(BeTemporally("~", clk.Now(), time.Second))
 		Expect(meta.IsStatusConditionTrue(scope.Status.Conditions, ConditionReady)).To(BeTrue())
-		Expect(targetGauge("hs_aws_target_throttled", scopeName, accountB)).To(Equal(0.0))
-		Expect(targetGauge("hs_aws_target_up", scopeName, accountB)).To(Equal(1.0))
+		Expect(targetGauge("hs_target_throttled", scopeName, accountB)).To(Equal(0.0))
+		Expect(targetGauge("hs_target_up", scopeName, accountB)).To(Equal(1.0))
 		Expect(requeue).To(Equal(3*time.Minute), "no backoff left: the next reconcile is the full sync at 15m")
 
 		By("the backoff starting over: throttled again, B waits the first delay, not the doubled one")
@@ -248,8 +248,8 @@ var _ = Describe("NetworkScope Controller under API throttling", func() {
 		Expect(reconcileAt(resync)).To(Equal(resync), "nothing to retry early")
 		cond := meta.FindStatusCondition(getScope().Status.Conditions, ConditionReady)
 		Expect(cond.Reason).To(Equal("SyncFailed"))
-		Expect(targetGauge("hs_aws_target_up", scopeName, accountB)).To(Equal(0.0))
-		Expect(targetGauge("hs_aws_target_throttled", scopeName, accountB)).To(Equal(0.0))
+		Expect(targetGauge("hs_target_up", scopeName, accountB)).To(Equal(0.0))
+		Expect(targetGauge("hs_target_throttled", scopeName, accountB)).To(Equal(0.0))
 
 		reconcileAt(resync)
 		Expect(calls(accountB)).To(Equal(3), "an unreachable target is tried at every full sync")
@@ -278,7 +278,7 @@ var _ = Describe("NetworkScope discovery concurrency", func() {
 	It("caps discoveries across scopes, not per scope", func() {
 		counting := &countingDiscoverer{}
 		reconciler := &NetworkScopeReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(),
-			Discoverer: counting, Concurrency: 2}
+			Providers: awsProviders(counting, nil, nil), Concurrency: 2}
 
 		names := make([]string, 0, 3)
 		for i := range 3 {

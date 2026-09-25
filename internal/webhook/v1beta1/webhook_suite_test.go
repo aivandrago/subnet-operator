@@ -40,6 +40,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
+	awscloud "hypersurgery.dev/subnet-operator/internal/cloud/aws"
+	"hypersurgery.dev/subnet-operator/internal/provider"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -52,6 +54,9 @@ var (
 	k8sClient client.Client
 	cfg       *rest.Config
 	testEnv   *envtest.Environment
+	// testProviders is the operator's provider set: AWS, whose rules the webhooks apply. The
+	// webhooks never call the cloud, so it has no clients.
+	testProviders = provider.MustRegistry(awscloud.NewProvider(awscloud.Clients{}, nil))
 )
 
 func TestAPIs(t *testing.T) {
@@ -111,13 +116,13 @@ var _ = BeforeSuite(func() {
 
 	// Writes are enabled here so the specs see the rules and not the "operator runs
 	// read-only" warning; the warning has a spec of its own that calls the validator directly.
-	err = SetupSubnetClaimWebhookWithManager(mgr, true, operatorUser)
+	err = SetupSubnetClaimWebhookWithManager(mgr, testProviders, true)
 	Expect(err).NotTo(HaveOccurred())
 
-	err = SetupNetworkScopeWebhookWithManager(mgr, operatorUser)
+	err = SetupNetworkScopeWebhookWithManager(mgr, testProviders)
 	Expect(err).NotTo(HaveOccurred())
 
-	err = SetupResourceImportWebhookWithManager(mgr, true, operatorUser)
+	err = SetupResourceImportWebhookWithManager(mgr, testProviders, true)
 	Expect(err).NotTo(HaveOccurred())
 
 	// +kubebuilder:scaffold:webhook

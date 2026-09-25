@@ -173,6 +173,12 @@ spec:
               owner:
                 description: owner is read from the owner tag configured in the NetworkScope.
                 type: string
+              ownershipSource:
+                description: |-
+                  ownershipSource says where owner, env and tier were read from: Subnet (the subnet's own
+                  metadata) or Network (inherited from its network, on providers whose subnets cannot
+                  carry metadata of their own).
+                type: string
               state:
                 description: state is the provider's state of the subnet.
                 type: string
@@ -186,8 +192,8 @@ spec:
                 type: string
               totalIPs:
                 description: |-
-                  totalIPs is the number of usable IPv4 addresses (AWS reserves 5 per subnet). Unset when
-                  unknown.
+                  totalIPs is the number of usable IPv4 addresses, as the provider counts them (AWS
+                  reserves 5 per subnet). Unset when unknown.
                 format: int64
                 type: integer
               utilizationPercent:

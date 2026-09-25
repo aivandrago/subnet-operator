@@ -27,6 +27,7 @@ import (
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/smithy-go"
 
+	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
 	"hypersurgery.dev/subnet-operator/internal/inventory"
 )
 
@@ -44,20 +45,33 @@ type EC2TagAPI interface {
 }
 
 var (
-	_ inventory.SubnetWriter = (*Discoverer)(nil)
-	_ inventory.TagWriter    = (*Discoverer)(nil)
+	_ inventory.SubnetWriter    = (*Discoverer)(nil)
+	_ inventory.OwnershipWriter = (*Discoverer)(nil)
 )
 
-// ApplyTags implements inventory.TagWriter with the target's write role.
-func (d *Discoverer) ApplyTags(ctx context.Context, target inventory.Target, resourceID string, tags map[string]string) error {
-	creds, err := d.credentialsFor(ctx, target)
+// WriteOwnership implements inventory.OwnershipWriter with the target's write role. On AWS
+// every VPC and subnet carries its own tags, so the tags go onto the resource itself.
+func (d *Discoverer) WriteOwnership(ctx context.Context, target inventory.Target, resourceID string, tags map[string]string) error {
+	api, err := d.writeClient(ctx, target)
 	if err != nil {
 		return err
+	}
+	return ApplyTags(ctx, api, resourceID, tags)
+}
+
+// writeClient is the EC2 client for a write to the target, with its write role.
+func (d *Discoverer) writeClient(ctx context.Context, target inventory.Target) (ec2Client, error) {
+	creds, err := d.credentialsFor(ctx, target)
+	if err != nil {
+		return nil, err
+	}
+	if d.testEC2 != nil {
+		return d.testEC2(target), nil
 	}
 	cfg := d.base.Copy()
 	cfg.Region = target.Region
 	cfg.Credentials = creds
-	return ApplyTags(ctx, ec2.NewFromConfig(cfg), resourceID, tags)
+	return ec2.NewFromConfig(cfg), nil
 }
 
 // ApplyTags adds tags to one resource. CreateTags overwrites the keys it names and leaves
@@ -77,23 +91,20 @@ func ApplyTags(ctx context.Context, api EC2TagAPI, resourceID string, tags map[s
 
 // CreateSubnet implements inventory.SubnetWriter with the target's write role.
 func (d *Discoverer) CreateSubnet(ctx context.Context, target inventory.Target, req inventory.CreateSubnetRequest) (string, error) {
-	creds, err := d.credentialsFor(ctx, target)
+	api, err := d.writeClient(ctx, target)
 	if err != nil {
 		return "", err
 	}
-	cfg := d.base.Copy()
-	cfg.Region = target.Region
-	cfg.Credentials = creds
-	return CreateSubnet(ctx, ec2.NewFromConfig(cfg), req)
+	return CreateSubnet(ctx, api, req)
 }
 
 // CreateSubnet creates one tagged subnet and applies the optional attribute and route table.
 // A CIDR that AWS rejects as taken is reported as inventory.ErrCIDRConflict.
 func CreateSubnet(ctx context.Context, api EC2WriteAPI, req inventory.CreateSubnetRequest) (string, error) {
 	out, err := api.CreateSubnet(ctx, &ec2.CreateSubnetInput{
-		VpcId:             aws.String(req.VPCID),
+		VpcId:             aws.String(req.NetworkID),
 		CidrBlock:         aws.String(req.CIDRBlock),
-		AvailabilityZone:  aws.String(req.AvailabilityZone),
+		AvailabilityZone:  aws.String(req.Zone),
 		TagSpecifications: tagSpecs(ec2types.ResourceTypeSubnet, req.Tags),
 	})
 	if err != nil {
@@ -106,7 +117,11 @@ func CreateSubnet(ctx context.Context, api EC2WriteAPI, req inventory.CreateSubn
 
 	// The subnet exists from here on; later failures are reported with its ID so the
 	// controller records it instead of creating a second one.
-	if req.MapPublicIPOnLaunch {
+	opts := req.AWS
+	if opts == nil {
+		opts = &networkv1beta1.AWSClaimOptions{}
+	}
+	if opts.MapPublicIPOnLaunch {
 		if _, err := api.ModifySubnetAttribute(ctx, &ec2.ModifySubnetAttributeInput{
 			SubnetId:            aws.String(id),
 			MapPublicIpOnLaunch: &ec2types.AttributeBooleanValue{Value: aws.Bool(true)},
@@ -114,11 +129,11 @@ func CreateSubnet(ctx context.Context, api EC2WriteAPI, req inventory.CreateSubn
 			return id, fmt.Errorf("set MapPublicIpOnLaunch on %s: %w", id, err)
 		}
 	}
-	if req.RouteTableID != "" {
+	if opts.RouteTableID != "" {
 		if _, err := api.AssociateRouteTable(ctx, &ec2.AssociateRouteTableInput{
-			SubnetId: aws.String(id), RouteTableId: aws.String(req.RouteTableID),
+			SubnetId: aws.String(id), RouteTableId: aws.String(opts.RouteTableID),
 		}); err != nil {
-			return id, fmt.Errorf("associate %s with %s: %w", id, req.RouteTableID, err)
+			return id, fmt.Errorf("associate %s with %s: %w", id, opts.RouteTableID, err)
 		}
 	}
 	return id, nil

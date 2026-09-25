@@ -30,12 +30,9 @@ package v1beta1
 import (
 	"context"
 	"fmt"
-	"maps"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
-	"strings"
 
 	admissionv1 "k8s.io/api/admission/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -45,27 +42,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	networkv1beta1 "hypersurgery.dev/subnet-operator/api/v1beta1"
+	"hypersurgery.dev/subnet-operator/internal/provider"
 	"hypersurgery.dev/subnet-operator/internal/tenancy"
 )
-
-// awsRegionPattern is the shape of a region name: eu-central-1, us-gov-east-1, cn-north-1.
-// The list of real regions changes faster than a release of this operator, so the shape is
-// all that is checked: a typo like "eu-central1" is caught, a brand new region is not.
-var awsRegionPattern = regexp.MustCompile(`^[a-z]{2}(-[a-z]+)+-[0-9]+$`)
-
-// AWS tag limits. CreateTags refuses anything past them, and "aws:" is reserved for AWS.
-const (
-	maxTagKeyLength   = 128
-	maxTagValueLength = 256
-	reservedTagPrefix = "aws:"
-)
-
-// awsAccountPattern is the shape of an AWS account ID.
-var awsAccountPattern = regexp.MustCompile(`^[0-9]{12}$`)
-
-// arnAccountPattern pulls the account out of an IAM role ARN. The CRD already checks the
-// overall shape, so the match is only used to compare the account.
-var arnAccountPattern = regexp.MustCompile(`^arn:aws[a-z-]*:iam::([0-9]{12}):role/`)
 
 // DefaultCertDir is where controller-runtime looks for the webhook serving certificate when
 // the manager is not told otherwise.
@@ -99,38 +78,20 @@ func immutableField[T comparable](path *field.Path, old, updated T) *field.Error
 		return nil
 	}
 	return field.Invalid(path, updated,
-		fmt.Sprintf("field is immutable: it identifies resources in AWS that the operator would otherwise orphan (was %v)", old))
+		fmt.Sprintf("field is immutable: it identifies resources in the cloud that the operator would otherwise orphan (was %v)", old))
 }
 
-// validateRegion checks the shape of a region name.
-func validateRegion(path *field.Path, region string) *field.Error {
-	if awsRegionPattern.MatchString(region) {
-		return nil
+// providerFor returns the provider of the scope an object refers to. A provider the operator
+// does not run is refused on the scope reference: nothing about the object can be checked or
+// done without it.
+func providerFor(providers *provider.Registry, scope *networkv1beta1.NetworkScope, scopeRef string) (
+	provider.Provider, *field.Error) {
+	p, ok := providers.Get(scope.Spec.Provider)
+	if !ok {
+		return nil, field.Invalid(field.NewPath("spec").Child("scopeRef"), scopeRef,
+			fmt.Sprintf("NetworkScope %q: %s", scope.Name, providers.NotEnabled(scope.Spec.Provider)))
 	}
-	return field.Invalid(path, region, "not an AWS region name, e.g. eu-central-1")
-}
-
-// validateTags reports the tags AWS would refuse, so the mistake shows up at apply time
-// instead of as a failed CreateTags call minutes later.
-func validateTags(path *field.Path, tags map[string]string) field.ErrorList {
-	var errs field.ErrorList
-	for _, key := range slices.Sorted(maps.Keys(tags)) {
-		keyPath := path.Key(key)
-		switch {
-		case key == "":
-			errs = append(errs, field.Invalid(keyPath, key, "tag key must not be empty"))
-		case strings.HasPrefix(strings.ToLower(key), reservedTagPrefix):
-			errs = append(errs, field.Invalid(keyPath, key, `tag keys starting with "aws:" are reserved by AWS`))
-		case len(key) > maxTagKeyLength:
-			errs = append(errs, field.Invalid(keyPath, key,
-				fmt.Sprintf("tag key is longer than the %d characters AWS allows", maxTagKeyLength)))
-		}
-		if len(tags[key]) > maxTagValueLength {
-			errs = append(errs, field.Invalid(keyPath, tags[key],
-				fmt.Sprintf("tag value is longer than the %d characters AWS allows", maxTagValueLength)))
-		}
-	}
-	return errs
+	return p, nil
 }
 
 // scopeFor reads the NetworkScope an object refers to. A missing scope is a field error:
@@ -198,15 +159,11 @@ func validateNamespace(ctx context.Context, reader client.Reader, scope *network
 // closed. Outside an admission request (a unit test calling the validator) there is no user to
 // compare with and nothing is checked.
 //
-// The one exception is a migration (see keepsCopiedCreator): the operator creating a copy of an
-// aws.hypersurgery/v1alpha1 object may carry the old object's creator over, or none when the
-// old object never had one.
-func validateCreatedByOnCreate(ctx context.Context, operator string, obj client.Object) *field.Error {
+// There is no exception, the operator included. (0.8 had one for its migration from
+// aws.hypersurgery/v1alpha1, which copied the old object's creator; 0.9 does not migrate.)
+func validateCreatedByOnCreate(ctx context.Context, obj client.Object) *field.Error {
 	req, err := admission.RequestFromContext(ctx)
 	if err != nil || req.UserInfo.Username == "" {
-		return nil
-	}
-	if keepsCopiedCreator(req.UserInfo.Username, operator, obj) {
 		return nil
 	}
 	got := obj.GetAnnotations()[networkv1beta1.AnnotationCreatedBy]
@@ -241,14 +198,10 @@ func createdByPath() *field.Path {
 // stampCreatedBy writes the authenticated user into the created-by annotation on CREATE,
 // replacing whatever the object carried: the annotation exists precisely so that the audit
 // trail does not depend on what the person applying the object chose to write. Other
-// operations leave it alone; the validating webhook refuses a change. A migration by the
-// operator keeps the creator it copied (see keepsCopiedCreator).
-func stampCreatedBy(ctx context.Context, operator string, obj client.Object) {
+// operations leave it alone; the validating webhook refuses a change.
+func stampCreatedBy(ctx context.Context, obj client.Object) {
 	req, err := admission.RequestFromContext(ctx)
 	if err != nil || req.Operation != admissionv1.Create || req.UserInfo.Username == "" {
-		return
-	}
-	if keepsCopiedCreator(req.UserInfo.Username, operator, obj) {
 		return
 	}
 	annotations := obj.GetAnnotations()
@@ -257,37 +210,4 @@ func stampCreatedBy(ctx context.Context, operator string, obj client.Object) {
 	}
 	annotations[networkv1beta1.AnnotationCreatedBy] = req.UserInfo.Username
 	obj.SetAnnotations(annotations)
-}
-
-// keepsCopiedCreator reports whether a new object keeps the created-by annotation it carries
-// instead of getting the requesting user's: only when the requester is the operator itself and
-// the object says it was migrated from aws.hypersurgery/v1alpha1.
-//
-// The migration controller creates the new-group copy of an old object as the operator, so the
-// usual rule would record the operator as the creator of every migrated claim and import. The
-// value it copies is the old object's aws.hypersurgery/created-by, which the old group's
-// webhooks wrote from the authenticated user and refused to let anybody change; so the copy is
-// as trustworthy as the original. Nobody but the operator can use the exception: a person
-// setting the migrated-from annotation on their own object gets their own name, as always.
-// When the operator does not know its own name (the API server could not answer a
-// SelfSubjectReview) there is no exception, and migrated objects name the operator.
-func keepsCopiedCreator(requester, operator string, obj client.Object) bool {
-	if operator == "" || requester != operator {
-		return false
-	}
-	_, migrated := obj.GetAnnotations()[networkv1beta1.AnnotationMigratedFrom]
-	return migrated
-}
-
-// createdByMigration reports whether a CREATE is the migration controller copying an
-// aws.hypersurgery/v1alpha1 object. Such a copy is not checked again: the old group's webhook
-// checked the original, and a copy refused now would leave its reservations or its history
-// behind in a group that goes away. The new group's controllers still refuse in the status
-// whatever they cannot act on.
-func createdByMigration(ctx context.Context, operator string, obj client.Object) bool {
-	req, err := admission.RequestFromContext(ctx)
-	if err != nil {
-		return false
-	}
-	return keepsCopiedCreator(req.UserInfo.Username, operator, obj)
 }
