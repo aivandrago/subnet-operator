@@ -1,0 +1,5 @@
+# hypersurgery.dev is a public project site: everyone is welcome, crawlers included.
+User-agent: *
+Allow: /
+
+Sitemap: https://hypersurgery.dev/sitemap.xml

@@ -1,0 +1,15 @@
+apiVersion: network.hypersurgery.dev/v1
+kind: SheetExport
+metadata:
+  name: organization
+spec:
+  credentialsSecretRef:
+    key: credentials.json
+    name: google-sheets
+    namespace: aws-subnet-operator-system
+  extraTagColumns:
+  - cost-center
+  refreshInterval: 5m0s
+  scopeRef: organization
+  sheetName: Subnets
+  spreadsheetID: 1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789

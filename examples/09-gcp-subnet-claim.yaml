@@ -1,0 +1,30 @@
+# A subnetwork on demand on Google Cloud (from 2.0). A claim on GCP is for one
+# regional subnetwork: no zones, and a pool to carve the range from, because a VPC network has
+# no address space of its own. The ranges the network's subnetworks already use (primary and
+# secondary, in the scope's regions) and other claims' reservations are left out.
+#
+# The subnetwork is created with hs-owner, hs-env, hs-tier and hs-managed-by=subnet-operator
+# bound, and, only if the scope sets gcp.claimTag: Bind, hs-claim=default_checkout. Without
+# createTagValues on the scope, every one of those values must exist before the claim can
+# create it (reason TagValueMissing otherwise); with the default claimTag Skip that is the
+# owner, env and tier values the teams share, not a new value per claim.
+apiVersion: network.hypersurgery.dev/v1
+kind: SubnetClaim
+metadata:
+  name: checkout
+  namespace: default
+spec:
+  scopeRef: gcp-shared-vpc
+  account: net-host-prod
+  region: europe-west1
+  networkID: projects/net-host-prod/global/networks/shared-prod
+  prefixLength: 24
+  mode: Create
+  owner: team-payments
+  env: prod
+  tier: private
+  # The subnetwork's name: 1 to 63 lowercase letters, digits and hyphens. Default: the claim's name.
+  namePrefix: payments-checkout
+  gcp:
+    poolCIDRs: [10.60.0.0/16]
+    privateIPGoogleAccess: true

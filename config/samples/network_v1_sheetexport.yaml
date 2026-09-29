@@ -1,0 +1,16 @@
+apiVersion: network.hypersurgery.dev/v1
+kind: SheetExport
+metadata:
+  name: organization
+spec:
+  scopeRef: organization
+  # docs.google.com/spreadsheets/d/<spreadsheetID>/edit
+  spreadsheetID: 1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789
+  sheetName: Subnets
+  credentialsSecretRef:
+    name: google-sheets
+    namespace: subnet-operator-system
+    key: credentials.json
+  # One extra column per tag key.
+  extraTagColumns: [cost-center]
+  refreshInterval: 5m

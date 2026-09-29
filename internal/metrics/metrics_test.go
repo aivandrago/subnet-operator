@@ -1,0 +1,196 @@
+/*
+Copyright 2026.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package metrics
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
+	dto "github.com/prometheus/client_model/go"
+	"k8s.io/utils/ptr"
+
+	networkv1 "hypersurgery.dev/subnet-operator/api/v1"
+)
+
+func subnet(id, owner string, available int64) networkv1.Subnet {
+	return networkv1.Subnet{
+		Spec: networkv1.SubnetSpec{ID: id, NetworkID: "vpc-1", Account: "111111111111", Region: "eu-central-1"},
+		Status: networkv1.SubnetStatus{Owner: owner, CIDRBlock: "10.0.0.0/24", TotalIPs: ptr.To[int64](251),
+			AvailableIPs: new(available), MissingTags: []string{"hs/env"}},
+	}
+}
+
+const aws = networkv1.ProviderAWS
+
+func TestSetScopeReplacesSeries(t *testing.T) {
+	t.Cleanup(func() { Forget("s1"); Forget("s2") })
+	targets := []TargetResult{{Account: "111111111111", Region: "eu-central-1", OK: true}}
+	SetScope("s1", aws, nil, []networkv1.Subnet{subnet("subnet-1", "team-a", 10), subnet("subnet-2", "", 200)}, targets, 1)
+	SetScope("s2", aws, nil, []networkv1.Subnet{subnet("subnet-9", "", 5)}, targets, 1)
+	if got := testutil.CollectAndCount(subnetAvailableIPs.vec); got != 3 {
+		t.Fatalf("want 3 series, got %d", got)
+	}
+
+	// subnet-2 disappeared and subnet-1 changed owner: no stale series may remain.
+	errsBefore := testutil.ToFloat64(targetSyncErrors.vec.WithLabelValues("aws", "s1", "111111111111", "eu-central-1"))
+	SetScope("s1", aws, nil, []networkv1.Subnet{subnet("subnet-1", "team-b", 10)},
+		[]TargetResult{{Account: "111111111111", Region: "eu-central-1", OK: false, Synced: true}}, 2)
+	if got := testutil.CollectAndCount(subnetAvailableIPs.vec); got != 2 {
+		t.Fatalf("want 2 series after resync, got %d", got)
+	}
+	if got := testutil.ToFloat64(subnetMissingTags.vec.WithLabelValues("aws", "s1", "111111111111", "eu-central-1",
+		"vpc-1", "subnet-1", "", "10.0.0.0/24", "", "team-b", "", "", "false")); got != 1 {
+		t.Errorf("missing tags = %v, want 1", got)
+	}
+	if got := testutil.ToFloat64(targetUp.vec.WithLabelValues("aws", "s1", "111111111111", "eu-central-1")); got != 0 {
+		t.Errorf("target_up = %v, want 0", got)
+	}
+	// Counters are never reset, and the tests share them, so assert on the rise.
+	if got := testutil.ToFloat64(targetSyncErrors.vec.WithLabelValues("aws", "s1", "111111111111", "eu-central-1")); got != errsBefore+1 {
+		t.Errorf("sync errors = %v, want %v", got, errsBefore+1)
+	}
+
+	Forget("s1")
+	if got := testutil.CollectAndCount(subnetAvailableIPs.vec); got != 1 {
+		t.Fatalf("want only s2 left, got %d", got)
+	}
+}
+
+// An IPv6-only subnet has no IPv4 capacity to report. Exporting zero usable and zero free IPv4
+// addresses for it made SubnetFull fire forever on a subnet working exactly as designed.
+func TestIPv6OnlySubnetReportsNoIPv4Capacity(t *testing.T) {
+	const scope = "ipv6-test"
+	t.Cleanup(func() { Forget(scope) })
+
+	v6only := networkv1.Subnet{
+		Spec: networkv1.SubnetSpec{ID: "subnet-v6", NetworkID: "vpc-1", Account: "111111111111", Region: "eu-central-1"},
+		Status: networkv1.SubnetStatus{IPv6CIDRBlocks: []string{"2600:1f18:abcd:1200::/64"},
+			TotalIPs: ptr.To[int64](0), AvailableIPs: ptr.To[int64](0), MissingTags: []string{"hs/owner"}},
+	}
+	dual := subnet("subnet-dual", "team-a", 40)
+	dual.Status.IPv6CIDRBlocks = []string{"2600:1f18:abcd:1201::/64"}
+	SetScope(scope, aws, nil, []networkv1.Subnet{v6only, dual}, nil, 1)
+
+	// Only the dual-stack subnet has IPv4 capacity, so it alone has the two capacity series.
+	for name, g := range map[string]interface {
+		Collect(chan<- prometheus.Metric)
+	}{
+		"available": subnetAvailableIPs.vec, "total": subnetTotalIPs.vec,
+	} {
+		if got := seriesFor(g, "subnet_id", "subnet-v6"); got != 0 {
+			t.Errorf("%s: IPv6-only subnet has %d series, want none", name, got)
+		}
+		if got := seriesFor(g, "subnet_id", "subnet-dual"); got != 1 {
+			t.Errorf("%s: dual-stack subnet has %d series, want 1", name, got)
+		}
+	}
+	// Tag compliance is about the subnet, not its address family, so it is reported for both.
+	if got := seriesFor(subnetMissingTags.vec, "subnet_id", "subnet-v6"); got != 1 {
+		t.Errorf("missing tags: IPv6-only subnet has %d series, want 1", got)
+	}
+}
+
+// seriesFor counts the series a collector exposes with the given label value.
+func seriesFor(c interface {
+	Collect(chan<- prometheus.Metric)
+}, label, value string) int {
+	ch := make(chan prometheus.Metric, 64)
+	go func() { c.Collect(ch); close(ch) }()
+	n := 0
+	for m := range ch {
+		var pb dto.Metric
+		if err := m.Write(&pb); err != nil {
+			continue
+		}
+		for _, lp := range pb.GetLabel() {
+			if lp.GetName() == label && lp.GetValue() == value {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+// A throttled target is reachable and must not read as down, nor count as a failed discovery:
+// the alerts for the two are different, and so is what an operator does about them.
+func TestThrottledTargetIsUpAndThrottled(t *testing.T) {
+	const scope = "throttle-test"
+	t.Cleanup(func() { Forget(scope) })
+	busy := []TargetResult{{Account: "111111111111", Region: "eu-central-1", OK: true, Synced: true, Throttled: true}}
+	errs := func() float64 {
+		return testutil.ToFloat64(targetSyncErrors.vec.WithLabelValues("aws", scope, "111111111111", "eu-central-1"))
+	}
+	errsBefore := errs()
+
+	SetScope(scope, aws, nil, nil, busy, 1)
+	up := targetUp.vec.WithLabelValues("aws", scope, "111111111111", "eu-central-1")
+	throttled := targetThrottled.vec.WithLabelValues("aws", scope, "111111111111", "eu-central-1")
+	if testutil.ToFloat64(up) != 1 || testutil.ToFloat64(throttled) != 1 {
+		t.Fatalf("target_up = %v, target_throttled = %v, want 1 and 1", testutil.ToFloat64(up), testutil.ToFloat64(throttled))
+	}
+	if got := errs(); got != errsBefore {
+		t.Errorf("sync errors rose to %v from %v for a throttled target", got, errsBefore)
+	}
+
+	SetScope(scope, aws, nil, nil, []TargetResult{{Account: "111111111111", Region: "eu-central-1", OK: true, Synced: true}}, 2)
+	if got := testutil.ToFloat64(targetThrottled.vec.WithLabelValues("aws", scope, "111111111111", "eu-central-1")); got != 0 {
+		t.Errorf("target_throttled = %v after recovery, want 0", got)
+	}
+
+	calls := apiThrottled.vec.WithLabelValues("aws", scope, "111111111111", "eu-central-1", "DescribeSubnets")
+	before := testutil.ToFloat64(calls)
+	APIThrottled(scope, aws, "111111111111", "eu-central-1", "DescribeSubnets")
+	APIThrottled(scope, aws, "111111111111", "eu-central-1", "DescribeSubnets")
+	if got := testutil.ToFloat64(calls); got != before+2 {
+		t.Errorf("api_throttled_total = %v, want %v", got, before+2)
+	}
+}
+
+// Peered overlaps are counted where peerings are read (GCP) and not exported elsewhere, where a
+// 0 would claim a check nobody made. The overlap count itself stays the same for every provider.
+func TestPeeredOverlapsOnlyWherePeeringsAreKnown(t *testing.T) {
+	t.Cleanup(func() { Forget("peered-aws"); Forget("peered-gcp") })
+	vpc := networkv1.Network{Spec: networkv1.NetworkSpec{ID: "vpc-1", Account: "111111111111", Region: "eu-central-1"},
+		Status: networkv1.NetworkStatus{OverlapsWith: []string{"111111111111/eu-central-1/vpc-2"}}}
+	SetScope("peered-aws", aws, []networkv1.Network{vpc}, nil, nil, 1)
+	gcp := networkv1.Network{Spec: networkv1.NetworkSpec{ID: "projects/p/global/networks/a", Account: "p"},
+		Status: networkv1.NetworkStatus{Name: "a", OverlapsWith: []string{"p//b", "p//c", "p//d"},
+			GCP: &networkv1.GCPNetworkStatus{Overlaps: []networkv1.GCPNetworkOverlap{
+				{Network: "p//b", Peered: true, PeeringState: "INACTIVE"}, {Network: "p//c"},
+				{Network: "p//d", Peered: true, PeeringState: "ACTIVE"}}}}}
+	SetScope("peered-gcp", networkv1.ProviderGCP, []networkv1.Network{gcp}, nil, nil, 1)
+
+	if got := testutil.ToFloat64(networkOverlaps.vec.WithLabelValues("aws", "peered-aws", "111111111111", "eu-central-1",
+		"vpc-1", "", "", "")); got != 1 {
+		t.Errorf("AWS overlaps = %v, want 1", got)
+	}
+	if got := testutil.ToFloat64(networkOverlaps.vec.WithLabelValues("gcp", "peered-gcp", "p", "",
+		"projects/p/global/networks/a", "a", "", "")); got != 3 {
+		t.Errorf("GCP overlaps = %v, want 3", got)
+	}
+	if got := testutil.ToFloat64(networkPeeredOverlaps.vec.WithLabelValues("gcp", "peered-gcp", "p", "",
+		"projects/p/global/networks/a", "a", "", "")); got != 2 {
+		t.Errorf("GCP peered overlaps = %v, want 2", got)
+	}
+	for _, s := range series(t, networkPeeredOverlaps.vec) {
+		if strings.Contains(s, "provider=aws") {
+			t.Errorf("an AWS network has a peered overlap series: %s", s)
+		}
+	}
+}

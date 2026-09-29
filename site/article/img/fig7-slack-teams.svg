@@ -1,0 +1,113 @@
+<svg xmlns="http://www.w3.org/2000/svg" font-family="PT Serif, Georgia, serif" viewBox="0 0 1200 560" role="img" aria-label="The same alert delivered twice: a Slack message in a net-ops channel and a Microsoft Teams adaptive card, both naming the subnet, the account, the region, the person who created it and the policy decision, with buttons to import it or open the dashboard">
+  <rect width="1200" height="560" fill="#f2ece0"/>
+
+  <!-- ─── Slack ─────────────────────────────────────────────────────── -->
+  <g>
+    <text x="24" y="28" font-family="PT Mono, JetBrains Mono, monospace" font-size="12" letter-spacing="1.5" fill="#7b7266">SLACK</text>
+    <line x1="24" y1="38" x2="576" y2="38" stroke="#1a1714" stroke-width="2"/>
+
+    <rect x="24" y="52" width="552" height="470" rx="6" fill="#f7f3ea" stroke="#c9bfae" stroke-width="2"/>
+
+    <!-- channel header -->
+    <text x="44" y="82" font-size="15" font-weight="700" fill="#1a1714"># net-ops</text>
+    <line x1="44" y1="94" x2="556" y2="94" stroke="#ded5c4"/>
+
+    <!-- message -->
+    <rect x="44" y="112" width="38" height="38" rx="6" fill="#c1121f"/>
+    <text x="63" y="137" text-anchor="middle" font-family="PT Mono, JetBrains Mono, monospace" font-size="15" font-weight="700" fill="#f7f3ea">so</text>
+    <text x="94" y="128" font-size="14" font-weight="700" fill="#1a1714">subnet-operator</text>
+    <rect x="242" y="116" width="34" height="15" rx="3" fill="#ded5c4"/>
+    <text x="259" y="127" text-anchor="middle" font-family="PT Mono, JetBrains Mono, monospace" font-size="9" fill="#4a443c">APP</text>
+    <text x="288" y="128" font-family="PT Mono, JetBrains Mono, monospace" font-size="11" fill="#7b7266">14:56</text>
+    <text x="94" y="148" font-size="13.5" fill="#4a443c">A network resource appeared without the operator's tags.</text>
+
+    <!-- attachment with the coloured bar -->
+    <rect x="94" y="162" width="446" height="252" rx="4" fill="#efe9dd" stroke="#ded5c4"/>
+    <rect x="94" y="162" width="5" height="252" fill="#c1121f"/>
+
+    <text x="116" y="188" font-size="15" font-weight="700" fill="#c1121f">[FIRING:1] UnmanagedNetworkResource</text>
+
+    <g font-family="PT Mono, JetBrains Mono, monospace" font-size="12">
+      <text x="116" y="216" fill="#7b7266">Resource</text>
+      <text x="236" y="216" fill="#1a1714">subnet-0b2c3d4e5f6a7b89</text>
+      <text x="116" y="238" fill="#7b7266">CIDR</text>
+      <text x="236" y="238" fill="#1a1714">10.20.40.0/22 · eu-west-1</text>
+      <text x="116" y="260" fill="#7b7266">Account</text>
+      <text x="236" y="260" fill="#1a1714">222222222222 (payments)</text>
+      <text x="116" y="282" fill="#7b7266">Created by</text>
+      <text x="236" y="282" fill="#1a1714">S. Okonkwo · console · 4m ago</text>
+      <text x="116" y="304" fill="#7b7266">Missing</text>
+      <text x="236" y="304" fill="#c1121f">hs/owner, hs/env, hs/tier</text>
+      <text x="116" y="326" fill="#7b7266">Policy</text>
+      <text x="236" y="326" fill="#1a1714">no rule matched · not tagged</text>
+    </g>
+
+    <line x1="116" y1="344" x2="520" y2="344" stroke="#ded5c4"/>
+    <text x="116" y="364" font-size="12" font-style="italic" fill="#7b7266">The operator changed nothing. It is asking.</text>
+
+    <rect x="116" y="376" width="132" height="28" rx="4" fill="#c1121f"/>
+    <text x="182" y="395" text-anchor="middle" font-size="12.5" font-weight="700" fill="#f7f3ea">Import it</text>
+    <rect x="260" y="376" width="150" height="28" rx="4" fill="#f7f3ea" stroke="#1a1714" stroke-width="1.5"/>
+    <text x="335" y="395" text-anchor="middle" font-size="12.5" fill="#1a1714">Open dashboard</text>
+    <rect x="422" y="376" width="98" height="28" rx="4" fill="#f7f3ea" stroke="#c9bfae" stroke-width="1.5"/>
+    <text x="471" y="395" text-anchor="middle" font-size="12.5" fill="#4a443c">Silence 24h</text>
+
+    <!-- thread -->
+    <text x="94" y="444" font-family="PT Mono, JetBrains Mono, monospace" font-size="11.5" fill="#7b7266">2 replies</text>
+    <text x="94" y="466" font-size="13" fill="#4a443c">S. Okonkwo: mine, sorry — it is the ML sandbox</text>
+    <text x="94" y="488" font-size="13" fill="#4a443c">subnet-operator: imported as team-ml at 15:02</text>
+  </g>
+
+  <!-- ─── Teams ─────────────────────────────────────────────────────── -->
+  <g>
+    <text x="624" y="28" font-family="PT Mono, JetBrains Mono, monospace" font-size="12" letter-spacing="1.5" fill="#7b7266">MICROSOFT TEAMS</text>
+    <line x1="624" y1="38" x2="1176" y2="38" stroke="#1a1714" stroke-width="2"/>
+
+    <rect x="624" y="52" width="552" height="470" rx="6" fill="#f7f3ea" stroke="#c9bfae" stroke-width="2"/>
+
+    <text x="644" y="82" font-size="15" font-weight="700" fill="#1a1714">Platform › Network</text>
+    <line x1="644" y1="94" x2="1156" y2="94" stroke="#ded5c4"/>
+
+    <!-- adaptive card -->
+    <rect x="644" y="112" width="492" height="330" rx="6" fill="#efe9dd" stroke="#c9bfae" stroke-width="1.5"/>
+    <rect x="644" y="112" width="492" height="8" rx="4" fill="#c1121f"/>
+
+    <rect x="664" y="136" width="40" height="40" rx="6" fill="#c1121f"/>
+    <text x="684" y="162" text-anchor="middle" font-family="PT Mono, JetBrains Mono, monospace" font-size="15" font-weight="700" fill="#f7f3ea">so</text>
+    <text x="716" y="152" font-size="15" font-weight="700" fill="#1a1714">Unmanaged network resource</text>
+    <text x="716" y="171" font-family="PT Mono, JetBrains Mono, monospace" font-size="11.5" fill="#7b7266">subnet-operator · Alert · 14:56</text>
+
+    <line x1="664" y1="190" x2="1116" y2="190" stroke="#ded5c4"/>
+
+    <g font-size="13">
+      <text x="664" y="214" font-weight="700" fill="#4a443c">Resource</text>
+      <text x="820" y="214" font-family="PT Mono, JetBrains Mono, monospace" font-size="12" fill="#1a1714">subnet-0b2c3d4e5f6a7b89</text>
+      <text x="664" y="238" font-weight="700" fill="#4a443c">CIDR</text>
+      <text x="820" y="238" font-family="PT Mono, JetBrains Mono, monospace" font-size="12" fill="#1a1714">10.20.40.0/22</text>
+      <text x="664" y="262" font-weight="700" fill="#4a443c">Account / region</text>
+      <text x="820" y="262" font-family="PT Mono, JetBrains Mono, monospace" font-size="12" fill="#1a1714">222222222222 · eu-west-1</text>
+      <text x="664" y="286" font-weight="700" fill="#4a443c">Created by</text>
+      <text x="820" y="286" font-family="PT Mono, JetBrains Mono, monospace" font-size="12" fill="#1a1714">S. Okonkwo (console)</text>
+      <text x="664" y="310" font-weight="700" fill="#4a443c">Missing tags</text>
+      <text x="820" y="310" font-family="PT Mono, JetBrains Mono, monospace" font-size="12" fill="#c1121f">hs/owner, hs/env, hs/tier</text>
+      <text x="664" y="334" font-weight="700" fill="#4a443c">Policy decision</text>
+      <text x="820" y="334" font-family="PT Mono, JetBrains Mono, monospace" font-size="12" fill="#1a1714">no_owner · alert only</text>
+    </g>
+
+    <line x1="664" y1="352" x2="1116" y2="352" stroke="#ded5c4"/>
+
+    <rect x="664" y="370" width="142" height="30" rx="4" fill="#c1121f"/>
+    <text x="735" y="390" text-anchor="middle" font-size="12.5" font-weight="700" fill="#f7f3ea">Import it</text>
+    <rect x="818" y="370" width="158" height="30" rx="4" fill="#f7f3ea" stroke="#1a1714" stroke-width="1.5"/>
+    <text x="897" y="390" text-anchor="middle" font-size="12.5" fill="#1a1714">Open dashboard</text>
+    <rect x="988" y="370" width="128" height="30" rx="4" fill="#f7f3ea" stroke="#c9bfae" stroke-width="1.5"/>
+    <text x="1052" y="390" text-anchor="middle" font-size="12.5" fill="#4a443c">Assign owner</text>
+
+    <text x="664" y="424" font-size="12" font-style="italic" fill="#7b7266">Same payload, different webhook. Alertmanager does the shaping.</text>
+
+    <text x="644" y="470" font-family="PT Mono, JetBrains Mono, monospace" font-size="11.5" fill="#7b7266">Severity: warning · Runbook: hypersurgery.dev/docs</text>
+    <text x="644" y="492" font-family="PT Mono, JetBrains Mono, monospace" font-size="11.5" fill="#7b7266">Grouped by account, so a bulk change is one message, not forty.</text>
+  </g>
+
+  <text x="24" y="548" font-family="PT Mono, JetBrains Mono, monospace" font-size="11" fill="#7b7266">Both messages name a person. This is the part that changes behaviour.</text>
+</svg>
