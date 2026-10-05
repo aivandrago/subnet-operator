@@ -1,0 +1,19 @@
+{
+  "Name": "Subnet operator writer",
+  "IsCustom": true,
+  "Description": "Creates subnets in virtual networks and adds ownership tags to virtual networks through the Tags API, for the subnet operator's write identity. Never deletes, never changes a virtual network's address space or an existing subnet's settings, grants no role assignments.",
+  "Actions": [
+    "Microsoft.Network/locations/operations/read",
+    "Microsoft.Network/virtualNetworks/read",
+    "Microsoft.Network/virtualNetworks/subnets/read",
+    "Microsoft.Network/virtualNetworks/subnets/write",
+    "Microsoft.Resources/tags/read",
+    "Microsoft.Resources/tags/write"
+  ],
+  "NotActions": [],
+  "DataActions": [],
+  "NotDataActions": [],
+  "AssignableScopes": [
+    "/subscriptions/00000000-0000-0000-0000-000000000000"
+  ]
+}

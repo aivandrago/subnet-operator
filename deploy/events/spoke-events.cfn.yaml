@@ -1,0 +1,72 @@
+# Spoke accounts: forward EC2 network change events to the hub account's default event bus.
+# Deploy with a service-managed StackSet to every account and every region the operator
+# discovers (EventBridge rules are regional). Not needed in the hub account's hub region.
+AWSTemplateFormatVersion: "2010-09-09"
+Description: aws-subnet-operator change events (spoke)
+
+Parameters:
+  HubEventBusArn:
+    Type: String
+    Description: EventBusArn output of hub-events.cfn.yaml.
+    AllowedPattern: "^arn:aws[a-z-]*:events:[a-z0-9-]+:[0-9]{12}:event-bus/default$"
+
+Resources:
+  ForwardRole:
+    Type: AWS::IAM::Role
+    Properties:
+      # Region in the name: the stack is deployed to several regions of the same account.
+      RoleName: !Sub aws-subnet-operator-events-${AWS::Region}
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: put-events-to-hub
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: events:PutEvents
+                Resource: !Ref HubEventBusArn
+
+  ForwardRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: aws-subnet-operator-forward-network-changes
+      Description: Forward EC2 network changes to the aws-subnet-operator hub
+      EventBusName: default
+      EventPattern:
+        source: [aws.ec2]
+        detail-type: [AWS API Call via CloudTrail]
+        detail:
+          eventSource: [ec2.amazonaws.com]
+          # Keep in sync with hub-events.cfn.yaml.
+          eventName:
+            - CreateVpc
+            - DeleteVpc
+            - AssociateVpcCidrBlock
+            - DisassociateVpcCidrBlock
+            - CreateSubnet
+            - DeleteSubnet
+            - ModifySubnetAttribute
+            - AssociateSubnetCidrBlock
+            - DisassociateSubnetCidrBlock
+            - CreateTags
+            - DeleteTags
+            - CreateRouteTable
+            - DeleteRouteTable
+            - AssociateRouteTable
+            - DisassociateRouteTable
+            - ReplaceRouteTableAssociation
+            - CreateRoute
+            - DeleteRoute
+            - ReplaceRoute
+            - AttachInternetGateway
+            - DetachInternetGateway
+      Targets:
+        - Id: hub-bus
+          Arn: !Ref HubEventBusArn
+          RoleArn: !GetAtt ForwardRole.Arn

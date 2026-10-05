@@ -1,0 +1,38 @@
+# Azure (from 3.0; not in 2.x): a subscription read and written with
+# identities of its own, which the operator reaches through Microsoft Entra Workload ID. Needs
+# the chart's providers.azure.enabled and the roles in deploy/azure; see docs/azure.md.
+#
+# Virtual networks and subnets are regional and have no zones: each location below is one
+# target of the subscription.
+apiVersion: network.hypersurgery.dev/v1
+kind: NetworkScope
+metadata:
+  name: azure-landing-zone
+spec:
+  provider: Azure
+  azure:
+    # Only the virtual networks of these resource groups are discovered, and the reader role is
+    # then needed on these groups alone. Leave azure out to discover the whole subscription.
+    resourceGroups: [rg-network-prod]
+  accounts:
+    # A subscription ID, in any case; the operator uses it in lowercase.
+    - id: 5b3c2a10-0000-4000-8000-00000000a2e1
+      azure:
+        # The identity discovery authenticates as; empty means the operator's own identity reads.
+        clientID: 3f0c6a1e-0000-4000-8000-0000000000b1
+        # The identity for claims in Create mode and for imports, never for discovery.
+        writeClientID: 3f0c6a1e-0000-4000-8000-0000000000c1
+        # tenantID: only for identities in another tenant than the operator's own.
+  regions: [westeurope, northeurope]
+  # Azure tag names cannot contain "/": hs-managed, not hs/managed. They are matched without
+  # regard to case, as Azure does; values are matched exactly.
+  networkSelector:
+    matchTags:
+      hs-managed: "true"
+  # Read from a subnet's entry on its virtual network (the tag hs-subnet-<subnet name>), or
+  # inherited from the virtual network's own tags: an Azure subnet cannot carry tags.
+  requiredSubnetTags: [hs-owner, hs-env]
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: default
+  resyncInterval: 10m
