@@ -1,0 +1,146 @@
+{{- if .Values.networkScope.create }}
+{{- /*
+The 0.7 forms of these values, deprecated in 0.8, were removed in 0.9. Rendered as they are,
+the API server would drop the unknown fields without a word: an account's roles would be
+lost, and the scope would read it with the operator's own identity. Refused instead.
+*/}}
+{{- range .Values.networkScope.accounts }}
+{{- if or .roleARN .externalID .writeRoleARN }}
+{{- fail (printf "networkScope.accounts: roleARN, externalID and writeRoleARN next to the id (account %v) were removed in 0.9; move them into the account's aws member (aws: {roleARN: ...})" .id) }}
+{{- end }}
+{{- end }}
+{{- if .Values.networkScope.vpcTagSelector }}
+{{- fail "networkScope.vpcTagSelector was removed in 0.9; use networkScope.networkSelector.matchTags" }}
+{{- end }}
+{{- $ns := .Values.networkScope }}
+{{- $provider := $ns.provider | default "AWS" }}
+{{- if not (has $provider (list "AWS" "GCP" "Azure")) }}
+{{- fail (printf "networkScope.provider %q is not supported; use AWS, GCP or Azure" $provider) }}
+{{- end }}
+{{- $gcp := $ns.gcp | default dict }}
+{{- $azure := $ns.azure | default dict }}
+{{- $accounts := $ns.accounts }}
+{{- $matchTags := $ns.networkSelector.matchTags }}
+{{- $requiredSubnetTags := $ns.requiredSubnetTags }}
+{{- /* The settings and account members of one provider are refused in a scope of another: the
+API server would refuse them too, but only at install time and without naming the value. */}}
+{{- if and (ne $provider "GCP") (or $gcp.tagParent $gcp.createTagValues $gcp.claimTag) }}
+{{- fail "networkScope.gcp is only for networkScope.provider GCP" }}
+{{- end }}
+{{- if and (ne $provider "Azure") $azure.resourceGroups }}
+{{- fail "networkScope.azure is only for networkScope.provider Azure" }}
+{{- end }}
+{{- $members := dict "AWS" "aws: {roleARN: ..., writeRoleARN: ...}" "GCP" "gcp: {serviceAccount: ..., writeServiceAccount: ...}" "Azure" "azure: {clientID: ..., writeClientID: ...}" }}
+{{- range $account := $accounts }}
+{{- range $member, $of := dict "aws" "AWS" "gcp" "GCP" "azure" "Azure" }}
+{{- if and (hasKey $account $member) (get $account $member) (ne $of $provider) }}
+{{- if eq $provider "AWS" }}
+{{- fail (printf "networkScope.accounts: account %v has %s %s member, but networkScope.provider is AWS; set networkScope.provider to %s" $account.id (ternary "an" "a" (ne $member "gcp")) $member $of) }}
+{{- end }}
+{{- fail (printf "networkScope.accounts: account %v has %s %s member, but networkScope.provider is %s; use %s" $account.id (ternary "an" "a" (ne $member "gcp")) $member $provider (get $members $provider)) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- if eq $provider "GCP" }}
+{{- /* A GCP scope needs the organization or project that owns its tag keys. */}}
+{{- if not .Values.providers.gcp.enabled }}
+{{- fail "networkScope.provider GCP needs providers.gcp.enabled: the operator only syncs scopes of the providers it runs" }}
+{{- end }}
+{{- if not $gcp.tagParent }}
+{{- fail "networkScope.provider GCP needs networkScope.gcp.tagParent: the organization (organizations/<number>) or project (projects/<project ID>) that owns the hs-* tag keys (docs/gcp.md#5-tag-keys-and-values)" }}
+{{- end }}
+{{- if not (regexMatch "^(organizations/[0-9]+|projects/[a-z][a-z0-9-]{4,28}[a-z0-9])$" $gcp.tagParent) }}
+{{- fail (printf "networkScope.gcp.tagParent %q is neither organizations/<organization number> nor projects/<project ID>" $gcp.tagParent) }}
+{{- end }}
+{{- if and $gcp.claimTag (not (has $gcp.claimTag (list "Skip" "Bind"))) }}
+{{- fail (printf "networkScope.gcp.claimTag %q is neither Skip nor Bind" $gcp.claimTag) }}
+{{- end }}
+{{- end }}
+{{- if eq $provider "Azure" }}
+{{- /*
+An Azure scope needs no setting of its own. Resource groups are compared without regard to
+case by Azure Resource Manager, so two that differ only in case are one group listed twice,
+which the operator's webhook refuses; refused here too, where the value is named.
+*/}}
+{{- if not (.Values.providers.azure).enabled }}
+{{- fail "networkScope.provider Azure needs providers.azure.enabled: the operator only syncs scopes of the providers it runs" }}
+{{- end }}
+{{- $seenGroups := dict }}
+{{- range $azure.resourceGroups }}
+{{- if hasKey $seenGroups (lower .) }}
+{{- fail (printf "networkScope.azure.resourceGroups: %q and %q are the same resource group on Azure, which compares names without regard to case" (get $seenGroups (lower .)) .) }}
+{{- end }}
+{{- $_ := set $seenGroups (lower .) . }}
+{{- end }}
+{{- end }}
+{{- if ne $provider "AWS" }}
+{{- /*
+GCP tag keys and Azure tag names cannot contain "/". The chart's defaults for
+networkSelector.matchTags and requiredSubnetTags are the AWS keys (hs/managed, hs/owner, ...):
+on GCP and Azure they become the keys the operator uses there (hs-managed, hs-owner, ...). Helm
+merges maps, so an hs/managed key left over from the defaults is dropped.
+*/}}
+{{- $what := ternary "a GCP tag key, which cannot contain a slash; name the short name of a key under gcp.tagParent" "an Azure tag name, which cannot contain a slash; name the tag as the virtual network carries it" (eq $provider "GCP") }}
+{{- $defaultMatchTags := dict "hs/managed" "true" }}
+{{- if eq (toJson $matchTags) (toJson $defaultMatchTags) }}
+{{- $matchTags = dict "hs-managed" "true" }}
+{{- else if $matchTags }}
+{{- $matchTags = omit $matchTags "hs/managed" }}
+{{- end }}
+{{- if eq (toJson $requiredSubnetTags) (toJson (list "hs/owner" "hs/env" "hs/tier")) }}
+{{- $requiredSubnetTags = list "hs-owner" "hs-env" "hs-tier" }}
+{{- end }}
+{{- range $key, $_ := $matchTags }}
+{{- if contains "/" $key }}
+{{- fail (printf "networkScope.networkSelector.matchTags: %q cannot be %s, such as hs-managed" $key $what) }}
+{{- end }}
+{{- end }}
+{{- range $requiredSubnetTags }}
+{{- if contains "/" . }}
+{{- fail (printf "networkScope.requiredSubnetTags: %q cannot be %s, such as hs-owner" . $what) }}
+{{- end }}
+{{- end }}
+{{- end }}
+apiVersion: network.hypersurgery.dev/v1
+kind: NetworkScope
+metadata:
+  name: {{ .Values.networkScope.name }}
+  labels:
+    {{- include "subnet-operator.labels" . | nindent 4 }}
+spec:
+  provider: {{ $provider }}
+  {{- if eq $provider "GCP" }}
+  gcp:
+    tagParent: {{ $gcp.tagParent }}
+    {{- if $gcp.createTagValues }}
+    createTagValues: true
+    {{- end }}
+    {{- with $gcp.claimTag }}
+    claimTag: {{ . }}
+    {{- end }}
+  {{- end }}
+  {{- if and (eq $provider "Azure") $azure.resourceGroups }}
+  azure:
+    resourceGroups:
+      {{- toYaml $azure.resourceGroups | nindent 6 }}
+  {{- end }}
+  accounts:
+    {{- toYaml $accounts | nindent 4 }}
+  regions:
+    {{- toYaml .Values.networkScope.regions | nindent 4 }}
+  {{- with $matchTags }}
+  networkSelector:
+    matchTags:
+      {{- toYaml . | nindent 6 }}
+  {{- end }}
+  {{- with $requiredSubnetTags }}
+  requiredSubnetTags:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- /* A map, even an empty one, is set; null leaves the field unset, which allows no namespace. */}}
+  {{- if kindIs "map" .Values.networkScope.namespaceSelector }}
+  namespaceSelector:
+    {{- toYaml .Values.networkScope.namespaceSelector | nindent 4 }}
+  {{- end }}
+  resyncInterval: {{ .Values.networkScope.resyncInterval }}
+{{- end }}

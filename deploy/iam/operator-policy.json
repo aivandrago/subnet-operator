@@ -1,0 +1,34 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DiscoverOwnAccount",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeVpcs",
+        "ec2:DescribeSubnets",
+        "ec2:DescribeRouteTables"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ReachSpokeAccounts",
+      "Effect": "Allow",
+      "Action": "sts:AssumeRole",
+      "Resource": [
+        "arn:aws:iam::*:role/aws-subnet-operator-readonly",
+        "arn:aws:iam::*:role/aws-subnet-operator-write"
+      ]
+    },
+    {
+      "Sid": "ConsumeChangeEvents",
+      "Effect": "Allow",
+      "Action": [
+        "sqs:ReceiveMessage",
+        "sqs:DeleteMessage",
+        "sqs:GetQueueAttributes"
+      ],
+      "Resource": "arn:aws:sqs:*:*:aws-subnet-operator-events"
+    }
+  ]
+}

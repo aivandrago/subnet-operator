@@ -1,0 +1,23 @@
+# Humans should read the inventory, not edit it: the operator overwrites manual changes
+# on the next sync. Bind this role to the people and teams who look at the data.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: subnet-inventory-viewer
+rules:
+  - apiGroups: [aws.hypersurgery]
+    resources: [networkscopes, vpcs, subnets, sheetexports]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: subnet-inventory-viewer
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: subnet-inventory-viewer
+subjects:
+  - kind: Group
+    apiGroup: rbac.authorization.k8s.io
+    name: platform-engineering

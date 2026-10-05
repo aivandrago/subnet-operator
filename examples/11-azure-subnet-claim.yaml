@@ -1,0 +1,41 @@
+# Azure (from 3.0): one subnet in a virtual network, carved from the virtual
+# network's address space. An Azure subnet is regional, so the claim lists no zones and is for
+# exactly one subnet, named namePrefix. With mode Create and --enable-writes the operator first
+# writes the subnet's ownership as the tag hs-subnet-payments-checkout on the virtual network
+# (an Azure subnet cannot carry tags), then creates the subnet.
+apiVersion: network.hypersurgery.dev/v1
+kind: SubnetClaim
+metadata:
+  name: checkout
+  namespace: default
+spec:
+  scopeRef: azure-landing-zone
+  account: 5b3c2a10-0000-4000-8000-00000000a2e1
+  region: westeurope
+  # The virtual network's resource ID, in any case (as the portal shows it, or in lowercase as
+  # kubectl get hsnet does); the operator stores it in lowercase.
+  networkID: /subscriptions/5b3c2a10-0000-4000-8000-00000000a2e1/resourceGroups/rg-network-prod/providers/Microsoft.Network/virtualNetworks/vnet-prod
+  prefixLength: 24
+  mode: Create
+  owner: team-payments
+  env: prod
+  tier: private
+  namePrefix: payments-checkout
+---
+# Taking an existing subnet under management: the import adds these pairs to the subnet's entry
+# on its virtual network, leaving out what the subnet already inherits from the virtual network
+# with the same value. It never replaces a value.
+apiVersion: network.hypersurgery.dev/v1
+kind: ResourceImport
+metadata:
+  name: legacy-db-import
+  namespace: default
+spec:
+  scopeRef: azure-landing-zone
+  account: 5b3c2a10-0000-4000-8000-00000000a2e1
+  region: westeurope
+  resourceID: /subscriptions/5b3c2a10-0000-4000-8000-00000000a2e1/resourceGroups/rg-network-prod/providers/Microsoft.Network/virtualNetworks/vnet-prod/subnets/legacy-db
+  tags:
+    hs-owner: team-data
+    hs-tier: db
+  requestedBy: platform team (ticket NET-733)

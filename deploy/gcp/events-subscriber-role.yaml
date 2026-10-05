@@ -1,0 +1,23 @@
+# Custom role for the operator's own identity on the Pub/Sub subscription of the change events
+# (--gcp-events-subscription, the chart's providers.gcp.events.subscription): pull messages
+# and acknowledge them, nothing else. It is roles/pubsub.subscriber narrowed to the one
+# permission the streaming pull, acknowledgements and ack deadline extensions check; the
+# predefined role works as well (it adds attaching subscriptions to topics and seeking to
+# snapshots). Grant it on the subscription, not on the project.
+#
+# The operator's own identity is the GKE Workload Identity service account, the service
+# account a Workload Identity Federation configuration impersonates, or the federated
+# principal itself (see impersonator-role.yaml). deploy/gcp/events.md has the whole setup:
+# log sink, topic, subscription and the grants, with gcloud and with Terraform.
+#
+#   gcloud iam roles create subnetOperatorEventsSubscriber --project=OPS_PROJECT_ID \
+#     --file=deploy/gcp/events-subscriber-role.yaml
+#   gcloud pubsub subscriptions add-iam-policy-binding subnet-operator-events \
+#     --project=OPS_PROJECT_ID \
+#     --role=projects/OPS_PROJECT_ID/roles/subnetOperatorEventsSubscriber \
+#     --member=serviceAccount:subnet-operator@OPERATOR_PROJECT_ID.iam.gserviceaccount.com
+title: Subnet operator events subscriber
+description: Pulls and acknowledges the network change events of the subscription it is granted on. Nothing else.
+stage: GA
+includedPermissions:
+  - pubsub.subscriptions.consume

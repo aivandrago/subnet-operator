@@ -1,0 +1,22 @@
+# Custom role for binding the operator's tag values (hs-owner, hs-env, hs-tier, hs-managed,
+# hs-managed-by, and hs-claim with gcp.claimTag Bind) to networks and subnetworks: the write
+# identity needs it on those tag keys, or on the scope's gcp.tagParent, besides writer-role.yaml
+# in the project. It is roles/resourcemanager.tagUser without removing bindings.
+#
+#   gcloud iam roles create subnetOperatorTagUser --organization=ORG_NUMBER \
+#     --file=deploy/gcp/tag-user-role.yaml
+#   gcloud resource-manager tags keys add-iam-policy-binding ORG_NUMBER/hs-owner \
+#     --role=organizations/ORG_NUMBER/roles/subnetOperatorTagUser \
+#     --member=serviceAccount:subnet-writer@PROJECT_ID.iam.gserviceaccount.com
+#
+# Whether a custom role may carry resourcemanager.tagValueBindings.create is for the
+# conformance run (#50); roles/resourcemanager.tagUser is the predefined fallback.
+title: Subnet operator tag user
+description: Reads the operator's tag keys and values and binds them to resources. Never unbinds.
+stage: GA
+includedPermissions:
+  - resourcemanager.tagKeys.get
+  - resourcemanager.tagKeys.list
+  - resourcemanager.tagValueBindings.create
+  - resourcemanager.tagValues.get
+  - resourcemanager.tagValues.list
