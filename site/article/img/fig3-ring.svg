@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" font-family="PT Serif, Georgia, serif" viewBox="0 0 820 320" role="img" aria-label="A boxing ring: on the left a heavy blocky figure labelled operator, on the right a small untagged subnet labelled unmanaged, with a scoreboard">
+      <rect width="820" height="320" fill="#f2ece0"/>
+
+      <!-- ring floor and ropes -->
+      <rect x="40" y="70" width="740" height="210" rx="6" fill="#f2ece0" stroke="#c9bfae" stroke-width="2"/>
+      <g stroke="#c9bfae" stroke-width="3">
+        <line x1="40" y1="110" x2="780" y2="110"/><line x1="40" y1="146" x2="780" y2="146"/>
+      </g>
+      <g fill="#7b7266">
+        <rect x="34" y="62" width="12" height="226" rx="4"/><rect x="774" y="62" width="12" height="226" rx="4"/>
+      </g>
+
+      <!-- the operator: a heavy blocky figure, all right angles -->
+      <g>
+        <rect x="150" y="168" width="104" height="86" rx="6" fill="#e7dfd0" stroke="#c1121f" stroke-width="2.5"/>
+        <rect x="168" y="120" width="68" height="44" rx="6" fill="#e7dfd0" stroke="#c1121f" stroke-width="2.5"/>
+        <rect x="178" y="134" width="14" height="6" rx="2" fill="#c1121f"/>
+        <rect x="212" y="134" width="14" height="6" rx="2" fill="#c1121f"/>
+        <rect x="186" y="150" width="32" height="4" rx="2" fill="#7b7266"/>
+        <!-- gloves -->
+        <rect x="112" y="182" width="36" height="30" rx="10" fill="#c1121f"/>
+        <rect x="256" y="182" width="36" height="30" rx="10" fill="#c1121f"/>
+        <!-- legs -->
+        <rect x="166" y="254" width="26" height="26" rx="4" fill="#e7dfd0" stroke="#c1121f" stroke-width="2"/>
+        <rect x="212" y="254" width="26" height="26" rx="4" fill="#e7dfd0" stroke="#c1121f" stroke-width="2"/>
+        <text x="202" y="300" text-anchor="middle" font-family="PT Mono, JetBrains Mono, monospace" font-size="11" fill="#c1121f">SUBNET-OPERATOR</text>
+      </g>
+
+      <!-- the challenger: one small untagged subnet -->
+      <g>
+        <rect x="556" y="196" width="120" height="58" rx="8" fill="#e7dfd0" stroke="#8f0d17" stroke-width="2.5"/>
+        <text x="616" y="220" text-anchor="middle" font-family="PT Mono, JetBrains Mono, monospace" font-size="11" fill="#8f0d17">subnet-0a1b2c</text>
+        <text x="616" y="240" text-anchor="middle" font-family="PT Mono, JetBrains Mono, monospace" font-size="10" fill="#4a443c">tags: none</text>
+        <!-- tiny gloves, comedic scale -->
+        <circle cx="546" cy="212" r="9" fill="#8f0d17"/>
+        <circle cx="686" cy="212" r="9" fill="#8f0d17"/>
+        <text x="616" y="300" text-anchor="middle" font-family="PT Mono, JetBrains Mono, monospace" font-size="11" fill="#8f0d17">CREATED BY HAND, 14:52</text>
+      </g>
+
+      <!-- speech -->
+      <g>
+        <rect x="290" y="88" width="238" height="44" rx="10" fill="#f2ece0" stroke="#c9bfae"/>
+        <path d="M330 132 l0 16 l18 -16 z" fill="#f2ece0" stroke="#c9bfae"/>
+        <text x="409" y="116" text-anchor="middle" font-family="PT Serif, Georgia, serif" font-size="14" font-weight="600" fill="#1a1714">“You are not on any list.”</text>
+      </g>
+
+      <text x="40" y="52" font-family="PT Mono, JetBrains Mono, monospace" font-size="11" fill="#7b7266">ROUND 2 — THE UNMANAGED RESOURCE</text>
+    </svg>

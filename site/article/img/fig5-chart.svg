@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" font-family="PT Serif, Georgia, serif" viewBox="0 0 820 320" role="img" aria-label="Bar chart: how long the inventory stays correct after a change. Spreadsheet: until someone remembers, measured in days. Operator: about ten seconds with events, ten minutes without.">
+      <rect width="820" height="320" fill="#f2ece0"/>
+      <text x="40" y="40" font-family="PT Serif, Georgia, serif" font-size="15" font-weight="600" fill="#1a1714">How long after a change does the inventory become true again?</text>
+      <text x="40" y="60" font-family="PT Mono, JetBrains Mono, monospace" font-size="10.5" fill="#7b7266">log scale, seconds — shorter is better</text>
+
+      <!-- legend -->
+      <g>
+        <rect x="596" y="30" width="10" height="10" rx="2" fill="#c1121f"/>
+        <text x="612" y="39" font-family="PT Serif, Georgia, serif" font-size="12" fill="#4a443c">spreadsheet</text>
+        <rect x="596" y="48" width="10" height="10" rx="2" fill="#c1121f"/>
+        <text x="612" y="57" font-family="PT Serif, Georgia, serif" font-size="12" fill="#4a443c">operator</text>
+      </g>
+
+      <!-- gridlines -->
+      <g stroke="#c9bfae" stroke-width="1">
+        <line x1="210" y1="90" x2="780" y2="90"/>
+        <line x1="210" y1="150" x2="780" y2="150"/>
+        <line x1="210" y1="210" x2="780" y2="210"/>
+        <line x1="210" y1="270" x2="780" y2="270"/>
+      </g>
+
+      <!-- bars: 4px rounded ends, 2px gap, anchored at x=210 -->
+      <g>
+        <text x="196" y="112" text-anchor="end" font-family="PT Serif, Georgia, serif" font-size="12.5" fill="#4a443c">Someone remembers</text>
+        <rect x="210" y="96" width="560" height="22" rx="4" fill="#c1121f"/>
+        <text x="758" y="112" text-anchor="end" font-family="PT Mono, JetBrains Mono, monospace" font-size="12" font-weight="600" fill="#f2ece0">days. sometimes never.</text>
+
+        <text x="196" y="172" text-anchor="end" font-family="PT Serif, Georgia, serif" font-size="12.5" fill="#4a443c">Quarterly audit</text>
+        <rect x="210" y="156" width="430" height="22" rx="4" fill="#c1121f" opacity=".72"/>
+        <text x="628" y="172" text-anchor="end" font-family="PT Mono, JetBrains Mono, monospace" font-size="12" font-weight="600" fill="#f2ece0">90 days</text>
+
+        <text x="196" y="232" text-anchor="end" font-family="PT Serif, Georgia, serif" font-size="12.5" fill="#4a443c">Operator, resync only</text>
+        <rect x="210" y="216" width="150" height="22" rx="4" fill="#c1121f" opacity=".72"/>
+        <text x="372" y="232" font-family="PT Mono, JetBrains Mono, monospace" font-size="12" font-weight="600" fill="#c1121f">10 minutes</text>
+
+        <text x="196" y="292" text-anchor="end" font-family="PT Serif, Georgia, serif" font-size="12.5" fill="#4a443c">Operator, with events</text>
+        <rect x="210" y="276" width="46" height="22" rx="4" fill="#c1121f"/>
+        <text x="268" y="292" font-family="PT Mono, JetBrains Mono, monospace" font-size="12" font-weight="600" fill="#c1121f">≈10 seconds</text>
+      </g>
+    </svg>

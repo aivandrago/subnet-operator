@@ -1,0 +1,14 @@
+# Findings that are understood and deliberately not acted on. Each one needs a statement
+# saying why, so that the list stays a set of decisions rather than a place to hide things.
+misconfigurations:
+  - id: AWS-0096
+    paths:
+      - "deploy/events/hub-events.cfn.yaml"
+    statement: >-
+      Both queues are encrypted with SSE-SQS (SqsManagedSseEnabled: true). Trivy's check
+      recognises only KmsMasterKeyId, so it reads server-side encryption with the SQS-owned
+      key as no encryption at all. Switching to KMS would not be an improvement here:
+      EventBridge cannot deliver to a queue encrypted with the AWS-managed aws/sqs key, so
+      the alternative is a customer-managed key with its own policy — more moving parts,
+      more cost and one more thing to get wrong, for queue contents that are EC2 resource
+      identifiers rather than secrets.

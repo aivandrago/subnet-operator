@@ -1,0 +1,478 @@
+# Default values for subnet-operator.
+
+# Two replicas: one holds the leader election lease and reconciles, the other waits and
+# takes over when the leader's node is drained or the pod dies. Only meaningful with
+# leaderElection.enabled, which is the default.
+replicaCount: 2
+
+image:
+  repository: ghcr.io/aivandrago/subnet-operator
+  tag: ""            # defaults to .Chart.AppVersion
+  pullPolicy: IfNotPresent
+# The image is public and signed, so nothing is needed here. Set it only when you mirror the
+# image into a registry of your own that requires a login. Verify what you are running with:
+#   cosign verify ghcr.io/aivandrago/subnet-operator:<tag> \
+#     --certificate-identity-regexp '^https://github.com/aivandrago/subnet-operator/\.github/workflows/release\.yml@' \
+#     --certificate-oidc-issuer https://token.actions.githubusercontent.com
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+rbac:
+  # The operator reads credential Secrets (the Google service account key for SheetExport)
+  # in its own namespace through a Role, never cluster-wide. A SheetExport whose
+  # credentialsSecretRef points at another namespace needs that namespace listed here;
+  # a SheetExport created by this chart is covered already.
+  credentialSecretNamespaces: []
+
+serviceAccount:
+  create: true
+  name: ""
+  # Extra annotations. The cloud identities of the operator itself are set per provider under
+  # providers.<name> (for IRSA, providers.aws.irsaRoleARN); an annotation set here wins.
+  annotations: {}
+
+# Discovery
+discovery:
+  # Account/region pairs discovered in parallel, across all NetworkScopes and providers.
+  concurrency: 4
+
+# The clouds the operator runs with. A NetworkScope selects one with spec.provider; a scope of a
+# provider that is not enabled here is reported (Ready=False, ProviderNotEnabled) and not synced.
+# Each provider has its own identity for the operator and its own change events: AWS, and GCP
+# from 2.0. Azure is added by 3.0.
+providers:
+  aws:
+    enabled: true
+    # The operator's own AWS identity, which reads the account it runs in and assumes the roles
+    # of every other account (spec.accounts[].aws.roleARN / writeRoleARN in the NetworkScope).
+    # EKS Pod Identity needs nothing here: associate the service account with the role. For
+    # IRSA, the role ARN goes here and becomes the eks.amazonaws.com/role-arn annotation.
+    irsaRoleARN: ""
+    # Region for the operator's own calls (STS, SQS); each NetworkScope target sets its own.
+    region: ""
+    # Non-AWS endpoint, for testing against emulators.
+    endpointURL: ""
+    # EC2 change events (EventBridge -> SQS, deploy/events). Leave queueUrl empty to rely on
+    # the resync interval.
+    events:
+      queueUrl: ""
+      # How long events are collected before the affected targets resync. Empty means 10s.
+      debounce: ""
+    # EKS Pod Identity hands out the operator's credentials on a link-local address. With
+    # networkPolicy.enabled, the NetworkPolicy allows egress to it; IRSA does not need it, so
+    # set enabled: false there. Unset keys take the defaults shown.
+    podIdentity: {}
+      # enabled: true
+      # cidr: 169.254.170.23/32
+      # port: 80
+
+  gcp:
+    # Discovery of VPC networks and subnetworks in the NetworkScope's projects. It reads Compute
+    # Engine and Resource Manager tags and, with --enable-writes, creates subnetworks and binds
+    # tags. The operator's own Google identity reads (and writes) every project whose account
+    # entry names no service account (spec.accounts[].gcp.serviceAccount / writeServiceAccount in
+    # the NetworkScope), and impersonates the ones that do; the roles are in deploy/gcp.
+    enabled: false
+    # Network change events: Admin Activity audit logs routed by a log sink to a Pub/Sub topic,
+    # read from a subscription as the operator's own identity, which needs
+    # roles/pubsub.subscriber on it (deploy/gcp/events.md has the gcloud and Terraform setup).
+    # Leave subscription empty to rely on the resync interval.
+    events:
+      # projects/<project>/subscriptions/<name>
+      subscription: ""
+      # How long events are collected before the affected targets resync. Empty means 10s.
+      debounce: ""
+    # GKE Workload Identity: the Google service account the operator's Kubernetes service
+    # account acts as, rendered as the iam.gke.io/gcp-service-account annotation. It needs
+    # roles/iam.workloadIdentityUser for
+    # serviceAccount:<project>.svc.id.goog[<namespace>/<service account>]. Leave it empty to
+    # grant roles to the Kubernetes service account's own principal instead.
+    workloadIdentity:
+      serviceAccount: ""
+    # Workload Identity Federation, from any cluster whose service account tokens a workload
+    # identity pool trusts (EKS, AKS, self-managed): a projected token is exchanged at Google STS.
+    # Set provider and the chart renders the credential configuration, or name a ConfigMap or
+    # Secret holding one from `gcloud iam workload-identity-pools create-cred-config
+    # --credential-source-file=<tokenPath>`. Either mounts the token and sets
+    # GOOGLE_APPLICATION_CREDENTIALS. Not together with workloadIdentity.
+    wif:
+      # projects/<project number>/locations/global/workloadIdentityPools/<pool>/providers/<provider>
+      provider: ""
+      # A service account the federated identity impersonates (service_account_impersonation_url).
+      # Empty uses the federated principal itself, which then holds the roles.
+      serviceAccount: ""
+      # Audience of the projected token. Empty is https://iam.googleapis.com/<provider>, the
+      # audience a pool provider accepts by default. Required with credentialConfig and no provider.
+      audience: ""
+      credentialConfig:
+        configMap: ""
+        secret: ""
+        key: credential-configuration.json
+      # Where the projected token is mounted; a credential configuration of your own must name
+      # this file.
+      tokenPath: /var/run/secrets/gcp-wif/token
+      tokenExpirationSeconds: 3600
+    # With networkPolicy.enabled, egress to the GKE metadata server, which hands out the
+    # credentials of GKE Workload Identity. On by default, off with wif, which does not need it.
+    # Off anywhere but GKE: elsewhere the address is the node's instance metadata service.
+    # Unset keys take the defaults shown (Dataplane V2 uses the first, other GKE clusters the second).
+    metadataServer: {}
+      # enabled: true
+      # endpoints:
+      #   - {cidr: 169.254.169.254/32, port: 80}
+      #   - {cidr: 169.254.169.252/32, port: 988}
+    # With networkPolicy.enabled and networkPolicy.egress.cidrs narrowed, the ranges the Google
+    # APIs are reached at, allowed on 443: e.g. [199.36.153.8/30] for private.googleapis.com or
+    # [199.36.153.4/30] for restricted.googleapis.com. Empty adds no rule.
+    apiCIDRs: []
+
+# The 0.8 names of providers.aws.events.queueUrl / .debounce and providers.aws.region /
+# .endpointURL (events.*, aws.*), deprecated in 0.9, were removed in 1.0: the chart refuses them,
+# naming the replacement. So is networkPolicy.egress.podIdentity (now providers.aws.podIdentity).
+
+# Audit trail. "stdout" writes one JSON line per import, allocation and policy decision to
+# stdout, apart from the operational log on stderr, so it can be shipped to a SIEM on its own.
+# "off" writes none. The fields are documented in docs/audit.md.
+audit:
+  sink: stdout
+
+# SubnetClaims and ResourceImports. Allocation always works; creating subnets and writing
+# ownership needs this switch and, per account, the provider's write identity (on AWS
+# spec.accounts[].aws.writeRoleARN in the NetworkScope, on GCP accounts[].gcp.writeServiceAccount).
+writes:
+  enabled: false
+
+leaderElection:
+  enabled: true
+  # A leader that is stopped — a drain, a rollout — hands the lease over on the way out, so these
+  # only decide how fast a standby replaces a leader that died without stopping. Shorter means a
+  # quicker takeover and more writes to the API server. renewDeadline must stay below
+  # leaseDuration, and above 1.2 x retryPeriod; the operator refuses to start otherwise.
+  leaseDuration: 15s
+  renewDeadline: 10s
+  retryPeriod: 2s
+
+# Keeps one replica running while a node is drained. A budget over a single replica would
+# block the drain instead of surviving it, so it is only created when replicaCount > 1.
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+  # Takes precedence over minAvailable when set.
+  maxUnavailable: ""
+
+# Port of the health and readiness probes.
+health:
+  port: 8081
+
+# Admission webhooks: an invalid SubnetClaim, NetworkScope or ResourceImport is refused by
+# kubectl instead of being accepted and explained in a status a reconcile later. The
+# controllers keep checking the same rules, so turning the webhooks off costs feedback, not
+# correctness.
+webhook:
+  enabled: true
+  port: 9443
+  # Fail refuses objects while the operator is unreachable, which is the point of validation.
+  # Ignore trades that for being able to apply objects during an outage.
+  failurePolicy: Fail
+  timeoutSeconds: 10
+  service:
+    annotations: {}
+  certificate:
+    # auto uses cert-manager when its API is installed in the cluster, and a self-signed
+    # certificate generated by this chart otherwise. Set certManager to true or false to
+    # decide it yourself.
+    #
+    # Use true in production and with GitOps. The self-signed certificate is renewed only by a
+    # helm upgrade (the first one within renewBefore of its expiry), its private key is stored
+    # in every Helm release Secret of the namespace, and `helm template` (Argo CD, Flux with
+    # post-rendering) signs a new CA on every render. cert-manager renews the certificate on
+    # its own and keeps the key out of the release. See the README.
+    certManager: auto
+    # Use an existing issuer instead of the self-signed one the chart creates.
+    issuerRef: {}
+      # name: internal-ca
+      # kind: ClusterIssuer
+    # How long the certificate lives, and how long before its expiry it is renewed. Both
+    # cert-manager and the chart-signed certificate use them; the chart signs for whole days
+    # and renews on the first helm upgrade within renewBefore of the expiry, or when the
+    # certificate lives longer than duration (every one signed before 2.0.1, for 10 years).
+    duration: 8760h
+    renewBefore: 720h
+    # A Secret in the release namespace you create and renew yourself, with tls.crt, tls.key
+    # and ca.crt. The chart then signs nothing and asks cert-manager for nothing (this wins over
+    # certManager) and mounts that Secret.
+    existingSecret: ""
+    # The CA (PEM) the webhook configurations trust for existingSecret. Empty reads ca.crt from
+    # the Secret at install time, which helm template (GitOps) cannot do: set it there. A new CA
+    # needs a helm upgrade; a certificate renewed under the same CA does not.
+    caBundle: ""
+  # Conversion between the API versions the CRDs serve (v1, stored, and the deprecated v1beta1).
+  # With true, the operator points its CRDs' conversion at this webhook, with the CA of the
+  # certificate above (ca.crt in its Secret), once nothing is stored at v1beta1 any more, and
+  # keeps it there as the certificate is renewed. With false, or with the webhook off, the API
+  # server converts on its own (strategy None), which is exact while the two versions have the
+  # same fields, as they do in 1.0. Either way the operator may read and patch its own six
+  # CRDs, and nothing else of that API.
+  conversion:
+    enabled: true
+
+metrics:
+  # Serve metrics over HTTPS with authn/authz (recommended). Set false for plain HTTP.
+  secure: true
+  port: 8443
+  service:
+    annotations: {}
+  serviceMonitor:
+    enabled: false
+    labels: {}
+    interval: 60s
+    scrapeTimeout: 30s
+    # Self-signed serving certificate by default.
+    insecureSkipVerify: true
+
+# Alerting rules for kube-prometheus-stack.
+prometheusRule:
+  enabled: false
+  labels: {}
+  thresholds:
+    # Warn when a subnet is this full.
+    subnetUsedRatio: 0.85
+    # Warn when the inventory has not fully resynced for this long.
+    staleSyncSeconds: 3600
+    # How long a SubnetClaim or ResourceImport may stay unfulfilled before it alerts: long enough
+    # to ride out a retry or two, short enough that nobody waits a day on a request.
+    notReadyFor: 30m
+    # How long an account/region may stay throttled by its cloud before it alerts. The operator backs a
+    # throttled target off and retries it on its own (after about 1, 2, 4, 8 and 16 minutes), so
+    # this is several retries that did not get through, not one busy moment.
+    throttledFor: 30m
+  # SubnetOperatorDown fires when no replica of the operator is being scraped successfully.
+  # Every other alert here is computed from the operator's own metrics, so when the operator
+  # is gone they go quiet instead of firing; this one is what notices the silence.
+  operatorDown:
+    # The scrape job the operator's metrics arrive under. Empty means the job the chart's own
+    # ServiceMonitor produces, which is the metrics Service's name. Set it if Prometheus scrapes
+    # the operator some other way. With no ServiceMonitor and no job here the rule is not
+    # rendered at all, because it would fire forever on a series that was never going to exist.
+    job: ""
+    for: 10m
+
+# Optional NetworkPolicy. The operator only needs the Kubernetes API server, the AWS
+# endpoints and DNS on the way out, and the metrics scrape and the kubelet probes on the way
+# in; everything else is denied. Needs a CNI that enforces policies (Calico, Cilium, ...).
+networkPolicy:
+  enabled: false
+  # Sources allowed to reach the metrics port. Empty means any source, so narrow it to the
+  # namespace Prometheus runs in.
+  metricsFrom: []
+  # - namespaceSelector:
+  #     matchLabels:
+  #       kubernetes.io/metadata.name: monitoring
+  egress:
+    # The addresses of the API server and of the cloud endpoints are not known to the chart,
+    # so egress is allowed to these destinations on these ports and to nothing else. Narrow
+    # cidrs to the API server endpoint and your VPC endpoints where you know them.
+    cidrs: [0.0.0.0/0]
+    ports: [443, 6443]
+    # Egress to the EKS Pod Identity agent is providers.aws.podIdentity. Its 0.8 name here,
+    # podIdentity, was removed in 1.0 and is refused.
+    dns:
+      enabled: true
+      # Namespace CoreDNS runs in, matched by the kubernetes.io/metadata.name label.
+      namespace: kube-system
+      ports: [53]
+  # Appended verbatim to the rules above.
+  extraIngress: []
+  extraEgress: []
+
+# Dashboard ConfigMap picked up by the Grafana sidecar.
+grafanaDashboard:
+  enabled: false
+  labels:
+    grafana_dashboard: "1"
+  annotations: {}
+
+# The dashboard app from hypersurgery.dev/dashboard/, reading this cluster instead of demo data.
+# It runs in its own pod, from the operator's image, and has no access of its own: its service
+# account has no RBAC and no token, and it forwards the bearer token of each request to the API
+# server. Every viewer sees what their own RBAC lets them read, and an import is created in
+# their name. A request without a token gets 401; there is no fallback identity.
+#
+# The token reaches it in the Authorization header: from an SSO proxy in front of it (e.g.
+# oauth2-proxy with --pass-authorization-header, against an API server that accepts the same
+# OIDC issuer), or pasted into the app by the viewer, which keeps it in the browser tab only.
+# It forwards reads of the network.hypersurgery.dev group and the creation of ResourceImports, and
+# refuses everything else.
+dashboard:
+  enabled: false
+  replicaCount: 1
+  # Plain HTTP on this port, for an Ingress or SSO proxy that terminates TLS in front of it.
+  port: 8080
+  # The kubelet probes; a port of its own so the NetworkPolicy can keep the app port narrow.
+  healthPort: 8081
+  # Largest request body passed on to the API server. A ResourceImport is well under 1 KiB.
+  maxBodyBytes: 65536
+  # Serve HTTPS from the pod itself with this kubernetes.io/tls Secret, so tokens are not in
+  # the clear between the ingress controller and the pod.
+  tls:
+    secretName: ""
+  service:
+    type: ClusterIP
+    port: 80
+    annotations: {}
+  ingress:
+    enabled: false
+    className: ""
+    # Put your SSO in front here, e.g. nginx's auth-url/auth-response-headers annotations.
+    annotations: {}
+    hosts: []
+    # - host: subnets.example.com
+    #   paths: ["/"]
+    tls: []
+    # - secretName: subnets-example-com
+    #   hosts: [subnets.example.com]
+  networkPolicy:
+    # Sources allowed to reach the dashboard when networkPolicy.enabled is true. Empty means
+    # any source, so narrow it to your ingress controller or SSO proxy.
+    from: []
+    # - namespaceSelector:
+    #     matchLabels:
+    #       kubernetes.io/metadata.name: ingress-nginx
+  resources:
+    limits:
+      cpu: 200m
+      memory: 64Mi
+    requests:
+      cpu: 10m
+      memory: 32Mi
+  podAnnotations: {}
+  podLabels: {}
+  podSecurityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: [ALL]
+    readOnlyRootFilesystem: true
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# Optionally create a NetworkScope with the release.
+networkScope:
+  create: false
+  name: organization
+  # The cloud the scope discovers: AWS or GCP (the provider has to be enabled under providers,
+  # too). It cannot change once the scope exists.
+  provider: AWS
+  # Google Cloud settings, only with provider GCP (docs/gcp.md).
+  gcp:
+    # Required with GCP: the organization (organizations/<number>) or project
+    # (projects/<project ID>) that owns the hs-* tag keys.
+    tagParent: ""
+    # Let the write identity create a missing tag value (a new owner, say). Off by default.
+    createTagValues: false
+    # Skip (the default when empty) or Bind: whether subnetworks created by claims are also bound
+    # hs-claim=<namespace>_<name>. Bind needs a value per claim; see docs/gcp.md.
+    claimTag: ""
+  # Accounts: AWS account IDs, or GCP project IDs. The read and write identities go in the
+  # provider's member: aws: {roleARN, writeRoleARN} or gcp: {serviceAccount,
+  # writeServiceAccount}. (The 0.7 form, with roleARN, externalID and writeRoleARN next to the
+  # id, was removed in 0.9 and is refused.)
+  accounts: []
+  # - id: "111111111111"
+  # - id: "222222222222"
+  #   aws:
+  #     roleARN: arn:aws:iam::222222222222:role/aws-subnet-operator-readonly
+  # With provider GCP:
+  # - id: net-host-prod
+  #   gcp:
+  #     serviceAccount: subnet-reader@net-host-prod.iam.gserviceaccount.com
+  #     writeServiceAccount: subnet-writer@net-host-prod.iam.gserviceaccount.com
+  # AWS regions (eu-central-1) or GCP regions (europe-west1).
+  regions: []
+  # Only networks (VPCs, GCP VPC networks) carrying all of these tags are discovered.
+  # (vpcTagSelector, the 0.7 name, was removed in 0.9 and is refused.) With provider GCP, the
+  # AWS defaults below are rendered as the GCP keys (hs-managed, hs-owner, hs-env, hs-tier),
+  # and an hs/managed key left over from them is dropped.
+  networkSelector:
+    matchTags:
+      hs/managed: "true"
+  requiredSubnetTags:
+    - hs/owner
+    - hs/env
+    - hs/tier
+  resyncInterval: 10m
+  # Namespaces whose SubnetClaims and ResourceImports may use this scope, and so its write
+  # roles. null (the default) leaves the field unset, which in network.hypersurgery.dev allows
+  # NO namespace: the scope only takes inventory. {} allows every namespace, which is what
+  # 0.7 did with an unset selector; set it explicitly when upgrading if you relied on that.
+  # Selecting by name cannot be tampered with:
+  #   matchExpressions:
+  #     - key: kubernetes.io/metadata.name
+  #       operator: In
+  #       values: [team-payments]
+  namespaceSelector: null
+
+# Optionally create a SheetExport with the release.
+sheetExport:
+  create: false
+  name: organization
+  spreadsheetID: ""
+  sheetName: Subnets
+  credentialsSecret:
+    name: google-sheets
+    namespace: ""      # defaults to the release namespace
+    key: credentials.json
+  extraTagColumns: []
+  refreshInterval: 5m
+
+# Measured at the documented capacity (400 account/region targets, about 6,600 VPCs and
+# subnets): about 75 MiB live heap and up to about 230 MiB resident at the peak of a sync, so
+# 256Mi was too close. See docs/operations/limits.md#memory.
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 50m
+    memory: 128Mi
+
+podAnnotations: {}
+podLabels: {}
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: [ALL]
+  readOnlyRootFilesystem: true
+
+extraArgs: []
+extraEnv: []
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# The leader and the standby are of no use on the same node or in the same zone. Both
+# constraints are ScheduleAnyway, so a single-node or single-zone cluster still schedules
+# both pods. An entry without a labelSelector gets the release's selector labels.
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: kubernetes.io/hostname
+    whenUnsatisfiable: ScheduleAnyway
+  - maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: ScheduleAnyway
+
+priorityClassName: ""
+
+# The manager stops its controllers and lets in-flight reconciles finish before it exits,
+# so the pod needs longer than the 30s default of the manager's graceful shutdown.
+terminationGracePeriodSeconds: 45

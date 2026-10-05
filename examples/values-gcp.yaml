@@ -1,0 +1,55 @@
+# Helm values for Google Cloud only (from 2.0; a 1.x chart has no providers.gcp).
+# The operator's own identity is GKE Workload Identity: the Kubernetes service account
+# subnet-operator-system/subnet-operator acts as the Google service account below, which needs
+# roles/iam.workloadIdentityUser for
+# serviceAccount:ops-tools.svc.id.goog[subnet-operator-system/subnet-operator].
+# Outside GKE, use providers.gcp.wif instead (docs/gcp.md).
+providers:
+  aws:
+    enabled: false
+  gcp:
+    enabled: true
+    workloadIdentity:
+      serviceAccount: subnet-operator@ops-tools.iam.gserviceaccount.com
+    # Optional change events: the Pub/Sub subscription a log sink fills with the audit logs of
+    # network changes (deploy/gcp/events.md). The identity above needs
+    # deploy/gcp/events-subscriber-role.yaml or roles/pubsub.subscriber on it.
+    events:
+      subscription: projects/ops-tools/subscriptions/subnet-operator-events
+
+# Claims in Create mode and imports write; leave this off for an inventory only.
+writes:
+  enabled: true
+
+# A GCP NetworkScope created with the release, the same scope as examples/08-gcp-project.yaml.
+# The tag keys (hs-owner, hs-env, hs-tier, hs-managed, hs-managed-by) must exist under
+# gcp.tagParent before the first claim or import; the operator never creates keys.
+networkScope:
+  create: true
+  name: gcp-shared-vpc
+  provider: GCP
+  gcp:
+    tagParent: organizations/123456789012
+    # Let the write identity create a missing tag value (a new owner, say). Off by default.
+    createTagValues: false
+    # Skip (the default): subnetworks created by claims carry no hs-claim tag, so no tag value
+    # per claim is needed; the claim keeps its subnetwork in status.allocations. Bind adds
+    # hs-claim=<namespace>_<name>, a value per claim (docs/gcp.md#5-tag-keys-and-values).
+    claimTag: Skip
+  accounts:
+    # A Shared VPC host project.
+    - id: net-host-prod
+      gcp:
+        serviceAccount: subnet-reader@net-host-prod.iam.gserviceaccount.com
+        writeServiceAccount: subnet-writer@net-host-prod.iam.gserviceaccount.com
+  regions: [europe-west1, europe-west4]
+  networkSelector:
+    matchTags:
+      hs-managed: "true"
+  requiredSubnetTags: [hs-owner, hs-env]
+  namespaceSelector:
+    matchExpressions:
+      - key: kubernetes.io/metadata.name
+        operator: In
+        values: [team-payments, team-data]
+  resyncInterval: 10m

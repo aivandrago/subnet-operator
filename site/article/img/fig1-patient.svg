@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" font-family="PT Serif, Georgia, serif" viewBox="0 0 820 300" role="img" aria-label="A spreadsheet on a hospital stretcher, attached to a monitor showing a flat line, with a drift counter rising">
+      <defs>
+        <linearGradient id="f1bg" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#e7dfd0"/><stop offset="1" stop-color="#f2ece0"/>
+        </linearGradient>
+      </defs>
+      <rect width="820" height="300" fill="url(#f1bg)"/>
+
+      <!-- stretcher -->
+      <rect x="120" y="196" width="420" height="10" rx="5" fill="#c9bfae"/>
+      <circle cx="170" cy="228" r="16" fill="none" stroke="#7b7266" stroke-width="4"/>
+      <circle cx="490" cy="228" r="16" fill="none" stroke="#7b7266" stroke-width="4"/>
+      <rect x="150" y="206" width="6" height="18" fill="#7b7266"/>
+      <rect x="504" y="206" width="6" height="18" fill="#7b7266"/>
+
+      <!-- the patient: a spreadsheet -->
+      <g>
+        <rect x="170" y="104" width="320" height="92" rx="8" fill="#f2ece0" stroke="#4a443c" stroke-width="2"/>
+        <rect x="170" y="104" width="320" height="20" rx="8" fill="#c9bfae"/>
+        <rect x="170" y="116" width="320" height="8" fill="#c9bfae"/>
+        <g stroke="#c9bfae" stroke-width="1.5">
+          <line x1="170" y1="148" x2="490" y2="148"/><line x1="170" y1="172" x2="490" y2="172"/>
+          <line x1="250" y1="124" x2="250" y2="196"/><line x1="340" y1="124" x2="340" y2="196"/>
+          <line x1="420" y1="124" x2="420" y2="196"/>
+        </g>
+        <text x="182" y="118" font-family="PT Mono, JetBrains Mono, monospace" font-size="11" fill="#4a443c">Sheet1 — VPC_SUBNETS_FINAL_v7_REALLY_FINAL.xlsx</text>
+        <text x="182" y="141" font-family="PT Mono, JetBrains Mono, monospace" font-size="10" fill="#7b7266">10.0.1.0/24</text>
+        <text x="262" y="141" font-family="PT Mono, JetBrains Mono, monospace" font-size="10" fill="#7b7266">prod?</text>
+        <text x="352" y="141" font-family="PT Mono, JetBrains Mono, monospace" font-size="10" fill="#7b7266">team-a</text>
+        <text x="432" y="141" font-family="PT Mono, JetBrains Mono, monospace" font-size="10" fill="#c1121f">ask Dmitri</text>
+        <text x="182" y="165" font-family="PT Mono, JetBrains Mono, monospace" font-size="10" fill="#7b7266">10.0.?.0/24</text>
+        <text x="262" y="165" font-family="PT Mono, JetBrains Mono, monospace" font-size="10" fill="#7b7266">staging</text>
+        <text x="352" y="165" font-family="PT Mono, JetBrains Mono, monospace" font-size="10" fill="#7b7266">???</text>
+        <text x="432" y="165" font-family="PT Mono, JetBrains Mono, monospace" font-size="10" fill="#8f0d17">temporary</text>
+        <text x="182" y="189" font-family="PT Mono, JetBrains Mono, monospace" font-size="10" fill="#7b7266">10.0.9.0/24</text>
+        <text x="262" y="189" font-family="PT Mono, JetBrains Mono, monospace" font-size="10" fill="#7b7266">deleted?</text>
+        <text x="352" y="189" font-family="PT Mono, JetBrains Mono, monospace" font-size="10" fill="#7b7266">—</text>
+        <text x="432" y="189" font-family="PT Mono, JetBrains Mono, monospace" font-size="10" fill="#7b7266">2021</text>
+      </g>
+
+      <!-- drip stand, dripping "manual updates" -->
+      <line x1="560" y1="60" x2="560" y2="220" stroke="#7b7266" stroke-width="4"/>
+      <rect x="540" y="60" width="40" height="52" rx="8" fill="#f2ece0" stroke="#4a443c" stroke-width="2"/>
+      <text x="560" y="92" text-anchor="middle" font-family="PT Mono, JetBrains Mono, monospace" font-size="10" fill="#4a443c">manual</text>
+      <circle cx="560" cy="130" r="3" fill="#4a443c" opacity=".8"/>
+      <circle cx="560" cy="152" r="3" fill="#4a443c" opacity=".45"/>
+      <circle cx="560" cy="172" r="3" fill="#4a443c" opacity=".2"/>
+
+      <!-- monitor with a flat line -->
+      <rect x="616" y="70" width="168" height="110" rx="10" fill="#f2ece0" stroke="#c9bfae" stroke-width="2"/>
+      <polyline points="626,140 676,140 686,140 696,140 706,140 720,140 774,140" fill="none" stroke="#c1121f" stroke-width="2.5"/>
+      <text x="700" y="100" text-anchor="middle" font-family="PT Mono, JetBrains Mono, monospace" font-size="11" fill="#c1121f">TRUTH: 0 bpm</text>
+      <text x="700" y="166" text-anchor="middle" font-family="PT Mono, JetBrains Mono, monospace" font-size="10" fill="#7b7266">last edit: 4 months ago</text>
+
+      <!-- drift counter -->
+      <rect x="616" y="196" width="168" height="44" rx="10" fill="#f2ece0" stroke="#8f0d17" stroke-width="2"/>
+      <text x="700" y="215" text-anchor="middle" font-family="PT Mono, JetBrains Mono, monospace" font-size="10" fill="#4a443c">UNTRACKED SUBNETS</text>
+      <text x="700" y="233" text-anchor="middle" font-family="PT Mono, JetBrains Mono, monospace" font-size="14" fill="#8f0d17">+ 37 and counting</text>
+      <!-- the operator, in character -->
+  <g transform="translate(20 118) scale(0.7)">
+    <rect x="16" y="-12" width="66" height="12" rx="3" fill="#c1121f"/>
+    <rect x="16" y="0" width="66" height="44" rx="7" fill="#e7dfd0" stroke="#c1121f" stroke-width="2.5"/>
+    <rect x="19" y="3" width="60" height="7" rx="2" fill="#c1121f"/>
+    <rect x="30" y="18" width="14" height="6" rx="2" fill="#c1121f"/>
+    <rect x="56" y="18" width="14" height="6" rx="2" fill="#c1121f"/>
+    <rect x="40" y="32" width="22" height="3" rx="1.5" fill="#7b7266"/>
+    <rect x="6" y="52" width="86" height="80" rx="7" fill="#e7dfd0" stroke="#c1121f" stroke-width="2.5"/>
+    <rect x="6" y="108" width="86" height="14" fill="#c1121f"/>
+    <text x="49" y="119" text-anchor="middle" font-family="PT Mono, JetBrains Mono, monospace" font-size="8" fill="#f2ece0">hs/managed</text>
+    <rect x="-22" y="64" width="30" height="24" rx="9" fill="#c1121f"/><rect x="90" y="64" width="30" height="24" rx="9" fill="#c1121f"/><rect x="96" y="84" width="46" height="36" rx="4" fill="#f2ece0" stroke="#4a443c" stroke-width="2"/><line x1="104" y1="96" x2="134" y2="96" stroke="#7b7266" stroke-width="2"/><line x1="104" y1="107" x2="134" y2="107" stroke="#7b7266" stroke-width="2"/>
+    <rect x="20" y="132" width="24" height="26" rx="4" fill="#e7dfd0" stroke="#c1121f" stroke-width="2.5"/>
+    <rect x="56" y="132" width="24" height="26" rx="4" fill="#e7dfd0" stroke="#c1121f" stroke-width="2.5"/>
+  </g>
+  <text x="20" y="286" font-family="PT Mono, JetBrains Mono, monospace" font-size="10" fill="#c1121f">“I have read the chart.”</text>
+</svg>

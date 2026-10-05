@@ -1,0 +1,215 @@
+{{- include "subnet-operator.removedValues" . }}
+{{- $gcpWIF := include "subnet-operator.gcp.wif" . | fromYaml }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "subnet-operator.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "subnet-operator.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "subnet-operator.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "subnet-operator.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- $podAnnotations := deepCopy (default dict .Values.podAnnotations) }}
+      {{- if and $gcpWIF.enabled $gcpWIF.render }}
+      {{- /* ADC reads the credential configuration once, at start: roll the pods when it changes. */}}
+      {{- $_ := set $podAnnotations "checksum/gcp-credentials" (include (print $.Template.BasePath "/gcp-credentials.yaml") . | sha256sum) }}
+      {{- end }}
+      {{- with $podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "subnet-operator.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: manager
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - --health-probe-bind-address=:{{ .Values.health.port }}
+            {{- if .Values.metrics.secure }}
+            - --metrics-bind-address=:{{ .Values.metrics.port }}
+            - --metrics-secure=true
+            {{- else }}
+            - --metrics-bind-address=:{{ .Values.metrics.port }}
+            - --metrics-secure=false
+            {{- end }}
+            {{- if .Values.leaderElection.enabled }}
+            - --leader-elect
+            - --leader-elect-lease-duration={{ .Values.leaderElection.leaseDuration }}
+            - --leader-elect-renew-deadline={{ .Values.leaderElection.renewDeadline }}
+            - --leader-elect-retry-period={{ .Values.leaderElection.retryPeriod }}
+            {{- end }}
+            - --discovery-concurrency={{ .Values.discovery.concurrency }}
+            - --providers={{ include "subnet-operator.providers" . }}
+            {{- if .Values.writes.enabled }}
+            - --enable-writes
+            {{- end }}
+            {{- $awsQueue := include "subnet-operator.aws.eventsQueueUrl" . }}
+            {{- if and .Values.providers.aws.enabled $awsQueue }}
+            - --aws-events-queue-url={{ $awsQueue }}
+            - --aws-events-debounce={{ include "subnet-operator.aws.eventsDebounce" . }}
+            {{- end }}
+            {{- $gcpSubscription := include "subnet-operator.gcp.eventsSubscription" . }}
+            {{- if $gcpSubscription }}
+            - --gcp-events-subscription={{ $gcpSubscription }}
+            - --gcp-events-debounce={{ include "subnet-operator.gcp.eventsDebounce" . }}
+            {{- end }}
+            - --audit-sink={{ .Values.audit.sink }}
+            {{- if .Values.webhook.enabled }}
+            - --webhook-port={{ .Values.webhook.port }}
+            - --webhook-cert-path=/tmp/k8s-webhook-server/serving-certs
+            {{- else }}
+            - --enable-webhooks=false
+            {{- end }}
+            {{- /* dig: a release upgraded with --reuse-values has no webhook.conversion yet. */}}
+            {{- if and .Values.webhook.enabled (dig "conversion" "enabled" true .Values.webhook) }}
+            - --crd-conversion=webhook
+            - --conversion-webhook-service={{ .Release.Namespace }}/{{ include "subnet-operator.fullname" . }}-webhook
+            {{- else }}
+            - --crd-conversion=none
+            {{- end }}
+            {{- with .Values.extraArgs }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          env:
+            {{- $awsRegion := include "subnet-operator.aws.region" . }}
+            {{- $awsEndpoint := include "subnet-operator.aws.endpointURL" . }}
+            {{- if and .Values.providers.aws.enabled $awsRegion }}
+            - name: AWS_REGION
+              value: {{ $awsRegion | quote }}
+            {{- end }}
+            {{- if and .Values.providers.aws.enabled $awsEndpoint }}
+            - name: AWS_ENDPOINT_URL
+              value: {{ $awsEndpoint | quote }}
+            {{- end }}
+            {{- if $gcpWIF.enabled }}
+            # Application Default Credentials read the Workload Identity Federation config here.
+            - name: GOOGLE_APPLICATION_CREDENTIALS
+              value: {{ include "subnet-operator.gcp.credentialConfigDir" . }}/{{ $gcpWIF.key }}
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.metrics.port }}
+              protocol: TCP
+            - name: health
+              containerPort: {{ .Values.health.port }}
+              protocol: TCP
+            {{- if .Values.webhook.enabled }}
+            - name: webhook
+              containerPort: {{ .Values.webhook.port }}
+              protocol: TCP
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          {{- if or .Values.webhook.enabled $gcpWIF.enabled }}
+          volumeMounts:
+            {{- if .Values.webhook.enabled }}
+            - name: webhook-cert
+              mountPath: /tmp/k8s-webhook-server/serving-certs
+              readOnly: true
+            {{- end }}
+            {{- if $gcpWIF.enabled }}
+            - name: gcp-credential-config
+              mountPath: {{ include "subnet-operator.gcp.credentialConfigDir" . }}
+              readOnly: true
+            - name: gcp-wif-token
+              mountPath: {{ $gcpWIF.tokenDir }}
+              readOnly: true
+            {{- end }}
+          {{- end }}
+      {{- if or .Values.webhook.enabled $gcpWIF.enabled }}
+      volumes:
+        {{- if .Values.webhook.enabled }}
+        - name: webhook-cert
+          secret:
+            secretName: {{ include "subnet-operator.webhook.secretName" . }}
+            defaultMode: 0444
+        {{- end }}
+        {{- if $gcpWIF.enabled }}
+        # Workload Identity Federation: the credential configuration, and the service account
+        # token it exchanges, projected with the audience the pool provider accepts.
+        - name: gcp-credential-config
+          {{- if $gcpWIF.secret }}
+          secret:
+            secretName: {{ $gcpWIF.secret }}
+            items:
+              - key: {{ $gcpWIF.key }}
+                path: {{ $gcpWIF.key }}
+          {{- else }}
+          configMap:
+            name: {{ $gcpWIF.configMap | default (printf "%s-gcp-credentials" (include "subnet-operator.fullname" .)) }}
+            items:
+              - key: {{ $gcpWIF.key }}
+                path: {{ $gcpWIF.key }}
+          {{- end }}
+        - name: gcp-wif-token
+          projected:
+            sources:
+              - serviceAccountToken:
+                  audience: {{ $gcpWIF.audience | quote }}
+                  expirationSeconds: {{ $gcpWIF.expirationSeconds }}
+                  path: {{ $gcpWIF.tokenFile }}
+        {{- end }}
+      {{- end }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- range . }}
+        - {{ toYaml (omit . "labelSelector") | nindent 10 | trim }}
+          labelSelector:
+            {{- with .labelSelector }}
+            {{- toYaml . | nindent 12 }}
+            {{- else }}
+            matchLabels:
+              {{- include "subnet-operator.selectorLabels" $ | nindent 14 }}
+            {{- end }}
+        {{- end }}
+      {{- end }}
