@@ -1,0 +1,54 @@
+# Read-only role the operator assumes in every spoke account.
+# Deploy it to all accounts with a service-managed CloudFormation StackSet.
+AWSTemplateFormatVersion: "2010-09-09"
+Description: aws-subnet-operator read-only discovery role
+
+Parameters:
+  OperatorRoleArn:
+    Type: String
+    Description: ARN of the operator's IAM role in the hub account (EKS Pod Identity or IRSA role).
+    AllowedPattern: "^arn:aws[a-z-]*:iam::[0-9]{12}:role/.+$"
+  ExternalId:
+    Type: String
+    Default: ""
+    Description: Optional sts:ExternalId; must match spec.accounts[].externalID in the NetworkScope.
+
+Conditions:
+  HasExternalId: !Not [!Equals [!Ref ExternalId, ""]]
+
+Resources:
+  ReadOnlyRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: aws-subnet-operator-readonly
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Ref OperatorRoleArn
+            Action: sts:AssumeRole
+            Condition: !If
+              - HasExternalId
+              - StringEquals:
+                  sts:ExternalId: !Ref ExternalId
+              - !Ref AWS::NoValue
+      Policies:
+        - PolicyName: discover-networks
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeVpcs
+                  - ec2:DescribeSubnets
+                  - ec2:DescribeRouteTables
+                Resource: "*"
+      Tags:
+        - Key: hs/managed-by
+          Value: aws-subnet-operator
+
+Outputs:
+  RoleArn:
+    Value: !GetAtt ReadOnlyRole.Arn

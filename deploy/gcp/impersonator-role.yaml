@@ -1,0 +1,24 @@
+# Custom role for the operator's own identity on the service accounts it impersonates
+# (accounts[].gcp.serviceAccount and writeServiceAccount), the GCP counterpart of the AWS
+# operator policy's sts:AssumeRole. It is roles/iam.serviceAccountTokenCreator narrowed to
+# access tokens: no signing of blobs or JWTs, no ID tokens.
+#
+# The operator's own identity is the GKE Workload Identity service account, the service
+# account a Workload Identity Federation configuration impersonates, or the federated
+# principal itself:
+#   principal://iam.googleapis.com/projects/POOL_PROJECT_NUMBER/locations/global/workloadIdentityPools/POOL/subject/system:serviceaccount:NAMESPACE:SERVICE_ACCOUNT
+#
+#   gcloud iam roles create subnetOperatorImpersonator --organization=ORG_NUMBER \
+#     --file=deploy/gcp/impersonator-role.yaml
+#   gcloud iam service-accounts add-iam-policy-binding \
+#     subnet-reader@PROJECT_ID.iam.gserviceaccount.com \
+#     --role=organizations/ORG_NUMBER/roles/subnetOperatorImpersonator \
+#     --member=serviceAccount:subnet-operator@OPERATOR_PROJECT_ID.iam.gserviceaccount.com
+#
+# The IAM Service Account Credentials API (iamcredentials.googleapis.com) must be enabled in
+# the project of the operator's own identity.
+title: Subnet operator impersonator
+description: Gets access tokens of the service accounts it is granted on. Nothing else.
+stage: GA
+includedPermissions:
+  - iam.serviceAccounts.getAccessToken

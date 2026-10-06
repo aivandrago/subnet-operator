@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" font-family="PT Serif, Georgia, serif" viewBox="0 0 820 340" role="img" aria-label="Decision tree for the auto-import policy: created by Terraform means skip; a known creator maps to a team; otherwise inherit from the parent VPC; otherwise mark no owner and alert">
+      <rect width="820" height="340" fill="#f2ece0"/>
+
+      <rect x="300" y="20" width="220" height="46" rx="10" fill="#e7dfd0" stroke="#4a443c" stroke-width="2"/>
+      <text x="410" y="48" text-anchor="middle" font-family="PT Mono, JetBrains Mono, monospace" font-size="12" fill="#1a1714">untagged resource appears</text>
+
+      <g stroke="#7b7266" stroke-width="2" fill="none">
+        <path d="M410 66 L410 96"/>
+        <path d="M410 142 L410 172"/>
+        <path d="M410 218 L410 248"/>
+      </g>
+
+      <!-- step 1 -->
+      <rect x="276" y="96" width="268" height="46" rx="10" fill="#e7dfd0" stroke="#4a443c" stroke-width="2"/>
+      <text x="410" y="124" text-anchor="middle" font-family="PT Mono, JetBrains Mono, monospace" font-size="12" fill="#1a1714">created by Terraform?</text>
+      <path d="M544 119 L664 119" stroke="#4a443c" stroke-width="2" fill="none" marker-end="url(#ar2)"/>
+      <rect x="664" y="98" width="132" height="42" rx="10" fill="rgba(74,222,128,.08)" stroke="#4a443c" stroke-width="2"/>
+      <text x="730" y="124" text-anchor="middle" font-family="PT Mono, JetBrains Mono, monospace" font-size="11" fill="#4a443c">skip. not mine.</text>
+
+      <!-- step 2 -->
+      <rect x="276" y="172" width="268" height="46" rx="10" fill="#e7dfd0" stroke="#4a443c" stroke-width="2"/>
+      <text x="410" y="200" text-anchor="middle" font-family="PT Mono, JetBrains Mono, monospace" font-size="12" fill="#1a1714">creator maps to a team?</text>
+      <path d="M544 195 L664 195" stroke="#c1121f" stroke-width="2" fill="none" marker-end="url(#ar3)"/>
+      <rect x="664" y="174" width="132" height="42" rx="10" fill="rgba(45,212,191,.08)" stroke="#c1121f" stroke-width="2"/>
+      <text x="730" y="200" text-anchor="middle" font-family="PT Mono, JetBrains Mono, monospace" font-size="11" fill="#c1121f">tag with that team</text>
+
+      <!-- step 3 -->
+      <rect x="276" y="248" width="268" height="46" rx="10" fill="#e7dfd0" stroke="#4a443c" stroke-width="2"/>
+      <text x="410" y="276" text-anchor="middle" font-family="PT Mono, JetBrains Mono, monospace" font-size="12" fill="#1a1714">parent VPC has an owner?</text>
+      <path d="M544 271 L664 271" stroke="#c1121f" stroke-width="2" fill="none" marker-end="url(#ar3)"/>
+      <rect x="664" y="250" width="132" height="42" rx="10" fill="rgba(45,212,191,.08)" stroke="#c1121f" stroke-width="2"/>
+      <text x="730" y="276" text-anchor="middle" font-family="PT Mono, JetBrains Mono, monospace" font-size="11" fill="#c1121f">inherit it</text>
+
+      <!-- fallthrough -->
+      <path d="M410 294 L410 316" stroke="#7b7266" stroke-width="2" fill="none"/>
+      <rect x="260" y="316" width="300" height="20" rx="10" fill="rgba(248,113,113,.10)" stroke="#c1121f" stroke-width="2"/>
+      <text x="410" y="331" text-anchor="middle" font-family="PT Mono, JetBrains Mono, monospace" font-size="11" fill="#c1121f">mark no_owner · alert a human · never guess</text>
+
+      <defs>
+        <marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#4a443c"/></marker>
+        <marker id="ar3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#c1121f"/></marker>
+      </defs>
+
+          <!-- the operator, in character -->
+  <g transform="translate(30 150) scale(0.8)">
+    <rect x="16" y="-12" width="66" height="12" rx="3" fill="#c1121f"/>
+    <rect x="16" y="0" width="66" height="44" rx="7" fill="#e7dfd0" stroke="#c1121f" stroke-width="2.5"/>
+    <rect x="19" y="3" width="60" height="7" rx="2" fill="#c1121f"/>
+    <rect x="30" y="18" width="14" height="6" rx="2" fill="#c1121f"/>
+    <rect x="56" y="18" width="14" height="6" rx="2" fill="#c1121f"/>
+    <rect x="40" y="32" width="22" height="3" rx="1.5" fill="#7b7266"/>
+    <rect x="6" y="52" width="86" height="80" rx="7" fill="#e7dfd0" stroke="#c1121f" stroke-width="2.5"/>
+    <rect x="6" y="108" width="86" height="14" fill="#c1121f"/>
+    <text x="49" y="119" text-anchor="middle" font-family="PT Mono, JetBrains Mono, monospace" font-size="8" fill="#f2ece0">hs/managed</text>
+    <rect x="-20" y="60" width="28" height="24" rx="9" fill="#c1121f"/><rect x="90" y="60" width="28" height="24" rx="9" fill="#c1121f"/>
+    <rect x="20" y="132" width="24" height="26" rx="4" fill="#e7dfd0" stroke="#c1121f" stroke-width="2.5"/>
+    <rect x="56" y="132" width="24" height="26" rx="4" fill="#e7dfd0" stroke="#c1121f" stroke-width="2.5"/>
+  </g>
+  <text x="36" y="316" font-family="PT Mono, JetBrains Mono, monospace" font-size="10" fill="#c1121f">“I do not guess.”</text>
+</svg>

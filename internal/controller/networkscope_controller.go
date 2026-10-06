@@ -1,0 +1,939 @@
+/*
+Copyright 2026.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package controller
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"slices"
+	"strings"
+	"sync"
+	"time"
+
+	"golang.org/x/sync/errgroup"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	kevents "k8s.io/client-go/tools/events"
+	"k8s.io/client-go/util/retry"
+	"k8s.io/utils/clock"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/source"
+
+	networkv1 "hypersurgery.dev/subnet-operator/api/v1"
+	"hypersurgery.dev/subnet-operator/internal/audit"
+	"hypersurgery.dev/subnet-operator/internal/inventory"
+	"hypersurgery.dev/subnet-operator/internal/metrics"
+	"hypersurgery.dev/subnet-operator/internal/provider"
+	"hypersurgery.dev/subnet-operator/internal/tenancy"
+)
+
+const (
+	// ConditionReady is True when every account/region of the scope synced successfully.
+	ConditionReady = "Ready"
+
+	defaultResyncInterval = 10 * time.Minute
+	minResyncInterval     = time.Minute
+	defaultConcurrency    = 4
+)
+
+// NetworkScopeReconciler discovers the accounts and regions of a NetworkScope and mirrors
+// their networks and subnets as Network and Subnet objects. It never writes to the cloud.
+type NetworkScopeReconciler struct {
+	client.Client
+	Scheme *runtime.Scheme
+	// Providers are the clouds the operator runs with; the scope's spec.provider picks one,
+	// which discovers its targets. A scope whose provider is not among them is not synced.
+	Providers *provider.Registry
+	// APIReader reads Network and Subnet lists directly from the API server, because the
+	// informer cache may not yet contain objects created earlier in the same sync.
+	// When nil, the cached client is used.
+	APIReader client.Reader
+	// Concurrency is the number of account/region pairs discovered in parallel, across all
+	// scopes: the cap is on what this instance asks of AWS at once, so it must not multiply
+	// with the number of scopes being reconciled.
+	Concurrency int
+	// Creators remembers who created a resource, from CloudTrail events. The auto-import
+	// policy asks it before falling back to inheritance or account defaults.
+	Creators *CreatorCache
+	// Recorder puts policy decisions and unreachable targets on the scope, where
+	// `kubectl describe networkscope` shows them.
+	Recorder kevents.EventRecorder
+	// Audit receives one line per policy decision. Nil keeps the audit trail off.
+	Audit audit.Sink
+	// Clock tells the time for resync and backoff decisions. Nil is the real clock.
+	Clock clock.PassiveClock
+	// Identity is the Kubernetes user the operator authenticates as. The auto-import policy
+	// writes it into the created-by annotation of the imports it creates — the same value the
+	// admission webhook would write — and into the created_by of its audit lines. Empty when
+	// it could not be found out; the webhook still records the real one on the import.
+	Identity string
+
+	pending     pendingTargets
+	backoff     throttleBackoff
+	slots       chan struct{}
+	slotsOnce   sync.Once
+	changes     chan event.GenericEvent
+	changesOnce sync.Once
+}
+
+// +kubebuilder:rbac:groups=network.hypersurgery.dev,resources=networkscopes,verbs=get;list;watch
+// +kubebuilder:rbac:groups=network.hypersurgery.dev,resources=networkscopes/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=network.hypersurgery.dev,resources=networkscopes/finalizers,verbs=update
+// +kubebuilder:rbac:groups=network.hypersurgery.dev,resources=networks;subnets,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=network.hypersurgery.dev,resources=networks/status;subnets/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=network.hypersurgery.dev,resources=resourceimports,verbs=get;list;watch;create
+// Events are written on the objects people look at, including cluster-scoped ones, so this
+// permission cannot be namespaced the way the credential Secret is.
+// +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
+
+// Reconcile syncs the scope. A full sync (every account/region) runs when the spec changed or
+// the resync interval elapsed; in between, only the targets reported changed by EC2 events
+// (see NotifyChanged) are synced.
+func (r *NetworkScopeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.Result, reterr error) {
+	log := logf.FromContext(ctx)
+
+	scope := &networkv1.NetworkScope{}
+	if err := r.Get(ctx, req.NamespacedName, scope); err != nil {
+		if apierrors.IsNotFound(err) {
+			// Network and Subnet objects are garbage-collected through their owner references.
+			metrics.Forget(req.Name)
+			r.pending.take(req.Name)
+			r.backoff.forget(req.Name)
+			return ctrl.Result{}, nil
+		}
+		return ctrl.Result{}, err
+	}
+	if !scope.DeletionTimestamp.IsZero() {
+		return ctrl.Result{}, nil
+	}
+
+	// Once per change of the spec, not on every sync: the warning is about how the scope is
+	// written, and a spec change is when somebody is looking at it.
+	if tenancy.Unrestricted(scope) && scope.Status.ObservedGeneration != scope.Generation {
+		log.Info("NetworkScope has an empty namespaceSelector; every namespace may use it", "scope", scope.Name)
+		eventf(r.Recorder, scope, corev1.EventTypeWarning, EventNamespacesUnrestricted, ActionCheckNamespaces,
+			"%s", tenancy.UnrestrictedWarning(scope))
+	}
+
+	p, ok := r.Providers.Get(scope.Spec.Provider)
+	if !ok {
+		return ctrl.Result{}, r.reportProviderNotEnabled(ctx, scope)
+	}
+
+	now := r.now()
+	all := expandTargets(scope, p)
+	full := needsFullSync(scope, now)
+	// Taken before discovery: events arriving during the sync stay pending and trigger another one.
+	changed := r.pending.take(scope.Name)
+	defer func() {
+		if reterr != nil {
+			r.pending.add(scope.Name, changed)
+		}
+	}()
+
+	// A target backed off after throttling is left out until its delay runs out — even from a
+	// full sync, even when an event names it: another call now is exactly what the account
+	// cannot take. Once the delay has run out it is tried on its own, between full syncs,
+	// rather than waiting for the next one and joining its burst.
+	var targets []inventory.Target
+	for _, t := range all {
+		key := t.Key()
+		if r.backoff.waiting(scope.Name, key, now) {
+			continue
+		}
+		if full || changed[key] || r.backoff.due(scope.Name, key, now) {
+			targets = append(targets, t)
+		}
+	}
+	if !full {
+		if len(targets) == 0 {
+			return ctrl.Result{RequeueAfter: r.requeueAfter(scope, all, untilFullSync(scope, now))}, nil
+		}
+		log.V(1).Info("syncing changed targets", "targets", len(targets))
+	}
+	results := r.discoverAll(ctx, p, targets)
+
+	tagKeys := scope.ResolvedTagKeys()
+	for i := range results {
+		res := &results[i]
+		key := res.target.Key()
+		if errors.Is(res.err, inventory.ErrThrottled) {
+			// Reachable but busy: the last known inventory stays, and the target is retried on
+			// its own schedule instead of at the scope's cadence.
+			until := r.backoff.throttled(scope.Name, key, r.now())
+			log.Info("discovery throttled, backing off", "account", res.target.Account,
+				"region", res.target.Region, "retryAt", until, "error", res.err.Error())
+			eventf(r.Recorder, scope, corev1.EventTypeWarning, EventTargetThrottled, ActionDiscover,
+				"Account %s in %s is throttled by the API, next attempt at %s: %v", res.target.Account,
+				res.target.Region, until.UTC().Format(time.RFC3339), res.err)
+			continue
+		}
+		r.backoff.reset(scope.Name, key)
+		if res.err != nil {
+			log.Error(res.err, "discovery failed", "account", res.target.Account, "region", res.target.Region)
+			// The status keeps the last known inventory of this target, so without an Event
+			// nothing on the object says the numbers stopped moving.
+			eventf(r.Recorder, scope, corev1.EventTypeWarning, EventTargetUnreachable, ActionDiscover,
+				"Could not read account %s in %s: %v", res.target.Account, res.target.Region, res.err)
+			continue
+		}
+		if err := r.syncTarget(ctx, scope, res.target, res.snapshot, tagKeys); err != nil {
+			// Kubernetes API errors are retried with backoff; AWS errors wait for the next resync.
+			return ctrl.Result{}, fmt.Errorf("sync %s: %w", res.target.Key(), err)
+		}
+	}
+
+	if full {
+		if err := r.deleteRemovedTargets(ctx, scope.Name, all); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+	if err := r.deleteGoneGlobalNetworks(ctx, scope.Name, all, results); err != nil {
+		return ctrl.Result{}, err
+	}
+	networks, err := r.updateNetworks(ctx, scope.Name)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	subnets := &networkv1.SubnetList{}
+	if err := r.reader().List(ctx, subnets, client.MatchingLabels{networkv1.LabelScope: scope.Name}); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// What the selector left out: counted, alerted on, and offered to the policy.
+	r.reportUnmanaged(ctx, scope, results)
+
+	syncTime := metav1.NewTime(now)
+	statusTargets, throttled, err := r.updateStatus(ctx, scope, p, all, results, full, len(networks), len(subnets.Items), syncTime)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	metrics.SetScope(scope.Name, scope.Spec.Provider, networks, subnets.Items, metricTargets(statusTargets, results, throttled), float64(now.Unix()))
+
+	if full {
+		return ctrl.Result{RequeueAfter: r.requeueAfter(scope, all, resyncInterval(scope))}, nil
+	}
+	return ctrl.Result{RequeueAfter: r.requeueAfter(scope, all, untilFullSync(scope, now))}, nil
+}
+
+func (r *NetworkScopeReconciler) now() time.Time {
+	if r.Clock == nil {
+		return time.Now()
+	}
+	return r.Clock.Now()
+}
+
+// requeueAfter brings the next reconcile forward from untilNext when a backed-off target of
+// the scope is due before it. The backoff was set after discovery, so it is measured from the
+// clock now rather than from the start of the reconcile.
+func (r *NetworkScopeReconciler) requeueAfter(scope *networkv1.NetworkScope, all []inventory.Target,
+	untilNext time.Duration) time.Duration {
+	if until, ok := r.backoff.next(scope.Name, all); ok {
+		return min(untilNext, max(until.Sub(r.now()), time.Second))
+	}
+	return untilNext
+}
+
+// fullSyncSlack absorbs timer jitter, so a requeue scheduled for the interval is not
+// mistaken for an early one.
+const fullSyncSlack = 5 * time.Second
+
+func needsFullSync(scope *networkv1.NetworkScope, now time.Time) bool {
+	if scope.Status.LastSyncTime == nil || scope.Status.ObservedGeneration != scope.Generation {
+		return true
+	}
+	return !now.Before(scope.Status.LastSyncTime.Add(resyncInterval(scope) - fullSyncSlack))
+}
+
+func untilFullSync(scope *networkv1.NetworkScope, now time.Time) time.Duration {
+	if scope.Status.LastSyncTime == nil {
+		return time.Second
+	}
+	return max(scope.Status.LastSyncTime.Add(resyncInterval(scope)).Sub(now), time.Second)
+}
+
+func (r *NetworkScopeReconciler) reader() client.Reader {
+	if r.APIReader != nil {
+		return r.APIReader
+	}
+	return r.Client
+}
+
+type targetResult struct {
+	target   inventory.Target
+	snapshot *inventory.Snapshot
+	err      error
+}
+
+// expandTargets lists the account/region pairs of the scope, each with the read identity the
+// provider reaches its account with. A nil provider leaves the identities out, for callers
+// that only need the pairs. The account is in the operator's spelling (CanonicalAccountID), and
+// an account listed again in another spelling, which the webhook refuses, is left out.
+func expandTargets(scope *networkv1.NetworkScope, p provider.Provider) []inventory.Target {
+	var targets []inventory.Target
+	tagNames := scope.TagNames()
+	seen := map[string]bool{}
+	for _, a := range scope.Spec.Accounts {
+		account := networkv1.CanonicalAccountID(scope.Spec.Provider, a.ID)
+		if seen[account] {
+			continue
+		}
+		seen[account] = true
+		regions := a.Regions
+		if len(regions) == 0 {
+			regions = scope.Spec.Regions
+		}
+		var identity inventory.Identity
+		if p != nil {
+			identity = p.Identity(a, provider.Read)
+		}
+		for _, region := range regions {
+			targets = append(targets, inventory.Target{
+				Provider:          scope.Spec.Provider,
+				Scope:             scope.Name,
+				Account:           account,
+				Region:            region,
+				Identity:          identity,
+				NetworkSelector:   scope.MatchTags(),
+				DiscoverUnmanaged: discoverUnmanaged(scope),
+				TagNames:          tagNames,
+				GCP:               scope.Spec.GCP,
+				Azure:             scope.Spec.Azure,
+			})
+		}
+	}
+	return targets
+}
+
+// reportProviderNotEnabled marks a scope whose provider this operator does not run: nothing
+// is discovered, and the inventory it had stays as it was.
+func (r *NetworkScopeReconciler) reportProviderNotEnabled(ctx context.Context, scope *networkv1.NetworkScope) error {
+	msg := r.Providers.NotEnabled(scope.Spec.Provider)
+	logf.FromContext(ctx).Info("NetworkScope is not synced: its provider is not enabled",
+		"scope", scope.Name, "provider", scope.Spec.Provider)
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		latest := &networkv1.NetworkScope{}
+		if err := r.Get(ctx, client.ObjectKeyFromObject(scope), latest); err != nil {
+			return client.IgnoreNotFound(err)
+		}
+		before := latest.Status.DeepCopy()
+		latest.Status.Capabilities, latest.Status.Ownership = nil, nil
+		meta.SetStatusCondition(&latest.Status.Conditions, metav1.Condition{Type: ConditionReady,
+			Status: metav1.ConditionFalse, Reason: ReasonProviderNotEnabled, Message: msg,
+			ObservedGeneration: latest.Generation})
+		if equality.Semantic.DeepEqual(before, &latest.Status) {
+			return nil
+		}
+		return r.Status().Update(ctx, latest)
+	})
+}
+
+// ReasonProviderNotEnabled is the Ready reason of a scope, claim or import whose provider
+// the operator does not run.
+const ReasonProviderNotEnabled = "ProviderNotEnabled"
+
+// discoverySlots is the instance-wide semaphore behind Concurrency. It is shared by every
+// reconcile, so the cap holds however many scopes are reconciled at once.
+func (r *NetworkScopeReconciler) discoverySlots() chan struct{} {
+	r.slotsOnce.Do(func() {
+		r.slots = make(chan struct{}, r.concurrency())
+	})
+	return r.slots
+}
+
+func (r *NetworkScopeReconciler) concurrency() int {
+	if r.Concurrency <= 0 {
+		return defaultConcurrency
+	}
+	return r.Concurrency
+}
+
+func (r *NetworkScopeReconciler) discoverAll(ctx context.Context, d inventory.Discoverer,
+	targets []inventory.Target) []targetResult {
+	results := make([]targetResult, len(targets))
+	slots := r.discoverySlots()
+	g, gctx := errgroup.WithContext(ctx)
+	// The per-call limit only bounds the goroutines of this sync; the slots are the real cap.
+	g.SetLimit(r.concurrency())
+	for i, t := range targets {
+		g.Go(func() error {
+			select {
+			case slots <- struct{}{}:
+			case <-gctx.Done():
+				results[i] = targetResult{target: t, err: gctx.Err()}
+				return nil
+			}
+			defer func() { <-slots }()
+			snap, err := d.Discover(gctx, t)
+			results[i] = targetResult{target: t, snapshot: snap, err: err}
+			return nil // one failing account must not stop the others
+		})
+	}
+	_ = g.Wait()
+	return results
+}
+
+func resyncInterval(scope *networkv1.NetworkScope) time.Duration {
+	if scope.Spec.ResyncInterval == nil {
+		return defaultResyncInterval
+	}
+	return max(scope.Spec.ResyncInterval.Duration, minResyncInterval)
+}
+
+// syncTarget creates, updates and deletes the Network and Subnet objects of one account/region
+// so that they match the snapshot.
+func (r *NetworkScopeReconciler) syncTarget(ctx context.Context, scope *networkv1.NetworkScope,
+	target inventory.Target, snap *inventory.Snapshot, tagKeys networkv1.TagKeys) error {
+	name := scope.Spec.Provider
+	totals := map[string]*networkTotals{}
+	for _, v := range snap.Networks {
+		totals[v.ID] = &networkTotals{}
+	}
+
+	seenSubnets := map[string]bool{}
+	for _, s := range snap.Subnets {
+		status := subnetStatus(s, tagKeys, scope.Spec.RequiredSubnetTags)
+		if t := totals[s.NetworkID]; t != nil {
+			t.add(status)
+		}
+		obj := &networkv1.Subnet{ObjectMeta: metav1.ObjectMeta{Name: networkv1.ObjectName(s.ID)}}
+		spec := networkv1.SubnetSpec{Provider: name, ID: s.ID, NetworkID: s.NetworkID, Account: s.Account, Region: s.Region}
+		ok, err := r.upsert(ctx, scope, obj, labelsFor(scope, s.Account, target.Region, s.NetworkID), func() {
+			obj.Spec = spec
+		}, func() bool {
+			if equality.Semantic.DeepEqual(obj.Status, status) {
+				return false
+			}
+			obj.Status = status
+			return true
+		})
+		if err != nil {
+			return err
+		}
+		if ok {
+			seenSubnets[obj.Name] = true
+		}
+	}
+
+	seenNetworks := map[string]bool{}
+	for _, v := range snap.Networks {
+		t := totals[v.ID]
+		obj := &networkv1.Network{ObjectMeta: metav1.ObjectMeta{Name: networkv1.ObjectName(v.ID)}}
+		spec := networkv1.NetworkSpec{Provider: name, ID: v.ID, Account: v.Account, Region: v.Region}
+		// A global network is labelled with no region: it belongs to the account, not to the
+		// target that happened to report it.
+		ok, err := r.upsert(ctx, scope, obj, labelsFor(scope, v.Account, v.Region, v.ID), func() {
+			obj.Spec = spec
+		}, func() bool {
+			status := networkv1.NetworkStatus{
+				Name:           displayName(v.Name, v.Tags),
+				State:          v.State,
+				CIDRBlocks:     v.CIDRBlocks,
+				IPv6CIDRBlocks: v.IPv6CIDRBlocks,
+				Owner:          v.Tags[tagKeys.Owner],
+				Env:            v.Tags[tagKeys.Env],
+				Tags:           v.Tags,
+				Subnets:        t.subnets,
+				TotalIPs:       t.totalIPs(),
+				AvailableIPs:   t.availableIPs(),
+				// Overlaps are computed across the whole scope in updateNetworks.
+				OverlapsWith: obj.Status.OverlapsWith,
+				AWS:          copied(v.AWS),
+				GCP:          v.GCP.DeepCopy(),
+				Azure:        copied(v.Azure),
+			}
+			if status.GCP != nil && obj.Status.GCP != nil {
+				status.GCP.Overlaps = obj.Status.GCP.Overlaps
+			}
+			if v.Region == "" {
+				// A global network's subnets are spread over every region of the scope, and this
+				// target saw only its own: updateNetworks adds up all of them once every target
+				// is synced.
+				status.Subnets, status.TotalIPs, status.AvailableIPs =
+					obj.Status.Subnets, obj.Status.TotalIPs, obj.Status.AvailableIPs
+			}
+			if equality.Semantic.DeepEqual(obj.Status, status) {
+				return false
+			}
+			obj.Status = status
+			return true
+		})
+		if err != nil {
+			return err
+		}
+		if ok {
+			seenNetworks[obj.Name] = true
+		}
+	}
+
+	return r.deleteGone(ctx, scope.Name, target, seenNetworks, seenSubnets)
+}
+
+// displayName is the name a network or subnet is shown with: the provider's own name for the
+// resource where it has one (GCP), the Name tag otherwise (AWS).
+func displayName(name string, tags map[string]string) string {
+	if name != "" {
+		return name
+	}
+	return tags["Name"]
+}
+
+// deleteGoneGlobalNetworks deletes the objects of global networks that no longer exist. A
+// global network is reported by every target of its account, so it is gone only when every
+// one of them synced in this reconcile and none reported it; an account with a target that
+// failed or was not synced keeps its global networks until a reconcile that syncs them all.
+func (r *NetworkScopeReconciler) deleteGoneGlobalNetworks(ctx context.Context, scope string,
+	all []inventory.Target, results []targetResult) error {
+	synced := map[inventory.TargetKey]bool{}
+	seen := map[string]bool{}
+	for _, res := range results {
+		if res.err != nil || res.snapshot == nil {
+			continue
+		}
+		synced[res.target.Key()] = true
+		for _, v := range res.snapshot.Networks {
+			if v.Region == "" {
+				seen[networkv1.ObjectName(v.ID)] = true
+			}
+		}
+	}
+	complete := map[string]bool{}
+	for _, t := range all {
+		if _, known := complete[t.Account]; !known {
+			complete[t.Account] = true
+		}
+		if !synced[t.Key()] {
+			complete[t.Account] = false
+		}
+	}
+	for account, ok := range complete {
+		if !ok {
+			continue
+		}
+		sel := client.MatchingLabels{networkv1.LabelScope: scope, networkv1.LabelAccount: account,
+			networkv1.LabelRegion: ""}
+		if err := r.deleteObjects(ctx, sel,
+			func(*networkv1.Subnet) bool { return false },
+			func(v *networkv1.Network) bool { return v.Spec.Region == "" && !seen[v.Name] }); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// networkTotals adds up the IP counts of a network's subnets. A count that any subnet could
+// not report makes the network's count unknown too: a sum that quietly left a subnet out would
+// look like a precise number and be wrong.
+type networkTotals struct {
+	subnets                    int32
+	total, available           int64
+	totalUnknown, availUnknown bool
+}
+
+func (t *networkTotals) add(s networkv1.SubnetStatus) {
+	t.subnets++
+	if s.TotalIPs == nil {
+		t.totalUnknown = true
+	} else {
+		t.total += *s.TotalIPs
+	}
+	if s.AvailableIPs == nil {
+		t.availUnknown = true
+	} else {
+		t.available += *s.AvailableIPs
+	}
+}
+
+func (t *networkTotals) totalIPs() *int64 {
+	if t.totalUnknown {
+		return nil
+	}
+	return new(t.total)
+}
+
+func (t *networkTotals) availableIPs() *int64 {
+	if t.availUnknown {
+		return nil
+	}
+	return new(t.available)
+}
+
+func subnetStatus(s inventory.Subnet, tagKeys networkv1.TagKeys, required []string) networkv1.SubnetStatus {
+	status := networkv1.SubnetStatus{
+		Name:                displayName(s.Name, s.Tags),
+		State:               s.State,
+		CIDRBlock:           s.CIDRBlock,
+		SecondaryCIDRBlocks: s.SecondaryCIDRBlocks,
+		IPv6CIDRBlocks:      s.IPv6CIDRBlocks,
+		Zone:                s.Zone,
+		TotalIPs:            copied(s.TotalIPs),
+		AvailableIPs:        copied(s.AvailableIPs),
+		Owner:               s.Tags[tagKeys.Owner],
+		Env:                 s.Tags[tagKeys.Env],
+		Tier:                s.Tags[tagKeys.Tier],
+		OwnershipSource:     s.OwnershipSource,
+		Tags:                s.Tags,
+		// What only one provider has is copied as the provider reported it.
+		AWS:   copied(s.AWS),
+		GCP:   s.GCP.DeepCopy(),
+		Azure: s.Azure.DeepCopy(),
+	}
+	// Utilization is only as known as both counts are.
+	if s.TotalIPs != nil && s.AvailableIPs != nil {
+		status.UtilizationPercent = new(inventory.UtilizationPercent(*s.TotalIPs, *s.AvailableIPs))
+	}
+	for _, k := range required {
+		if strings.TrimSpace(s.Tags[k]) == "" {
+			status.MissingTags = append(status.MissingTags, k)
+		}
+	}
+	return status
+}
+
+// copied returns a pointer to a copy of *p, or nil: the status must not share memory with a
+// snapshot the provider may reuse.
+func copied[T any](p *T) *T {
+	if p == nil {
+		return nil
+	}
+	return new(*p)
+}
+
+// labelsFor labels a Network or Subnet object. The network label is the network's object
+// name, which is its ID on AWS and fits a label value on every provider.
+func labelsFor(scope *networkv1.NetworkScope, account, region, networkID string) map[string]string {
+	return map[string]string{
+		networkv1.LabelScope:    scope.Name,
+		networkv1.LabelProvider: strings.ToLower(string(scope.Spec.Provider)),
+		networkv1.LabelAccount:  account,
+		networkv1.LabelRegion:   region,
+		networkv1.LabelNetwork:  networkv1.ObjectName(networkID),
+	}
+}
+
+// upsert creates or updates obj (labels, owner reference, spec via mutateSpec), then
+// writes its status when mutateStatus reports a change. It returns false without error when
+// the object already belongs to another NetworkScope: two scopes covering the same account
+// and region must not fight over the same objects.
+func (r *NetworkScopeReconciler) upsert(ctx context.Context, scope *networkv1.NetworkScope, obj client.Object,
+	labels map[string]string, mutateSpec func(), mutateStatus func() bool) (bool, error) {
+	log := logf.FromContext(ctx)
+	conflict := false
+	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, obj, func() error {
+		if owner := obj.GetLabels()[networkv1.LabelScope]; owner != "" && owner != scope.Name {
+			conflict = true
+			return nil
+		}
+		obj.SetLabels(labels)
+		mutateSpec()
+		return controllerutil.SetControllerReference(scope, obj, r.Scheme)
+	})
+	if err != nil {
+		return false, err
+	}
+	if conflict {
+		log.Info("object belongs to another NetworkScope, skipping", "name", obj.GetName(),
+			"owner", obj.GetLabels()[networkv1.LabelScope])
+		return false, nil
+	}
+	if mutateStatus() {
+		if err := r.Status().Update(ctx, obj); err != nil {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
+// deleteGone deletes objects of the target that were not in the latest snapshot.
+// It only touches Kubernetes objects; the cloud is never modified.
+func (r *NetworkScopeReconciler) deleteGone(ctx context.Context, scope string, target inventory.Target,
+	seenNetworks, seenSubnets map[string]bool) error {
+	sel := client.MatchingLabels{
+		networkv1.LabelScope:   scope,
+		networkv1.LabelAccount: target.Account,
+		networkv1.LabelRegion:  target.Region,
+	}
+	return r.deleteObjects(ctx, sel,
+		func(s *networkv1.Subnet) bool { return !seenSubnets[s.Name] },
+		func(v *networkv1.Network) bool { return !seenNetworks[v.Name] })
+}
+
+// deleteRemovedTargets deletes objects of account/region pairs that are no longer in the scope spec.
+func (r *NetworkScopeReconciler) deleteRemovedTargets(ctx context.Context, scope string, targets []inventory.Target) error {
+	current := map[string]bool{}
+	for _, t := range targets {
+		current[t.Account+"/"+t.Region] = true
+		// A global network (no region label) stays as long as its account is in the scope.
+		current[t.Account+"/"] = true
+	}
+	removed := func(o client.Object) bool {
+		l := o.GetLabels()
+		return !current[l[networkv1.LabelAccount]+"/"+l[networkv1.LabelRegion]]
+	}
+	return r.deleteObjects(ctx, client.MatchingLabels{networkv1.LabelScope: scope},
+		func(s *networkv1.Subnet) bool { return removed(s) },
+		func(v *networkv1.Network) bool { return removed(v) })
+}
+
+// deleteObjects deletes the Subnet and Network objects matching sel for which the predicates return true.
+func (r *NetworkScopeReconciler) deleteObjects(ctx context.Context, sel client.MatchingLabels,
+	deleteSubnet func(*networkv1.Subnet) bool, deleteNetwork func(*networkv1.Network) bool) error {
+	subnets := &networkv1.SubnetList{}
+	if err := r.reader().List(ctx, subnets, sel); err != nil {
+		return err
+	}
+	for i := range subnets.Items {
+		if deleteSubnet(&subnets.Items[i]) {
+			if err := client.IgnoreNotFound(r.Delete(ctx, &subnets.Items[i])); err != nil {
+				return err
+			}
+		}
+	}
+	networks := &networkv1.NetworkList{}
+	if err := r.reader().List(ctx, networks, sel); err != nil {
+		return err
+	}
+	for i := range networks.Items {
+		if deleteNetwork(&networks.Items[i]) {
+			if err := client.IgnoreNotFound(r.Delete(ctx, &networks.Items[i])); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// updateNetworks recomputes what spans the whole scope, including networks of targets whose
+// last discovery failed: CIDR overlaps between all networks (scopeOverlaps), and the subnet counts and IP
+// totals of global networks (GCP), whose subnets several targets report. It returns the
+// up-to-date Network objects.
+func (r *NetworkScopeReconciler) updateNetworks(ctx context.Context, scope string) ([]networkv1.Network, error) {
+	list := &networkv1.NetworkList{}
+	if err := r.reader().List(ctx, list, client.MatchingLabels{networkv1.LabelScope: scope}); err != nil {
+		return nil, err
+	}
+	networks := list.Items
+	global := map[string]*networkTotals{}
+	needSubnets := false
+	for i := range networks {
+		if networks[i].Spec.Region == "" {
+			global[networks[i].Name] = &networkTotals{}
+		}
+		// A GCP network's ranges are its subnetworks'.
+		needSubnets = needSubnets || networks[i].Spec.Region == "" || networks[i].Spec.Provider == networkv1.ProviderGCP
+	}
+	var subnets []networkv1.Subnet
+	if needSubnets {
+		list := &networkv1.SubnetList{}
+		if err := r.reader().List(ctx, list, client.MatchingLabels{networkv1.LabelScope: scope}); err != nil {
+			return nil, err
+		}
+		subnets = list.Items
+		for i := range subnets {
+			if t := global[subnets[i].Labels[networkv1.LabelNetwork]]; t != nil {
+				t.add(subnets[i].Status)
+			}
+		}
+	}
+	before := make([]*networkv1.NetworkStatus, len(networks))
+	for i := range networks {
+		before[i] = networks[i].Status.DeepCopy()
+	}
+	applyOverlaps(networks, scopeOverlaps(networks, subnets))
+	for i := range networks {
+		n := &networks[i]
+		if t := global[n.Name]; t != nil {
+			n.Status.Subnets, n.Status.TotalIPs, n.Status.AvailableIPs = t.subnets, t.totalIPs(), t.availableIPs()
+		}
+		if equality.Semantic.DeepEqual(before[i], &n.Status) {
+			continue
+		}
+		if err := r.Status().Update(ctx, n); err != nil {
+			return nil, err
+		}
+	}
+	return networks, nil
+}
+
+func networkRef(v *networkv1.Network) string {
+	return v.Spec.Account + "/" + v.Spec.Region + "/" + v.Spec.ID
+}
+
+// metricTargets turns the status of each target into its metrics. A throttled target counts
+// as up: it answered, only not fast enough, and hs_target_throttled says so on its own.
+func metricTargets(targets []networkv1.TargetStatus, results []targetResult,
+	throttled map[inventory.TargetKey]bool) []metrics.TargetResult {
+	synced := map[inventory.TargetKey]bool{}
+	for _, r := range results {
+		synced[r.target.Key()] = true
+	}
+	out := make([]metrics.TargetResult, 0, len(targets))
+	for _, t := range targets {
+		key := inventory.TargetKey{Account: t.Account, Region: t.Region}
+		out = append(out, metrics.TargetResult{
+			Account: t.Account, Region: t.Region, OK: t.Error == "" || throttled[key],
+			Synced: synced[key], Throttled: throttled[key],
+		})
+	}
+	return out
+}
+
+// updateStatus records the sync. Targets that were not synced this time keep their previous
+// status; lastSyncTime of the scope only moves on full syncs, because it schedules the next one.
+// It also returns which targets are throttled rather than failed.
+func (r *NetworkScopeReconciler) updateStatus(ctx context.Context, scope *networkv1.NetworkScope,
+	p provider.Provider, all []inventory.Target, results []targetResult, full bool, networks, subnets int, now metav1.Time,
+) ([]networkv1.TargetStatus, map[inventory.TargetKey]bool, error) {
+	byKey := map[inventory.TargetKey]targetResult{}
+	for _, res := range results {
+		byKey[res.target.Key()] = res
+	}
+
+	var targets []networkv1.TargetStatus
+	var throttled map[inventory.TargetKey]bool
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		latest := &networkv1.NetworkScope{}
+		if err := r.Get(ctx, client.ObjectKeyFromObject(scope), latest); err != nil {
+			return err
+		}
+		previous := map[inventory.TargetKey]networkv1.TargetStatus{}
+		for _, t := range latest.Status.Targets {
+			previous[inventory.TargetKey{Account: t.Account, Region: t.Region}] = t
+		}
+
+		var failed, busy []string
+		throttled = map[inventory.TargetKey]bool{}
+		targets = make([]networkv1.TargetStatus, 0, len(all))
+		for _, t := range all {
+			key := t.Key()
+			ts := networkv1.TargetStatus{Account: t.Account, Region: t.Region}
+			prev := previous[key]
+			res, synced := byKey[key]
+			switch {
+			case !synced:
+				ts = prev
+				ts.Account, ts.Region = t.Account, t.Region
+			case res.err != nil:
+				// Keep the last good numbers and time so a flapping account does not look empty.
+				ts.Networks, ts.Subnets, ts.LastSyncTime = prev.Networks, prev.Subnets, prev.LastSyncTime
+				// And the last known unmanaged resources: they are what a later recovery is
+				// compared against, and losing them here would report all of them as new.
+				ts.UnmanagedIDs = prev.UnmanagedIDs
+				ts.Error = res.err.Error()
+			default:
+				ts.Networks, ts.Subnets = count32(len(res.snapshot.Networks)), count32(len(res.snapshot.Subnets))
+				ts.UnmanagedNetworks = count32(len(res.snapshot.UnmanagedNetworks))
+				ts.UnmanagedSubnets = count32(len(res.snapshot.UnmanagedSubnets))
+				ts.UnmanagedIDs = unmanagedIDs(res.snapshot)
+				ts.LastSyncTime = &now
+			}
+			switch {
+			case ts.Error == "":
+			case isThrottled(synced, res, ts, r.backoff.backedOff(scope.Name, key)):
+				throttled[key] = true
+				busy = append(busy, key.String())
+			default:
+				failed = append(failed, key.String())
+			}
+			targets = append(targets, ts)
+		}
+
+		cond := metav1.Condition{Type: ConditionReady, Status: metav1.ConditionTrue, Reason: "Synced",
+			Message: fmt.Sprintf("%d account/region targets synced", len(all)), ObservedGeneration: latest.Generation}
+		switch {
+		case len(failed) > 0:
+			// An unreachable target is the problem worth naming first; throttled ones recover
+			// on their own.
+			cond.Status, cond.Reason = metav1.ConditionFalse, "SyncFailed"
+			cond.Message = fmt.Sprintf("%d of %d targets failed: %s", len(failed), len(all), strings.Join(failed, ", "))
+			if len(busy) > 0 {
+				cond.Message += fmt.Sprintf("; %d throttled: %s", len(busy), strings.Join(busy, ", "))
+			}
+		case len(busy) > 0:
+			cond.Status, cond.Reason = metav1.ConditionFalse, "Throttled"
+			cond.Message = fmt.Sprintf("%d of %d targets throttled, retried with backoff: %s",
+				len(busy), len(all), strings.Join(busy, ", "))
+		}
+		meta.SetStatusCondition(&latest.Status.Conditions, cond)
+		if full {
+			latest.Status.ObservedGeneration = latest.Generation
+			latest.Status.LastSyncTime = &now
+		}
+		latest.Status.Networks, latest.Status.Subnets = count32(networks), count32(subnets)
+		latest.Status.Unmanaged = countUnmanaged(targets)
+		latest.Status.Targets = targets
+		latest.Status.Capabilities = slices.Sorted(slices.Values(p.Capabilities()))
+		ownership := p.Ownership()
+		latest.Status.Ownership = &ownership
+		return r.Status().Update(ctx, latest)
+	})
+	return targets, throttled, err
+}
+
+// isThrottled tells a throttled target from a failed one. A target discovered in this sync
+// says so through its error; one carried over from an earlier sync through the backoff, or,
+// after a restart has emptied the backoff, through the error text its last attempt recorded.
+func isThrottled(synced bool, res targetResult, ts networkv1.TargetStatus, backedOff bool) bool {
+	if synced {
+		return errors.Is(res.err, inventory.ErrThrottled)
+	}
+	return backedOff || strings.HasPrefix(ts.Error, inventory.ErrThrottled.Error())
+}
+
+// SetupWithManager sets up the controller with the Manager. Network and Subnet objects are not
+// watched: they are outputs. Besides spec changes, scopes are synced on their resync interval
+// and when NotifyChanged reports EC2 changes.
+func (r *NetworkScopeReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	return ctrl.NewControllerManagedBy(mgr).
+		For(&networkv1.NetworkScope{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
+		WatchesRawSource(source.Channel(r.changesChannel(), &handler.EnqueueRequestForObject{})).
+		Named("networkscope").
+		Complete(r)
+}
+
+// countUnmanaged counts the scope's unmanaged resources, the sum of what its targets report.
+// A global network (GCP) is reported by every target of its account, so a target whose IDs
+// are all listed is counted by ID, and a resource two targets list counts once.
+func countUnmanaged(targets []networkv1.TargetStatus) int32 {
+	ids := map[string]bool{}
+	var n int32
+	for _, t := range targets {
+		count := t.UnmanagedNetworks + t.UnmanagedSubnets
+		switch {
+		case count == 0:
+		case len(t.UnmanagedIDs) != int(count):
+			n += count
+		default:
+			for _, id := range t.UnmanagedIDs {
+				ids[id] = true
+			}
+		}
+	}
+	return n + count32(len(ids))
+}

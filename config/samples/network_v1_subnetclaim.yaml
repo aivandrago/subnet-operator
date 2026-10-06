@@ -1,0 +1,25 @@
+apiVersion: network.hypersurgery.dev/v1
+kind: SubnetClaim
+metadata:
+  name: payments
+  namespace: default
+spec:
+  # Inventory and credentials come from this scope; the account and region must be in it,
+  # and the scope's namespaceSelector must select this namespace.
+  scopeRef: organization
+  account: "222222222222"
+  region: eu-central-1
+  networkID: vpc-0aa11bb2cc33dd44e
+  # One /24 in each of these availability zones.
+  prefixLength: 24
+  zones: [eu-central-1a, eu-central-1b, eu-central-1c]
+  # Create (default) creates the subnets; Allocate only reserves CIDRs in the status.
+  mode: Create
+  owner: team-payments
+  env: prod
+  tier: private
+  tags:
+    cost-center: cc-42
+  aws:
+    # Optional: associate a route table instead of the VPC main table.
+    routeTableID: rtb-0a1b2c3d4e5f60718

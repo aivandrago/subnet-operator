@@ -1,0 +1,38 @@
+# Custom role for writes in a GCP project: creating subnetworks for SubnetClaims in Create mode
+# and binding ownership tags for ResourceImports. It is the write identity's only
+# (accounts[].gcp.writeServiceAccount), never the read one's, and grants no delete and no IAM
+# policy change (test/deploy/gcp_iam_test.go checks that); compute.networks.updatePolicy is how
+# Compute checks adding a subnetwork to a network, not a change of the network. Binding a tag
+# also needs the tag-user role on the tag values (tag-user-role.yaml). resourcemanager.projects.get
+# is there because tag bindings name a resource by its project number, which the write identity
+# looks up itself.
+#
+# Grant it in the host project of each account that has a writeServiceAccount:
+#
+#   gcloud iam roles create subnetOperatorWriter --organization=ORG_NUMBER \
+#     --file=deploy/gcp/writer-role.yaml
+#   gcloud projects add-iam-policy-binding PROJECT_ID \
+#     --role=organizations/ORG_NUMBER/roles/subnetOperatorWriter \
+#     --member=serviceAccount:subnet-writer@PROJECT_ID.iam.gserviceaccount.com
+#
+# subnetworks.insert needs compute.subnetworks.create in the project and
+# compute.networks.updatePolicy on the network; the operation is then polled, the subnetwork
+# read back, and its tags listed before a binding is added. The createTagBinding names follow
+# the Compute Engine IAM reference, but the research note (#40) could not confirm them; confirm
+# the whole list against a real project with the conformance run (#50).
+title: Subnet operator writer
+description: Creates subnetworks and binds tags to networks and subnetworks. Never deletes.
+stage: GA
+includedPermissions:
+  - compute.networks.createTagBinding
+  - compute.networks.get
+  - compute.networks.listEffectiveTags
+  - compute.networks.listTagBindings
+  - compute.networks.updatePolicy
+  - compute.regionOperations.get
+  - compute.subnetworks.create
+  - compute.subnetworks.createTagBinding
+  - compute.subnetworks.get
+  - compute.subnetworks.listEffectiveTags
+  - compute.subnetworks.listTagBindings
+  - resourcemanager.projects.get

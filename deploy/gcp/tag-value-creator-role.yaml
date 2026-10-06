@@ -1,0 +1,19 @@
+# Custom role for creating tag values, only for scopes that opt in with gcp.createTagValues:
+# a claim or an import whose owner, env or tier value does not exist yet then creates it under
+# the operator's tag key. Without the opt-in, such a value is reported missing and nothing is
+# created. Grant it to the write identity on the operator's tag keys only, never on the
+# organization, so that it cannot create values of anybody else's keys.
+#
+#   gcloud iam roles create subnetOperatorTagValueCreator --organization=ORG_NUMBER \
+#     --file=deploy/gcp/tag-value-creator-role.yaml
+#   gcloud resource-manager tags keys add-iam-policy-binding ORG_NUMBER/hs-owner \
+#     --role=organizations/ORG_NUMBER/roles/subnetOperatorTagValueCreator \
+#     --member=serviceAccount:subnet-writer@PROJECT_ID.iam.gserviceaccount.com
+title: Subnet operator tag value creator
+description: Creates values of the operator's tag keys. Never deletes or renames them.
+stage: GA
+includedPermissions:
+  - resourcemanager.tagKeys.get
+  - resourcemanager.tagValues.create
+  - resourcemanager.tagValues.get
+  - resourcemanager.tagValues.list

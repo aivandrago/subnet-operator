@@ -1,0 +1,189 @@
+/*
+Copyright 2026.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package migration
+
+import (
+	"bufio"
+	"bytes"
+	"errors"
+	"fmt"
+	"io"
+	"regexp"
+	"strings"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
+	"sigs.k8s.io/yaml"
+
+	awsv1alpha1 "hypersurgery.dev/subnet-operator/internal/migration/v1alpha1"
+)
+
+// Manifests rewrites a stream of YAML documents for network.hypersurgery.dev/v1, the way
+// `manager migrate-manifests` does for a GitOps repository: aws.hypersurgery/v1alpha1
+// NetworkScope, SubnetClaim, ResourceImport and SheetExport documents are converted with
+// the mapping 0.8's in-cluster migration used; VPC and Subnet documents are left out, because
+// the operator writes those itself; network.hypersurgery.dev/v1beta1 documents get the v1
+// apiVersion and are otherwise kept byte for byte, since both versions have the same fields;
+// every other document is copied unchanged, byte for byte.
+//
+// A converted v1alpha1 document loses its comments and its status (apply ignores status
+// anyway). What a human should know about a conversion goes to notes, one line per note,
+// naming the document.
+func Manifests(in io.Reader, out, notes io.Writer) error {
+	reader := utilyaml.NewYAMLReader(bufio.NewReader(in))
+	first := true
+	for index := 0; ; index++ {
+		doc, err := reader.Read()
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("document %d: %w", index+1, err)
+		}
+		converted, keep, docNotes, err := convertDocument(doc)
+		if err != nil {
+			return fmt.Errorf("document %d: %w", index+1, err)
+		}
+		for _, n := range docNotes {
+			if _, err := fmt.Fprintf(notes, "document %d: %s\n", index+1, n); err != nil {
+				return err
+			}
+		}
+		if !keep {
+			continue
+		}
+		if !first {
+			if _, err := io.WriteString(out, "---\n"); err != nil {
+				return err
+			}
+		}
+		first = false
+		if _, err := out.Write(converted); err != nil {
+			return err
+		}
+	}
+}
+
+// convertDocument converts one document. keep is false for a document to leave out.
+func convertDocument(doc []byte) (out []byte, keep bool, notes Notes, err error) {
+	var tm metav1.TypeMeta
+	if len(bytes.TrimSpace(doc)) == 0 {
+		return doc, false, nil, nil
+	}
+	if err := yaml.Unmarshal(doc, &tm); err != nil {
+		return nil, false, nil, err
+	}
+	if tm.APIVersion == betaAPIVersion {
+		return toV1(doc, tm.Kind)
+	}
+	if tm.APIVersion != OldAPIVersion {
+		// Not ours: copied as it is. It may still name the old group — an RBAC rule, a label
+		// selector — which only a human can tell apart from a coincidence.
+		if bytes.Contains(doc, []byte("aws.hypersurgery")) {
+			notes = Notes{"still mentions aws.hypersurgery (an RBAC rule, a label or a selector?); " +
+				"change it to network.hypersurgery.dev by hand, and vpcs to networks"}
+		}
+		return doc, true, notes, nil
+	}
+	name := func(meta metav1.ObjectMeta) string {
+		if meta.Namespace != "" {
+			return tm.Kind + " " + meta.Namespace + "/" + meta.Name
+		}
+		return tm.Kind + " " + meta.Name
+	}
+
+	var obj any
+	switch tm.Kind {
+	case kindNetworkScope:
+		old := &awsv1alpha1.NetworkScope{}
+		if err := yaml.UnmarshalStrict(doc, old); err != nil {
+			return nil, false, nil, err
+		}
+		scope, n := NetworkScope(old)
+		obj, notes = scope, prefixed(name(old.ObjectMeta), n)
+	case kindSubnetClaim:
+		old := &awsv1alpha1.SubnetClaim{}
+		if err := yaml.UnmarshalStrict(doc, old); err != nil {
+			return nil, false, nil, err
+		}
+		claim, n := SubnetClaim(old)
+		if len(old.Status.Allocations) > 0 {
+			n.add("status.allocations are not written to a manifest: a claim applied from it starts without these " +
+				"reservations. Only 0.8 migrated them, in the cluster")
+		}
+		obj, notes = claim, prefixed(name(old.ObjectMeta), n)
+	case kindResourceImport:
+		old := &awsv1alpha1.ResourceImport{}
+		if err := yaml.UnmarshalStrict(doc, old); err != nil {
+			return nil, false, nil, err
+		}
+		imp, n := ResourceImport(old)
+		obj, notes = imp, prefixed(name(old.ObjectMeta), n)
+	case kindSheetExport:
+		old := &awsv1alpha1.SheetExport{}
+		if err := yaml.UnmarshalStrict(doc, old); err != nil {
+			return nil, false, nil, err
+		}
+		exp, n := SheetExport(old)
+		obj, notes = exp, prefixed(name(old.ObjectMeta), n)
+	case "VPC", "Subnet":
+		var meta struct {
+			Metadata metav1.ObjectMeta `json:"metadata"`
+		}
+		_ = yaml.Unmarshal(doc, &meta)
+		return nil, false, Notes{fmt.Sprintf("%s: left out; the operator discovers it again as a network.hypersurgery.dev object",
+			name(meta.Metadata))}, nil
+	default:
+		return nil, false, nil, fmt.Errorf("%s %s is not a kind of that group", tm.APIVersion, tm.Kind)
+	}
+	out, err = yaml.Marshal(obj)
+	if err != nil {
+		return nil, false, nil, err
+	}
+	return out, true, notes, nil
+}
+
+func prefixed(name string, notes Notes) Notes {
+	out := make(Notes, 0, len(notes))
+	for _, n := range notes {
+		out = append(out, name+": "+strings.TrimSpace(n))
+	}
+	return out
+}
+
+// betaAPIVersion is the version of the group that 1.0 deprecates. Its documents only need the
+// apiVersion changed: v1 has the same fields.
+const betaAPIVersion = "network.hypersurgery.dev/v1beta1"
+
+// betaAPIVersionLine is the top-level apiVersion line of a v1beta1 document, quoted or not.
+var betaAPIVersionLine = regexp.MustCompile(`(?m)^apiVersion:[ \t]*["']?network\.hypersurgery\.dev/v1beta1["']?([ \t]+#.*)?[ \t]*$`)
+
+// toV1 moves a v1beta1 document to v1 by rewriting its apiVersion line, so its comments and
+// layout survive. A v1beta1 List, or anything else the line cannot be found in, is refused
+// rather than half converted.
+func toV1(doc []byte, kind string) ([]byte, bool, Notes, error) {
+	switch kind {
+	case kindNetworkScope, kindSubnetClaim, kindResourceImport, kindSheetExport, "Network", "Subnet":
+	default:
+		return nil, false, nil, fmt.Errorf("%s %s is not a kind of that group", betaAPIVersion, kind)
+	}
+	if len(betaAPIVersionLine.FindAllIndex(doc, -1)) != 1 {
+		return nil, false, nil, fmt.Errorf("%s %s: the top-level apiVersion line was not found; change it by hand",
+			betaAPIVersion, kind)
+	}
+	return betaAPIVersionLine.ReplaceAll(doc, []byte("apiVersion: network.hypersurgery.dev/v1${1}")), true, nil, nil
+}

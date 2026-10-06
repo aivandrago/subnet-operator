@@ -1,0 +1,41 @@
+# Google Cloud (from 2.0; not in 1.x): a Shared VPC host project read and
+# written through service accounts the operator impersonates. Needs the chart's
+# providers.gcp.enabled and the roles in deploy/gcp; see docs/gcp.md.
+#
+# Networks are global and subnetworks regional: each region below is read for the project's
+# subnetworks, and every region reports the same networks, which the operator keeps once.
+apiVersion: network.hypersurgery.dev/v1
+kind: NetworkScope
+metadata:
+  name: gcp-shared-vpc
+spec:
+  provider: GCP
+  gcp:
+    # The organization (or project) that owns the tag keys hs-owner, hs-env, hs-tier,
+    # hs-managed and hs-managed-by (and hs-claim, with claimTag Bind). The operator never
+    # creates keys.
+    tagParent: organizations/123456789012
+    # true lets the write identity create a missing tag value (a new owner, say) under those
+    # keys; it then needs deploy/gcp/tag-value-creator-role.yaml on them.
+    createTagValues: false
+    # Skip (the default): subnetworks created by claims carry the ownership tags but no
+    # hs-claim tag, so no tag value per claim has to exist; the claim keeps its subnetwork in
+    # status.allocations. Bind also binds hs-claim=<namespace>_<name>.
+    claimTag: Skip
+  accounts:
+    - id: net-host-prod
+      gcp:
+        # Impersonated for discovery; empty means the operator's own identity reads.
+        serviceAccount: subnet-reader@net-host-prod.iam.gserviceaccount.com
+        # Impersonated for claims in Create mode and for imports, never for discovery.
+        writeServiceAccount: subnet-writer@net-host-prod.iam.gserviceaccount.com
+  regions: [europe-west1, europe-west4]
+  # Tag keys are the short names of keys under tagParent: hs-managed, not hs/managed.
+  networkSelector:
+    matchTags:
+      hs-managed: "true"
+  requiredSubnetTags: [hs-owner, hs-env]
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: default
+  resyncInterval: 10m
