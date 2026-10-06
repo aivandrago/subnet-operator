@@ -1,0 +1,26 @@
+# The following manifests contain a self-signed issuer CR and a certificate CR.
+# More document can be found at https://docs.cert-manager.io
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  labels:
+    app.kubernetes.io/name: subnet-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: serving-cert  # this name should match the one appeared in kustomizeconfig.yaml
+  namespace: system
+spec:
+  # A name of its own: under the self-signed Issuer the certificate is its own CA, and RFC 5280
+  # forbids a CA, and an issuer, without one (cert-manager issues it all the same and warns
+  # BadConfig). A fixed name, not the Service's DNS name: a commonName holds 64 characters,
+  # which a longer namespace or namePrefix would exceed, and cert-manager refuses the
+  # Certificate then. Clients check the dnsNames.
+  commonName: subnet-operator-webhook
+  # SERVICE_NAME and SERVICE_NAMESPACE will be substituted by kustomize
+  # replacements in the config/default/kustomization.yaml file.
+  dnsNames:
+  - SERVICE_NAME.SERVICE_NAMESPACE.svc
+  - SERVICE_NAME.SERVICE_NAMESPACE.svc.cluster.local
+  issuerRef:
+    kind: Issuer
+    name: selfsigned-issuer
+  secretName: webhook-server-cert

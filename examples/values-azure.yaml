@@ -1,0 +1,52 @@
+# Helm values for Azure only (from 3.0; a 2.x chart has no providers.azure).
+# The operator's own identity is Microsoft Entra Workload ID on AKS with the workload identity
+# add-on: a user-assigned managed identity (or an app registration) with a federated identity
+# credential for system:serviceaccount:subnet-operator-system:subnet-operator. Outside AKS, set
+# workloadIdentity.webhook: false and providers.azure.tenantId (docs/azure.md).
+providers:
+  aws:
+    enabled: false
+  azure:
+    enabled: true
+    workloadIdentity:
+      enabled: true
+      # The client ID of the operator's own identity. It needs no role on the subscription below,
+      # which names identities of its own, only the role on the change event queue.
+      clientId: 3f0c6a1e-0000-4000-8000-0000000000a1
+    # Optional change events: the Storage queue the subscriptions' Event Grid system topics fill
+    # with the write and delete events of virtual networks (deploy/azure/events.md). The identity
+    # above needs Storage Queue Data Message Processor on it.
+    events:
+      queueUrl: https://subnetopevents.queue.core.windows.net/subnet-operator-events
+
+# Claims in Create mode and imports write; leave this off for an inventory only.
+writes:
+  enabled: true
+
+# An Azure NetworkScope created with the release, the same scope as
+# examples/10-azure-subscription.yaml. Tags need no setup on Azure: a tag name and value exist
+# once they are written.
+networkScope:
+  create: true
+  name: azure-landing-zone
+  provider: Azure
+  azure:
+    # Only the virtual networks of these resource groups; the reader role is then assigned on
+    # them alone. Leave empty for the whole subscription.
+    resourceGroups: [rg-network-prod]
+  accounts:
+    - id: 5b3c2a10-0000-4000-8000-00000000a2e1
+      azure:
+        clientID: 3f0c6a1e-0000-4000-8000-0000000000b1
+        writeClientID: 3f0c6a1e-0000-4000-8000-0000000000c1
+  regions: [westeurope, northeurope]
+  networkSelector:
+    matchTags:
+      hs-managed: "true"
+  requiredSubnetTags: [hs-owner, hs-env]
+  namespaceSelector:
+    matchExpressions:
+      - key: kubernetes.io/metadata.name
+        operator: In
+        values: [team-payments, team-data]
+  resyncInterval: 10m

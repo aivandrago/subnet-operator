@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" font-family="PT Serif, Georgia, serif" viewBox="0 0 820 400" role="img" aria-label="Architecture: the operator in an EKS cluster assumes a read-only role in each spoke account, reads EC2 describe APIs, and mirrors VPCs and subnets into Kubernetes objects; CloudTrail events arrive through EventBridge and SQS">
+      <rect width="820" height="400" fill="#f2ece0"/>
+
+      <!-- hub -->
+      <rect x="24" y="86" width="250" height="226" rx="14" fill="#f2ece0" stroke="#c1121f" stroke-width="2"/>
+      <text x="44" y="112" font-family="PT Mono, JetBrains Mono, monospace" font-size="11" fill="#c1121f">HUB ACCOUNT · EKS</text>
+      <rect x="44" y="126" width="210" height="58" rx="10" fill="#e7dfd0" stroke="#c9bfae"/>
+      <text x="60" y="150" font-family="PT Serif, Georgia, serif" font-size="13" font-weight="600" fill="#1a1714">subnet-operator</text>
+      <text x="60" y="170" font-family="PT Mono, JetBrains Mono, monospace" font-size="10" fill="#4a443c">read-only by default</text>
+
+      <rect x="44" y="196" width="210" height="96" rx="10" fill="#e7dfd0" stroke="#c9bfae"/>
+      <text x="60" y="218" font-family="PT Mono, JetBrains Mono, monospace" font-size="10" fill="#4a443c">kubectl get</text>
+      <text x="60" y="238" font-family="PT Mono, JetBrains Mono, monospace" font-size="11" fill="#4a443c">vpcs</text>
+      <text x="60" y="256" font-family="PT Mono, JetBrains Mono, monospace" font-size="11" fill="#4a443c">subnets</text>
+      <text x="60" y="274" font-family="PT Mono, JetBrains Mono, monospace" font-size="11" fill="#1a1714">networkscopes</text>
+
+      <!-- arrows to spokes -->
+      <g stroke="#c1121f" stroke-width="2" fill="none" opacity=".75">
+        <path d="M274 150 C 340 150, 360 96, 430 96" marker-end="url(#ar)"/>
+        <path d="M274 196 C 340 196, 360 196, 430 196" marker-end="url(#ar)"/>
+        <path d="M274 242 C 340 242, 360 296, 430 296" marker-end="url(#ar)"/>
+      </g>
+      <defs>
+        <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+          <path d="M0 0 L10 5 L0 10 z" fill="#c1121f"/>
+        </marker>
+      </defs>
+      <text x="330" y="140" font-family="PT Mono, JetBrains Mono, monospace" font-size="9.5" fill="#c1121f">sts:AssumeRole</text>
+
+      <!-- spokes -->
+      <g>
+        <rect x="430" y="66" width="196" height="60" rx="10" fill="#f2ece0" stroke="#c9bfae" stroke-width="2"/>
+        <text x="446" y="88" font-family="PT Mono, JetBrains Mono, monospace" font-size="10.5" fill="#1a1714">spoke · 1111 1111 1111</text>
+        <text x="446" y="108" font-family="PT Mono, JetBrains Mono, monospace" font-size="10" fill="#4a443c">DescribeVpcs / Subnets</text>
+
+        <rect x="430" y="166" width="196" height="60" rx="10" fill="#f2ece0" stroke="#c9bfae" stroke-width="2"/>
+        <text x="446" y="188" font-family="PT Mono, JetBrains Mono, monospace" font-size="10.5" fill="#1a1714">spoke · 2222 2222 2222</text>
+        <text x="446" y="208" font-family="PT Mono, JetBrains Mono, monospace" font-size="10" fill="#4a443c">DescribeVpcs / Subnets</text>
+
+        <rect x="430" y="266" width="196" height="60" rx="10" fill="#f2ece0" stroke="#c9bfae" stroke-width="2"/>
+        <text x="446" y="288" font-family="PT Mono, JetBrains Mono, monospace" font-size="10.5" fill="#1a1714">spoke · 3333 3333 3333</text>
+        <text x="446" y="308" font-family="PT Mono, JetBrains Mono, monospace" font-size="10" fill="#4a443c">DescribeVpcs / Subnets</text>
+      </g>
+
+      <!-- event path -->
+      <rect x="664" y="150" width="130" height="92" rx="10" fill="#e7dfd0" stroke="#1a1714" stroke-width="2"/>
+      <text x="729" y="176" text-anchor="middle" font-family="PT Mono, JetBrains Mono, monospace" font-size="10" fill="#1a1714">CloudTrail</text>
+      <text x="729" y="196" text-anchor="middle" font-family="PT Mono, JetBrains Mono, monospace" font-size="10" fill="#1a1714">EventBridge</text>
+      <text x="729" y="216" text-anchor="middle" font-family="PT Mono, JetBrains Mono, monospace" font-size="10" fill="#1a1714">SQS</text>
+      <text x="729" y="234" text-anchor="middle" font-family="PT Mono, JetBrains Mono, monospace" font-size="9" fill="#7b7266">≈10 s to resync</text>
+      <path d="M664 196 C 650 196, 640 196, 630 196" stroke="#1a1714" stroke-width="2" fill="none"/>
+      <path d="M700 150 C 700 40, 150 40, 150 86" stroke="#1a1714" stroke-width="2" fill="none" stroke-dasharray="5 4"/>
+      <text x="400" y="34" text-anchor="middle" font-family="PT Mono, JetBrains Mono, monospace" font-size="9.5" fill="#1a1714">“somebody changed something” →</text>
+
+      <text x="24" y="360" font-family="PT Mono, JetBrains Mono, monospace" font-size="10" fill="#7b7266">Three EC2 Describe calls. No agent in the spoke. No write permission anywhere in this picture.</text>
+      <text x="24" y="378" font-family="PT Mono, JetBrains Mono, monospace" font-size="10" fill="#7b7266">Writing is a separate role you add later, if ever.</text>
+    </svg>

@@ -1,0 +1,17 @@
+{
+  "Name": "Subnet operator reader",
+  "IsCustom": true,
+  "Description": "Lists virtual networks with their subnets, tags and IP usage, and the subscription's locations, for the subnet operator's discovery. Read only. See deploy/azure/README.md.",
+  "Actions": [
+    "Microsoft.Network/virtualNetworks/read",
+    "Microsoft.Network/virtualNetworks/subnets/read",
+    "Microsoft.Network/virtualNetworks/usages/read",
+    "Microsoft.Resources/subscriptions/locations/read"
+  ],
+  "NotActions": [],
+  "DataActions": [],
+  "NotDataActions": [],
+  "AssignableScopes": [
+    "/subscriptions/00000000-0000-0000-0000-000000000000"
+  ]
+}

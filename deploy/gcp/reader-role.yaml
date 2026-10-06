@@ -1,0 +1,28 @@
+# Custom role for discovery in a GCP project: what the read identity of a NetworkScope account
+# needs, and nothing that changes anything (test/deploy/gcp_iam_test.go checks that).
+#
+# Grant it in every project a NetworkScope lists (for a Shared VPC, the host project) to the
+# account's gcp.serviceAccount, or to the operator's own identity for accounts without one.
+# Granted on a folder or the organization, it covers every project below.
+#
+#   gcloud iam roles create subnetOperatorReader --organization=ORG_NUMBER \
+#     --file=deploy/gcp/reader-role.yaml
+#   gcloud projects add-iam-policy-binding PROJECT_ID \
+#     --role=organizations/ORG_NUMBER/roles/subnetOperatorReader \
+#     --member=serviceAccount:subnet-reader@PROJECT_ID.iam.gserviceaccount.com
+#
+# The calls: networks.list (global), subnetworks.list with views=WITH_UTILIZATION (per region),
+# projects.get (the project number Resource Manager names resources by), and effectiveTags.list
+# on each network and subnetwork (ownership). Permission names follow the Compute Engine and
+# Resource Manager IAM references; that WITH_UTILIZATION and effectiveTags.list need nothing
+# more is still to be confirmed against a real project (#50). If tags come back without their
+# names, also grant roles/resourcemanager.tagViewer on the scope's gcp.tagParent.
+title: Subnet operator reader
+description: Lists VPC networks and subnetworks with their IP usage and tags. Read only.
+stage: GA
+includedPermissions:
+  - compute.networks.list
+  - compute.networks.listEffectiveTags
+  - compute.subnetworks.list
+  - compute.subnetworks.listEffectiveTags
+  - resourcemanager.projects.get

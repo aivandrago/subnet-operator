@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" font-family="PT Serif, Georgia, serif" viewBox="0 0 1200 630" role="img" aria-label="Cover: a heavy blocky boxer figure standing over a fallen spreadsheet, under the title I must break your spreadsheet">
+  <defs>
+    <linearGradient id="cbg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f2ece0"/><stop offset="1" stop-color="#f2ece0"/>
+    </linearGradient>
+    <linearGradient id="ctitle" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#c1121f"/><stop offset="55%" stop-color="#4a443c"/><stop offset="1" stop-color="#1a1714"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#cbg)"/>
+
+  <!-- ring ropes, far background -->
+  <g stroke="#c9bfae" stroke-width="4">
+    <line x1="0" y1="150" x2="1200" y2="150"/>
+    <line x1="0" y1="210" x2="1200" y2="210"/>
+  </g>
+
+  <!-- title -->
+  <text x="72" y="300" font-size="64" font-weight="800" fill="#1a1714" letter-spacing="-1.5">I MUST BREAK</text>
+  <text x="72" y="374" font-size="64" font-weight="800" fill="#c1121f" letter-spacing="-1.5">YOUR SPREADSHEET</text>
+  <text x="74" y="424" font-size="19" fill="#4a443c">A Kubernetes operator takes over the subnet inventory.</text>
+  <text x="74" y="452" font-size="19" fill="#4a443c">Tags are the truth. Everything else is opinion.</text>
+
+  <rect x="72" y="492" width="150" height="3" fill="#c1121f"/>
+  <text x="74" y="528" font-family="PT Mono, JetBrains Mono, monospace" font-size="15" fill="#7b7266">Ivan Drago · subnet-operator · hypersurgery.dev</text>
+
+  <!-- the blocky figure -->
+  <g transform="translate(880 176) scale(1.25)">
+    <!-- flat top -->
+    <rect x="18" y="-14" width="84" height="14" rx="3" fill="#c1121f"/>
+    <rect x="18" y="0" width="84" height="54" rx="7" fill="#e7dfd0" stroke="#c1121f" stroke-width="3"/>
+    <rect x="34" y="20" width="18" height="7" rx="3" fill="#c1121f"/>
+    <rect x="70" y="20" width="18" height="7" rx="3" fill="#c1121f"/>
+    <rect x="46" y="38" width="30" height="4" rx="2" fill="#7b7266"/>
+    <!-- torso -->
+    <rect x="4" y="62" width="112" height="104" rx="8" fill="#e7dfd0" stroke="#c1121f" stroke-width="3"/>
+    <rect x="4" y="132" width="112" height="16" fill="#c1121f" opacity=".85"/>
+    <text x="60" y="145" text-anchor="middle" font-family="PT Mono, JetBrains Mono, monospace" font-size="11" fill="#f2ece0">hs/managed</text>
+    <!-- arms and gloves -->
+    <rect x="-34" y="80" width="38" height="34" rx="12" fill="#c1121f"/>
+    <rect x="116" y="80" width="38" height="34" rx="12" fill="#c1121f"/>
+    <!-- legs -->
+    <rect x="22" y="166" width="30" height="34" rx="5" fill="#e7dfd0" stroke="#c1121f" stroke-width="3"/>
+    <rect x="68" y="166" width="30" height="34" rx="5" fill="#e7dfd0" stroke="#c1121f" stroke-width="3"/>
+  </g>
+
+  <!-- the fallen spreadsheet on the canvas -->
+  <g transform="translate(700 470) rotate(-8)">
+    <rect x="0" y="0" width="210" height="72" rx="6" fill="#f2ece0" stroke="#4a443c" stroke-width="2"/>
+    <rect x="0" y="0" width="210" height="16" rx="6" fill="#c9bfae"/>
+    <rect x="0" y="10" width="210" height="6" fill="#c9bfae"/>
+    <g stroke="#c9bfae" stroke-width="1.2">
+      <line x1="0" y1="38" x2="210" y2="38"/><line x1="0" y1="56" x2="210" y2="56"/>
+      <line x1="72" y1="16" x2="72" y2="72"/><line x1="142" y1="16" x2="142" y2="72"/>
+    </g>
+    <text x="10" y="12" font-family="PT Mono, JetBrains Mono, monospace" font-size="9" fill="#4a443c">Sheet1</text>
+    <text x="10" y="31" font-family="PT Mono, JetBrains Mono, monospace" font-size="9" fill="#7b7266">10.0.1.0/24</text>
+    <text x="80" y="31" font-family="PT Mono, JetBrains Mono, monospace" font-size="9" fill="#7b7266">prod?</text>
+    <text x="150" y="31" font-family="PT Mono, JetBrains Mono, monospace" font-size="9" fill="#c1121f">ask Dmitri</text>
+    <text x="10" y="50" font-family="PT Mono, JetBrains Mono, monospace" font-size="9" fill="#7b7266">10.0.?.0/24</text>
+    <text x="80" y="50" font-family="PT Mono, JetBrains Mono, monospace" font-size="9" fill="#7b7266">???</text>
+    <text x="150" y="50" font-family="PT Mono, JetBrains Mono, monospace" font-size="9" fill="#8f0d17">temporary</text>
+  </g>
+  <!-- little impact marks -->
+  <g stroke="#c1121f" stroke-width="3" stroke-linecap="round" opacity=".8">
+    <line x1="676" y1="466" x2="660" y2="452"/>
+    <line x1="694" y1="452" x2="688" y2="432"/>
+    <line x1="660" y1="492" x2="640" y2="492"/>
+  </g>
+</svg>

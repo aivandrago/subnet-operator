@@ -1,0 +1,5 @@
+# Helm templates are Go templates, not YAML, so every one of them is a parse error for a
+# scanner that expects the rendered thing. The rendered output is what Trivy checks.
+charts/*/templates/
+dist/
+bin/

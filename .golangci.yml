@@ -1,0 +1,80 @@
+version: "2"
+run:
+  allow-parallel-runners: true
+  # The scale test is only compiled with its tag; lint it anyway.
+  build-tags:
+    - scale
+linters:
+  default: none
+  enable:
+    - copyloopvar
+    - depguard
+    - dupl
+    - errcheck
+    - ginkgolinter
+    - goconst
+    - gocyclo
+    - govet
+    - ineffassign
+    - lll
+    - modernize
+    - misspell
+    - nakedret
+    - prealloc
+    - revive
+    - staticcheck
+    - unconvert
+    - unparam
+    - unused
+    - logcheck
+  settings:
+    custom:
+      logcheck:
+        type: "module"
+        description: Checks Go logging calls for Kubernetes logging conventions.
+    depguard:
+      rules:
+        forbid-sort-pkg:
+          deny:
+            - pkg: sort
+              desc: Should be replaced with slices package
+    revive:
+      rules:
+        - name: comment-spacings
+        - name: import-shadowing
+    modernize:
+      disable:
+        - omitzero
+        # Go 1.27 lets a composite literal leave out an embedded field's name, so
+        # metav1.ObjectMeta{Name: x} can collapse into the outer literal. Every Kubernetes
+        # example ever written spells ObjectMeta out, and a reader of this code is reading
+        # the rest of the ecosystem too, so the shorter form costs more than it saves.
+        - embedlit
+  exclusions:
+    generated: lax
+    rules:
+      - linters:
+          - lll
+        path: api/*
+      - linters:
+          - dupl
+          - lll
+        path: internal/*
+      # Repeated literals in test fixtures read better than constants.
+      - linters:
+          - goconst
+        path: _test\.go
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$

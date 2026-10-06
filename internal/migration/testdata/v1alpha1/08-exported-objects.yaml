@@ -1,0 +1,41 @@
+# What `kubectl get -o yaml` of a running 0.7 install looks like: discovered objects, status,
+# and metadata that belongs to the old group.
+apiVersion: aws.hypersurgery/v1alpha1
+kind: VPC
+metadata:
+  name: vpc-0aa11bb2cc33dd44e
+  labels:
+    aws.hypersurgery/scope: organization
+spec:
+  vpcID: vpc-0aa11bb2cc33dd44e
+  account: "222222222222"
+  region: eu-central-1
+---
+apiVersion: aws.hypersurgery/v1alpha1
+kind: SubnetClaim
+metadata:
+  name: payments
+  namespace: default
+  annotations:
+    aws.hypersurgery/created-by: jane@example.com
+    kubectl.kubernetes.io/last-applied-configuration: '{"apiVersion":"aws.hypersurgery/v1alpha1"}'
+spec:
+  scopeRef: organization
+  account: "222222222222"
+  region: eu-central-1
+  vpcID: vpc-0aa11bb2cc33dd44e
+  prefixLength: 24
+  availabilityZones: [eu-central-1a]
+  mode: Allocate
+  owner: team-payments
+  namePrefix: payments
+status:
+  allocations:
+    - availabilityZone: eu-central-1a
+      cidrBlock: 10.0.4.0/24
+      state: Pending
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: team-payments

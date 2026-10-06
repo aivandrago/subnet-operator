@@ -1,0 +1,18 @@
+# Binds the namespaced part of the manager's permissions (the credential Secrets) in the
+# namespace the manager runs in. The Role itself is generated into role.yaml from the
+# namespaced kubebuilder RBAC markers.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  labels:
+    app.kubernetes.io/name: subnet-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: manager-namespaced-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: manager-role
+subjects:
+- kind: ServiceAccount
+  name: controller-manager
+  namespace: system
