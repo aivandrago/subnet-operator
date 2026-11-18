@@ -351,16 +351,16 @@ footer a:hover { color: var(--text); text-decoration: underline; }
 /* Modes */
 .modes { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
 .modes > * { min-width: 0; }
-.mode { padding: 26px; border-radius: var(--radius); background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow); display: flex; flex-direction: column; }
-.mode.default { border-top: 3px solid var(--blue-b); }
-.mode .top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.mode h3 { margin: 12px 0 8px; font-size: 20px; letter-spacing: -0.01em; }
-.mode h3 code { font-size: .9em; }
-.mode p { margin: 0 0 12px; color: var(--muted); font-size: 15px; }
-.mode ul { margin: 0 0 16px; padding-left: 18px; color: var(--muted); font-size: 14.5px; display: grid; gap: 6px; }
-.mode ul code, .mode p code { font-size: .86em; background: rgba(15, 23, 42, 0.06); padding: 1px 5px; border-radius: 5px; }
-.mode .code { margin-top: auto; box-shadow: none; }
-.mode .code pre { font-size: 12px; }
+.modes .mode { padding: 26px; border-radius: var(--radius); background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow); display: flex; flex-direction: column; }
+.modes .mode.default { border-top: 3px solid var(--blue-b); }
+.modes .mode .top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.modes .mode h3 { margin: 12px 0 8px; font-size: 20px; letter-spacing: -0.01em; }
+.modes .mode h3 code { font-size: .9em; }
+.modes .mode p { margin: 0 0 12px; color: var(--muted); font-size: 15px; }
+.modes .mode ul { margin: 0 0 16px; padding-left: 18px; color: var(--muted); font-size: 14.5px; display: grid; gap: 6px; }
+.modes .mode ul code, .modes .mode p code { font-size: .86em; background: rgba(15, 23, 42, 0.06); padding: 1px 5px; border-radius: 5px; }
+.modes .mode .code { margin-top: auto; box-shadow: none; }
+.modes .mode .code pre { font-size: 12px; }
 .code .hl { color: #fcd34d; }
 .policy { margin-top: 22px; display: grid; grid-template-columns: 1fr; gap: 16px; align-items: start; }
 .policy .fit { grid-template-columns: repeat(3, 1fr); }
@@ -418,7 +418,7 @@ footer a:hover { color: var(--text); text-decoration: underline; }
 @media (max-width: 640px) {
   .steps5 { grid-template-columns: 1fr; }
   nav .btn-demo { display: none; }
-  .mode, .demo-strip { padding: 20px; }
+  .modes .mode, .demo-strip { padding: 20px; }
   .policy .fit div { grid-template-columns: 1fr; }
   .mini div { grid-template-columns: 74px 1fr auto; }
 }
