@@ -188,6 +188,9 @@ h2 { font-size: clamp(28px, 3.6vw, 42px); line-height: 1.12; letter-spacing: -0.
 .status { font: 600 11.5px var(--mono); padding: 3px 9px; border-radius: 999px; letter-spacing: 0.03em; white-space: nowrap; }
 .status.done { color: var(--teal); background: rgba(15, 118, 110, 0.09); border: 1px solid rgba(15, 118, 110, 0.22); }
 .status.now { color: var(--violet); background: rgba(109, 40, 217, 0.08); border: 1px solid rgba(109, 40, 217, 0.22); }
+.status.concept { color: var(--blue); background: rgba(29, 78, 216, 0.08); border: 1px solid rgba(29, 78, 216, 0.22); }
+.product.concept { border-top-color: var(--blue-b); }
+.product.concept .links a { color: var(--blue); }
 
 .icon {
   width: 40px; height: 40px; border-radius: 11px; display: grid; place-items: center;
@@ -301,6 +304,7 @@ footer a:hover { color: var(--text); text-decoration: underline; }
         <div class="menu">
           <a href="/subnet-operator/"><b>Subnet Operator</b><span>Cloud network inventory · stable</span></a>
           <a href="/alert-operator/"><b>Alert Operator</b><span>Prometheus alert rule inventory · alpha</span></a>
+          <a href="/team-network/"><b>Team Network</b><span>Team subnets, nodes and VPN access · commercial</span></a>
           <a class="all" href="#products"><b>All products</b></a>
         </div>
       </details>
@@ -321,10 +325,11 @@ footer a:hover { color: var(--text); text-decoration: underline; }
       <div class="eyebrow">Hypersurgery · Kubernetes operators</div>
       <h1>Operators for the parts of infrastructure <span class="grad">nobody owns.</span></h1>
       <p class="lead">
-        We build small, open-source Kubernetes operators that turn a neglected corner of your platform
-        — <strong>cloud networks</strong>, <strong>alert rules</strong>, and more to come — into a live
-        inventory you query with <code>kubectl</code>: who owns each thing, and what is wrong with it.
-        Every one starts <strong>read-only</strong> and changes nothing until you opt in.
+        We build small Kubernetes operators that turn a neglected corner of your platform
+        — <strong>cloud networks</strong>, <strong>alert rules</strong>, <strong>team networks</strong> — into
+        something you query with <code>kubectl</code>: who owns each thing, and what is wrong with it.
+        Subnet Operator and Alert Operator are open source and start <strong>read-only</strong>;
+        Team Network Operator is commercial and only proposes VPN access until you opt in.
       </p>
       <div class="cta">
         <a class="btn btn-primary" href="#products">See the products
@@ -337,7 +342,7 @@ footer a:hover { color: var(--text); text-decoration: underline; }
         <span><svg viewBox="0 0 24 24"><use href="#i-check"/></svg>Read-only first</span>
         <span><svg viewBox="0 0 24 24"><use href="#i-check"/></svg>Kubernetes-native APIs</span>
         <span><svg viewBox="0 0 24 24"><use href="#i-check"/></svg>Prometheus-native</span>
-        <span><svg viewBox="0 0 24 24"><use href="#i-check"/></svg>Apache-2.0</span>
+        <span><svg viewBox="0 0 24 24"><use href="#i-check"/></svg>Open source: Subnet and Alert Operator</span>
       </div>
     </div>
 
@@ -367,9 +372,9 @@ monitoring  KubeAPIDown       team-platform  <span class="t-bad">false</span>   
     <div class="section-head reveal">
       <div class="kicker">Products</div>
       <h2>One operator per problem nobody owns.</h2>
-      <p>Each one keeps an inventory of one part of your infrastructure, names an owner for every item in it
-        and says what is wrong — in Kubernetes objects, Prometheus metrics and a Grafana dashboard. Each starts
-        read-only.</p>
+      <p>Each one takes one part of your infrastructure, names an owner for every item in it and says what is
+        wrong — in Kubernetes objects, Prometheus metrics and a Grafana dashboard. The open-source ones start
+        read-only; Team Network Operator proposes its VPN rules before it writes any.</p>
     </div>
     <div class="products">
       <article class="card product reveal" id="subnet-operator">
@@ -396,6 +401,18 @@ monitoring  KubeAPIDown       team-platform  <span class="t-bad">false</span>   
         <div class="for"><span>Prometheus</span><span>Alertmanager</span><span>API v1alpha1</span></div>
         <div class="links"><a href="/alert-operator/">Overview</a><a href="https://github.com/aivandrago/alert-operator/blob/v0.1.0/docs/install.md">Install</a><a href="/alert-operator/dashboard/">Live demo</a><a href="https://github.com/aivandrago/alert-operator">GitHub</a></div>
       </article>
+      <article class="card product concept reveal">
+        <div class="top">
+          <div class="icon b"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="8.5" y="14" width="7" height="7" rx="1.5"/><path d="M6.5 10v2h11v-2M12 12v2"/></svg></div>
+          <span class="status concept">COMMERCIAL · CONCEPT</span>
+        </div>
+        <h3>Team Network Operator</h3>
+        <p class="value">One object per team: its subnets, nodes and VPN access.</p>
+        <p>A subnet in every zone, a security group, Karpenter nodes, a VPN route and a grant for the team's group
+          to exactly those CIDRs — created in order, removed in reverse. In development; nothing released yet.</p>
+        <div class="for"><span>AWS</span><span>Karpenter</span><span>Tailscale</span><span>commercial</span></div>
+        <div class="links"><a href="/team-network/">Overview</a><a href="/team-network/dashboard/">Live demo</a></div>
+      </article>
       <article class="card product next reveal">
         <div class="top"><span class="status soon">NEXT</span></div>
         <h3>What should we build next?</h3>
@@ -418,7 +435,7 @@ monitoring  KubeAPIDown       team-platform  <span class="t-bad">false</span>   
       <div class="principle reveal"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></div><div><h4>Read-only first</h4><p>Each operator starts by looking. Anything that writes is a separate, opt-in layer with its own permissions, and nothing deletes what it did not create.</p></div></div>
       <div class="principle reveal"><div class="icon b"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="8" height="8" rx="2"/><rect x="13" y="13" width="8" height="8" rx="2"/><path d="M11 7h4a2 2 0 0 1 2 2v4"/></svg></div><div><h4>Kubernetes-native</h4><p>The inventory is custom resources with status conditions and owners: <code>kubectl</code>, GitOps and RBAC work on it as on anything else in the cluster.</p></div></div>
       <div class="principle reveal"><div class="icon v"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 20h18"/><path d="M6 16V9M11 16V5M16 16v-5M21 16V8"/></svg></div><div><h4>Observable out of the box</h4><p>Prometheus metrics, alerting rules with runbooks and a Grafana dashboard ship with every chart, so a finding reaches a person, not only a status field.</p></div></div>
-      <div class="principle reveal"><div class="icon a"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22c5.5-2 8-6 8-11V5l-8-3-8 3v6c0 5 2.5 9 8 11z"/><path d="M9 12l2 2 4-4"/></svg></div><div><h4>Open and checkable</h4><p>Apache-2.0, developed in the open, with CI, security scans and OpenSSF Scorecard published — and a plain statement of what has not been proven yet.</p></div></div>
+      <div class="principle reveal"><div class="icon a"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22c5.5-2 8-6 8-11V5l-8-3-8 3v6c0 5 2.5 9 8 11z"/><path d="M9 12l2 2 4-4"/></svg></div><div><h4>Open and checkable</h4><p>Subnet Operator and Alert Operator are Apache-2.0 and developed in the open, with CI, security scans and OpenSSF Scorecard published — and a plain statement of what has not been proven yet. Team Network Operator is commercial.</p></div></div>
     </div>
   </div>
 </section>
@@ -467,7 +484,7 @@ monitoring  KubeAPIDown       team-platform  <span class="t-bad">false</span>   
 
 <footer>
   <div class="wrap">
-    <span>Hypersurgery · 2026 · <a href="/subnet-operator/">Subnet Operator</a> · <a href="/alert-operator/">Alert Operator</a> · <a href="/docs/">Install</a> · <a href="/article/">Article</a> · <a href="https://charts.hypersurgery.dev">Charts</a> · <a href="https://github.com/aivandrago">GitHub</a></span>
+    <span>Hypersurgery · 2026 · <a href="/subnet-operator/">Subnet Operator</a> · <a href="/alert-operator/">Alert Operator</a> · <a href="/team-network/">Team Network</a> · <a href="/docs/">Install</a> · <a href="/article/">Article</a> · <a href="https://charts.hypersurgery.dev">Charts</a> · <a href="https://github.com/aivandrago">GitHub</a></span>
     <span>Contact: <a href="mailto:feverondiva@proton.me">feverondiva@proton.me</a></span>
   </div>
 </footer>

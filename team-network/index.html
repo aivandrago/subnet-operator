@@ -1,0 +1,898 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Team Network Operator — Hypersurgery</title>
+<meta name="description" content="Team Network Operator, a commercial product in development: one Kubernetes object per team gives it subnets in every zone, a security group, Karpenter nodes, a VPN route and VPN access for the team's group to exactly those CIDRs, in order and reversed on deletion.">
+<link rel="canonical" href="https://hypersurgery.dev/team-network/">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://hypersurgery.dev/team-network/">
+<meta property="og:title" content="Team Network Operator — Hypersurgery">
+<meta property="og:description" content="Team Network Operator, a commercial product in development: one Kubernetes object per team gives it subnets in every zone, a security group, Karpenter nodes, a VPN route and VPN access for the team's group to exactly those CIDRs, in order and reversed on deletion.">
+<meta name="twitter:card" content="summary">
+<link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230b1020'/%3E%3Cg fill='none' stroke='%232dd4bf' stroke-width='2.4'%3E%3Crect x='7' y='7' width='8' height='8' rx='2'/%3E%3Crect x='17' y='17' width='8' height='8' rx='2'/%3E%3C/g%3E%3Crect x='17' y='7' width='8' height='8' rx='2' fill='%238b5cf6'/%3E%3Crect x='7' y='17' width='8' height='8' rx='2' fill='%2360a5fa'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/team-network/dashboard/app.css?v=1">
+<style>
+:root {
+  /* Light theme. Text colours meet WCAG AA on --bg and --surface; the bright brand
+     tints (--teal-b, --blue-b, --violet-b) are for fills and borders, never body text. */
+  --bg: #f7f9fc;
+  --bg-2: #eef3f9;
+  --surface: #ffffff;
+  --surface-2: #f3f6fb;
+  --border: rgba(15, 23, 42, 0.09);
+  --border-strong: rgba(15, 23, 42, 0.16);
+  --text: #0f172a;
+  --muted: #475569;
+  --faint: #5b6678;
+  --teal: #0f766e;
+  --violet: #6d28d9;
+  --blue: #1d4ed8;
+  --amber: #b45309;
+  --red: #b91c1c;
+  --green: #15803d;
+  --teal-b: #14b8a6;
+  --blue-b: #3b82f6;
+  --violet-b: #8b5cf6;
+  --ink: #0f172a;           /* the dark terminal and code blocks */
+  --ink-2: #1e293b;
+  --ink-text: #dbe3ef;
+  --ink-faint: #94a3b8;
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.05), 0 1px 1px rgba(15, 23, 42, 0.03);
+  --shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 8px 24px -12px rgba(15, 23, 42, 0.12);
+  --shadow-lg: 0 30px 60px -28px rgba(15, 23, 42, 0.35);
+  --radius: 16px;
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --max: 1160px;
+  color-scheme: light;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; scroll-padding-top: 72px; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.6 var(--sans);
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+a { color: inherit; text-decoration: none; }
+code, pre { font-family: var(--mono); }
+p code, li code, .note code, .fit code { font-size: .88em; background: rgba(15, 23, 42, 0.06); padding: 1px 5px; border-radius: 5px; }
+.wrap { max-width: var(--max); margin: 0 auto; padding: 0 24px; }
+.inline-link { color: var(--teal); font-weight: 500; }
+.inline-link:hover, .section-note a:hover, .fit a:hover, .section-head p a:hover { text-decoration: underline; }
+.section-note a, .fit a, .section-head p a { color: var(--teal); font-weight: 500; }
+
+/* Background decoration: soft brand tints behind the hero */
+.glow {
+  position: absolute; inset: 0 0 auto 0; height: 820px; pointer-events: none; z-index: 0;
+  background:
+    radial-gradient(620px 380px at 12% 8%, rgba(20, 184, 166, 0.13), transparent 70%),
+    radial-gradient(720px 420px at 88% 0%, rgba(139, 92, 246, 0.12), transparent 70%),
+    radial-gradient(520px 320px at 60% 70%, rgba(59, 130, 246, 0.07), transparent 70%);
+}
+.grid-bg {
+  position: absolute; inset: 0 0 auto 0; height: 820px; pointer-events: none; z-index: 0;
+  background-image:
+    linear-gradient(rgba(15, 23, 42, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(15, 23, 42, 0.045) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: radial-gradient(ellipse at 50% 0%, #000 30%, transparent 75%);
+  -webkit-mask-image: radial-gradient(ellipse at 50% 0%, #000 30%, transparent 75%);
+}
+
+/* Nav */
+nav {
+  position: sticky; top: 0; z-index: 50;
+  backdrop-filter: saturate(180%) blur(14px);
+  -webkit-backdrop-filter: saturate(180%) blur(14px);
+  background: rgba(255, 255, 255, 0.82);
+  border-bottom: 1px solid var(--border);
+}
+nav .wrap { display: flex; align-items: center; gap: 18px; height: 64px; }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 700; letter-spacing: -0.01em; white-space: nowrap; color: var(--text); }
+.brand svg { width: 28px; height: 28px; }
+.nav-links { display: flex; gap: 20px; margin-left: auto; flex: none; font-size: 14px; font-weight: 500; color: var(--muted); white-space: nowrap; }
+.nav-links a:hover { color: var(--text); }
+.nav-gh { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px;
+  border-radius: 9px; border: 1px solid var(--border-strong); color: var(--muted); background: var(--surface); }
+.nav-gh:hover { color: var(--text); border-color: rgba(15, 23, 42, 0.28); }
+.pill {
+  /* In a crowded nav a shrinking flex item wraps its text and the rounded corners turn it
+     into a blob, so it keeps its width and its line. */
+  display: inline-flex; align-items: center; gap: 6px; flex: none; white-space: nowrap;
+  font-size: 12px; font-weight: 600; letter-spacing: 0.02em;
+  padding: 4px 10px; border-radius: 999px;
+  border: 1px solid var(--border-strong); color: var(--muted); background: var(--surface);
+}
+.pill .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); }
+
+/* Hero */
+header.hero { position: relative; padding: 88px 0 64px; }
+.hero .wrap { position: relative; z-index: 1; display: grid; grid-template-columns: 0.95fr 1.05fr; gap: 56px; align-items: center; }
+.eyebrow { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--teal); font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+h1 {
+  font-size: clamp(38px, 5.2vw, 60px); line-height: 1.05; letter-spacing: -0.035em; margin: 16px 0 20px; font-weight: 800;
+}
+.grad {
+  /* Large bold text only: every stop is at least 3:1 on the page background. */
+  background: linear-gradient(100deg, #0d9488 0%, #2563eb 50%, #7c3aed 100%);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.lead { font-size: 19px; color: var(--muted); max-width: 560px; margin: 0 0 32px; }
+.lead strong { color: var(--text); font-weight: 600; }
+.cta { display: flex; gap: 12px; flex-wrap: wrap; }
+.btn {
+  display: inline-flex; align-items: center; gap: 8px; height: 46px; padding: 0 20px; border-radius: 12px;
+  font-weight: 600; font-size: 15px; transition: transform .15s ease, box-shadow .15s ease, background .15s ease, border-color .15s ease;
+}
+.btn-primary { background: linear-gradient(100deg, #0f766e, #1d4ed8); color: #fff; box-shadow: 0 8px 24px -10px rgba(15, 118, 110, 0.55); }
+.btn-primary:hover { transform: translateY(-1px); box-shadow: 0 12px 28px -10px rgba(15, 118, 110, 0.7); }
+.btn-ghost { border: 1px solid var(--border-strong); color: var(--text); background: var(--surface); box-shadow: var(--shadow-sm); }
+.btn-ghost:hover { border-color: rgba(15, 23, 42, 0.3); background: #fff; }
+.hero-meta { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 28px; font-size: 13px; color: var(--faint); }
+.hero-meta span { display: inline-flex; align-items: center; gap: 6px; }
+.hero-meta svg { width: 14px; height: 14px; color: var(--teal); }
+
+/* Terminal: dark on purpose, the one contrast block of the hero */
+.terminal {
+  background: var(--ink); border: 1px solid #1e293b; border-radius: 18px; overflow: hidden;
+  box-shadow: var(--shadow-lg);
+}
+.term-bar { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid rgba(148, 163, 184, 0.16); background: #131c2e; }
+.term-bar i { width: 11px; height: 11px; border-radius: 50%; display: inline-block; }
+.term-bar i:nth-child(1) { background: #ff5f57; } .term-bar i:nth-child(2) { background: #febc2e; } .term-bar i:nth-child(3) { background: #28c840; }
+.term-bar span { margin-left: 10px; font: 12px var(--mono); color: var(--ink-faint); }
+.term-body { padding: 18px 18px 20px; font: 12px/1.75 var(--mono); color: var(--ink-text); overflow-x: auto; white-space: pre; }
+.t-prompt { color: #2dd4bf; } .t-cmd { color: #f1f5f9; } .t-head { color: var(--ink-faint); }
+.t-ok { color: #4ade80; } .t-warn { color: #fbbf24; } .t-bad { color: #f87171; } .t-dim { color: var(--ink-faint); } .t-vio { color: #c4b5fd; }
+
+/* Sections */
+section { position: relative; padding: 88px 0; }
+section.alt { background: var(--bg-2); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.section-head { max-width: 720px; margin-bottom: 44px; }
+.kicker { font-size: 13px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--violet); }
+h2 { font-size: clamp(28px, 3.6vw, 42px); line-height: 1.12; letter-spacing: -0.028em; margin: 10px 0 14px; font-weight: 800; }
+.section-head p { color: var(--muted); font-size: 17px; margin: 0; }
+.section-note { margin: 22px 0 0; color: var(--muted); font-size: 15.5px; max-width: 720px; }
+.checks li em { font-style: normal; color: var(--text); font-weight: 600; }
+
+/* Stats */
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow); overflow: hidden; }
+.stat { padding: 24px; border-right: 1px solid var(--border); }
+.stat:last-child { border-right: 0; }
+.stat b { display: block; font-size: 26px; letter-spacing: -0.02em; margin-bottom: 4px; }
+.stat span { color: var(--muted); font-size: 14px; }
+
+/* Cards */
+.cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+.card {
+  position: relative; padding: 26px; border-radius: var(--radius);
+  background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow);
+  transition: border-color .2s ease, transform .2s ease, box-shadow .2s ease;
+}
+.card:hover { border-color: var(--border-strong); transform: translateY(-2px); }
+.card h3 { font-size: 18px; margin: 14px 0 8px; letter-spacing: -0.01em; }
+.card p { color: var(--muted); margin: 0; font-size: 15px; }
+/* Products */
+.products { grid-template-columns: repeat(2, 1fr); }
+.product { border-top: 3px solid var(--teal-b); }
+.product.alpha { border-top-color: var(--violet-b); }
+.product .top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.product h3 { font-size: 21px; }
+.product .links { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 18px; font-size: 14px; font-weight: 600; }
+.product .links a { color: var(--teal); }
+.product.alpha .links a { color: var(--violet); }
+.product .links a:hover { text-decoration: underline; }
+.status { font: 600 11.5px var(--mono); padding: 3px 9px; border-radius: 999px; letter-spacing: 0.03em; white-space: nowrap; }
+.status.done { color: var(--teal); background: rgba(15, 118, 110, 0.09); border: 1px solid rgba(15, 118, 110, 0.22); }
+.status.now { color: var(--violet); background: rgba(109, 40, 217, 0.08); border: 1px solid rgba(109, 40, 217, 0.22); }
+@media (max-width: 640px) { .products { grid-template-columns: 1fr; } }
+.icon {
+  width: 40px; height: 40px; border-radius: 11px; display: grid; place-items: center;
+  background: rgba(20, 184, 166, 0.10); color: var(--teal); border: 1px solid rgba(15, 118, 110, 0.20);
+}
+.icon.v { background: rgba(139, 92, 246, 0.10); color: var(--violet); border-color: rgba(109, 40, 217, 0.20); }
+.icon.b { background: rgba(59, 130, 246, 0.10); color: var(--blue); border-color: rgba(29, 78, 216, 0.20); }
+.icon.a { background: rgba(245, 158, 11, 0.12); color: var(--amber); border-color: rgba(180, 83, 9, 0.22); }
+.icon.r { background: rgba(239, 68, 68, 0.09); color: var(--red); border-color: rgba(185, 28, 28, 0.20); }
+.icon svg { width: 20px; height: 20px; }
+
+/* Code: dark blocks, the same ink as the terminal */
+.code-grid { display: grid; grid-template-columns: 1.2fr 0.8fr; gap: 20px; }
+.code { border: 1px solid #1e293b; border-radius: 16px; overflow: hidden; background: var(--ink); box-shadow: var(--shadow); }
+.code-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid rgba(148, 163, 184, 0.16); background: #131c2e; font: 12px var(--mono); color: var(--ink-faint); }
+.code-head b { color: #cbd5e1; font-weight: 500; }
+.code pre { margin: 0; padding: 18px; font-size: 12.5px; line-height: 1.7; color: var(--ink-text); overflow-x: auto; }
+.code .k { color: #7dd3fc; } .code .s { color: #a7f3d0; } .code .c { color: var(--ink-faint); } .code .n { color: #fcd34d; } .code .w { color: #fbbf24; } .code .e { color: #f87171; }
+
+/* Principles */
+.principles { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+.principle { display: grid; grid-template-columns: 44px 1fr; gap: 16px; padding: 22px; border-radius: 14px; border: 1px solid var(--border); background: var(--surface); box-shadow: var(--shadow-sm); }
+.principle h4 { margin: 0 0 4px; font-size: 16px; }
+.principle p { margin: 0; color: var(--muted); font-size: 14.5px; }
+
+/* Read next */
+.readnext { display: grid; grid-template-columns: 300px 1fr; gap: 24px; align-items: center;
+  border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;
+  background: var(--surface); box-shadow: var(--shadow); transition: border-color .2s ease, transform .2s ease; }
+.readnext:hover { border-color: var(--border-strong); transform: translateY(-2px); }
+.readnext img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.readnext .rn-body { padding: 26px 28px 26px 4px; }
+.readnext h3 { margin: 0 0 8px; font-size: 22px; letter-spacing: -0.01em; }
+.readnext p { margin: 0 0 16px; color: var(--muted); font-size: 15px; }
+.readnext .rn-meta { font-family: var(--mono); font-size: 12px; color: var(--faint); margin-bottom: 14px; }
+@media (max-width: 720px) { .readnext { grid-template-columns: 1fr; } .readnext .rn-body { padding: 0 20px 24px; } }
+
+/* Evidence */
+.badges { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 4px; }
+.badges img { height: 20px; display: block; }
+.badges a { display: block; line-height: 0; }
+.fit { display: grid; gap: 12px; }
+.fit div { display: grid; grid-template-columns: 170px 1fr; gap: 16px; padding: 16px 18px; border-radius: 12px; border: 1px solid var(--border); background: var(--surface); font-size: 14.5px; }
+.fit b { color: var(--text); font-weight: 600; }
+.fit span { color: var(--muted); }
+.fit .open { border-color: rgba(180, 83, 9, 0.30); background: #fffaf0; }
+
+/* Get involved */
+.involve { display: grid; grid-template-columns: 1.05fr 1fr; gap: 32px; align-items: start; }
+/* Grid items that hold code must be allowed to shrink, so the code scrolls instead of the page. */
+.hero .wrap > *, .layers > *, .code-grid > *, .alerts > *, .alert-rules > *, .auto > *, .involve > * { min-width: 0; }
+.involve .code { margin: 0 0 18px; }
+.involve ul { margin: 0; padding-left: 18px; color: var(--muted); font-size: 15px; display: grid; gap: 8px; }
+.involve .cta { margin-top: 22px; }
+
+footer { padding: 40px 0 52px; border-top: 1px solid var(--border); background: var(--surface); color: var(--faint); font-size: 13.5px; }
+footer .wrap { display: flex; justify-content: space-between; gap: 12px 20px; flex-wrap: wrap; }
+footer a { color: var(--muted); }
+footer a:hover { color: var(--text); text-decoration: underline; }
+
+/* Live demo dashboard: the panel itself is styled by assets/dashboard.css */
+.btn-demo {
+  display: inline-flex; align-items: center; gap: 8px; height: 34px; padding: 0 14px; border-radius: 10px;
+  flex: none; white-space: nowrap;
+  font: 600 13.5px var(--sans); cursor: pointer;
+  border: 1px solid rgba(15, 118, 110, 0.35); color: var(--teal); background: rgba(20, 184, 166, 0.08);
+  transition: background .15s ease, border-color .15s ease;
+}
+.btn-demo:hover { background: rgba(20, 184, 166, 0.15); border-color: var(--teal); }
+.btn-demo .live { width: 7px; height: 7px; border-radius: 50%; background: var(--teal-b); box-shadow: 0 0 0 3px rgba(20, 184, 166, 0.18); }
+@media (prefers-reduced-motion: no-preference) { .btn-demo .live { animation: pulse 2.4s ease-in-out infinite; } }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+
+.demo-backdrop {
+  position: fixed; inset: 0; z-index: 100; display: none;
+  background: rgba(15, 23, 42, 0.45); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  padding: 24px; overflow-y: auto;
+}
+.demo-backdrop[open] { display: block; }
+.demo-backdrop .dash { max-width: 1200px; margin: 0 auto; box-shadow: 0 40px 90px -30px rgba(15, 23, 42, 0.55); }
+@media (max-width: 640px) { .demo-backdrop { padding: 10px; } }
+
+/* Reveal on scroll */
+.reveal { opacity: 0; transform: translateY(14px); transition: opacity .6s ease, transform .6s ease; }
+.reveal.in { opacity: 1; transform: none; }
+@media (prefers-reduced-motion: reduce) { .reveal { opacity: 1; transform: none; transition: none; } html { scroll-behavior: auto; } }
+
+@media (max-width: 980px) {
+  .hero .wrap, .layers, .code-grid, .involve { grid-template-columns: 1fr; }
+  .cards { grid-template-columns: 1fr 1fr; }
+  .steps { grid-template-columns: 1fr 1fr; }
+  .stats { grid-template-columns: 1fr 1fr; }
+  .stat:nth-child(2) { border-right: 0; }
+  .stat:nth-child(-n+2) { border-bottom: 1px solid var(--border); }
+  .nav-links { display: none; }
+  nav .pill { margin-left: auto; }
+}
+@media (max-width: 640px) {
+  .wrap { padding: 0 16px; }
+  header.hero { padding: 56px 0 44px; }
+  section { padding: 64px 0; }
+  .cards, .steps, .principles, .stats { grid-template-columns: 1fr; }
+  .stat { border-right: 0; border-bottom: 1px solid var(--border); }
+  .stat:last-child { border-bottom: 0; }
+  .fit div { grid-template-columns: 1fr; gap: 4px; }
+  .layer { padding: 24px; }
+  .diagram { padding: 16px; }
+  nav .wrap { gap: 10px; }
+  nav .pill { display: none; }
+  .nav-gh { margin-left: auto; }
+}
+
+/* Products menu: one entry that opens the product list, so the menu does not grow with every product */
+.nav-menu { position: relative; }
+.nav-menu > summary { list-style: none; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
+.nav-menu > summary::-webkit-details-marker { display: none; }
+.nav-menu > summary::after { content: ""; width: 6px; height: 6px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: translateY(-2px) rotate(45deg); transition: transform .15s ease; }
+.nav-menu[open] > summary::after { transform: translateY(1px) rotate(-135deg); }
+.nav-menu > summary:hover, .nav-menu[open] > summary { color: var(--text); }
+.nav-menu > summary:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; border-radius: 4px; }
+.nav-menu .menu { position: absolute; top: calc(100% + 12px); left: -14px; z-index: 60; min-width: 260px; display: grid; gap: 2px; padding: 8px;
+  background: var(--surface); border: 1px solid var(--border-strong); border-radius: 12px; box-shadow: 0 12px 32px rgba(15, 23, 42, .14); white-space: normal; }
+.nav-menu .menu a { display: grid; gap: 2px; padding: 9px 12px; border-radius: 8px; color: var(--text); }
+.nav-menu .menu a:hover, .nav-menu .menu a:focus-visible { background: rgba(15, 23, 42, .05); }
+.nav-menu .menu b { font-size: 14px; font-weight: 600; }
+.nav-menu .menu span { font-size: 12.5px; color: var(--muted); font-weight: 400; }
+.nav-menu .menu .all { border-top: 1px solid var(--border); margin-top: 4px; padding-top: 10px; border-radius: 0 0 8px 8px; }
+@media (max-width: 640px) { .nav-menu .menu { position: fixed; top: calc(64px + env(safe-area-inset-top, 0px)); left: max(16px, env(safe-area-inset-left, 0px)); right: max(16px, env(safe-area-inset-right, 0px)); min-width: 0; } }
+
+/* ---- Team Network page ---- */
+.demo-backdrop .tn { max-width: 1320px; margin: 0 auto; box-shadow: 0 40px 90px -30px rgba(15, 23, 42, 0.55); }
+.eyebrow.b, .kicker.b { color: var(--blue); }
+.pill .dot.concept { background: var(--blue-b); }
+.grad-b { background: linear-gradient(100deg, #1d4ed8 0%, #0d9488 60%, #7c3aed 100%); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.status.concept { color: var(--blue); background: rgba(29, 78, 216, 0.08); border: 1px solid rgba(29, 78, 216, 0.22); }
+.status.def { color: var(--teal); background: rgba(15, 118, 110, 0.09); border: 1px solid rgba(15, 118, 110, 0.22); }
+.status.soon { color: var(--muted); background: var(--surface-2); border: 1px solid var(--border); }
+
+/* Steps: five, in order */
+.steps5 { display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; counter-reset: step; }
+.steps5 > * { min-width: 0; }
+.steps5 .step { position: relative; padding: 20px 18px; border-radius: 14px; border: 1px solid var(--border); background: var(--surface); box-shadow: var(--shadow-sm); }
+.steps5 .n { font: 600 12px var(--mono); color: var(--blue); }
+.steps5 h4 { margin: 6px 0 4px; font-size: 16px; }
+.steps5 .cond { display: inline-block; font: 600 11.5px var(--mono); color: var(--green); background: rgba(21, 128, 61, 0.08); border: 1px solid rgba(21, 128, 61, 0.2); border-radius: 6px; padding: 1px 6px; margin-bottom: 8px; }
+.steps5 p { margin: 0; color: var(--muted); font-size: 14px; }
+.steps5 .step:not(:last-child)::after { content: ""; position: absolute; top: 50%; right: -12px; width: 10px; height: 10px; border-top: 2px solid var(--border-strong); border-right: 2px solid var(--border-strong); transform: translateY(-50%) rotate(45deg); }
+.order { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 18px; }
+.order > div { padding: 16px 18px; border-radius: 12px; border: 1px solid var(--border); background: var(--surface); font-size: 14.5px; color: var(--muted); }
+.order b { color: var(--text); }
+.order code { font-size: .88em; background: rgba(15, 23, 42, 0.06); padding: 1px 5px; border-radius: 5px; }
+.kube { margin-top: 26px; }
+.terminal.wide .term-body { font-size: 12px; }
+
+/* Modes */
+.modes { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+.modes > * { min-width: 0; }
+.mode { padding: 26px; border-radius: var(--radius); background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow); display: flex; flex-direction: column; }
+.mode.default { border-top: 3px solid var(--blue-b); }
+.mode .top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.mode h3 { margin: 12px 0 8px; font-size: 20px; letter-spacing: -0.01em; }
+.mode h3 code { font-size: .9em; }
+.mode p { margin: 0 0 12px; color: var(--muted); font-size: 15px; }
+.mode ul { margin: 0 0 16px; padding-left: 18px; color: var(--muted); font-size: 14.5px; display: grid; gap: 6px; }
+.mode ul code, .mode p code { font-size: .86em; background: rgba(15, 23, 42, 0.06); padding: 1px 5px; border-radius: 5px; }
+.mode .code { margin-top: auto; box-shadow: none; }
+.mode .code pre { font-size: 12px; }
+.code .hl { color: #fcd34d; }
+.policy { margin-top: 22px; display: grid; grid-template-columns: 1fr; gap: 16px; align-items: start; }
+.policy .fit { grid-template-columns: repeat(3, 1fr); }
+#object .code-grid { grid-template-columns: 1fr 1fr; }
+.policy > * { min-width: 0; }
+.policy .fit div { grid-template-columns: 1fr; gap: 4px; }
+
+/* Comparison table: the container scrolls on small screens, never the page */
+.cmp-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow); }
+.cmp { width: 100%; min-width: 760px; border-collapse: collapse; font-size: 14.5px; }
+.cmp th, .cmp td { text-align: left; vertical-align: top; padding: 16px 18px; border-bottom: 1px solid var(--border); }
+.cmp tbody tr:last-child th, .cmp tbody tr:last-child td { border-bottom: 0; }
+.cmp thead th { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--faint); font-weight: 600; background: var(--surface-2); }
+.cmp tbody th { width: 30%; font-weight: 600; color: var(--text); }
+.cmp tbody th span { display: block; font-weight: 400; font-size: 13px; color: var(--faint); margin-top: 2px; }
+.cmp tbody th a { color: var(--teal); }
+.cmp tbody th a:hover { text-decoration: underline; }
+.cmp td { color: var(--muted); }
+.cmp-wrap:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+
+.contact-line { margin: 14px 0 0; font-size: 14px; color: var(--muted); }
+.contact-line a { color: var(--blue); font-weight: 600; }
+.contact-line a:hover { text-decoration: underline; }
+
+/* Coming */
+.next3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+.next3 > * { min-width: 0; }
+.next3 .card h3 { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.next3 ul { margin: 10px 0 0; padding-left: 18px; color: var(--muted); font-size: 14.5px; display: grid; gap: 6px; }
+.notin { margin-top: 22px; color: var(--muted); font-size: 15px; max-width: 760px; }
+
+.demo-strip { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 28px; align-items: center; padding: 28px; border-radius: var(--radius); border: 1px solid var(--border); background: var(--surface); box-shadow: var(--shadow); }
+.demo-strip > * { min-width: 0; }
+.demo-strip h3 { margin: 0 0 8px; font-size: 22px; letter-spacing: -0.01em; }
+.demo-strip p { margin: 0 0 16px; color: var(--muted); }
+.mini { display: grid; gap: 8px; }
+.mini div { display: grid; grid-template-columns: 90px 1fr auto; gap: 10px; align-items: center; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface-2); font-size: 13px; }
+.mini b { font-family: var(--mono); font-size: 13px; }
+.mini span { color: var(--muted); font-family: var(--mono); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mini i { font: 600 11px var(--mono); font-style: normal; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+.mini i.ok { color: var(--green); background: rgba(21, 128, 61, 0.08); }
+.mini i.warn { color: var(--amber); background: rgba(180, 83, 9, 0.09); }
+.mini i.bad { color: var(--red); background: rgba(185, 28, 28, 0.08); }
+
+@media (max-width: 1100px) {
+  .steps5 { grid-template-columns: repeat(3, 1fr); }
+  .steps5 .step::after { display: none; }
+}
+@media (max-width: 980px) {
+  .nav-links { display: flex; gap: 16px; }
+  .nav-links .wide { display: none; }
+  .modes, .policy, .order, .next3, .demo-strip, .policy .fit, #object .code-grid { grid-template-columns: 1fr; }
+  .btn-demo { margin-left: auto; }
+}
+@media (max-width: 640px) {
+  .steps5 { grid-template-columns: 1fr; }
+  nav .btn-demo { display: none; }
+  .mode, .demo-strip { padding: 20px; }
+  .policy .fit div { grid-template-columns: 1fr; }
+  .mini div { grid-template-columns: 74px 1fr auto; }
+}
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-check" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+</svg>
+
+<nav>
+  <div class="wrap">
+    <a class="brand" href="/" aria-label="Hypersurgery home">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="#0f172a"/><g fill="none" stroke="#2dd4bf" stroke-width="2.4"><rect x="7" y="7" width="8" height="8" rx="2"/><rect x="17" y="17" width="8" height="8" rx="2"/></g><rect x="17" y="7" width="8" height="8" rx="2" fill="#8b5cf6"/><rect x="7" y="17" width="8" height="8" rx="2" fill="#60a5fa"/></svg>
+      Hypersurgery
+    </a>
+    <div class="nav-links">
+      <details class="nav-menu">
+        <summary>Products</summary>
+        <div class="menu">
+          <a href="/subnet-operator/"><b>Subnet Operator</b><span>Cloud network inventory · stable</span></a>
+          <a href="/alert-operator/"><b>Alert Operator</b><span>Prometheus alert rule inventory · alpha</span></a>
+          <a href="/team-network/" aria-current="page"><b>Team Network</b><span>Team subnets, nodes and VPN access · commercial</span></a>
+          <a class="all" href="/#products"><b>All products</b></a>
+        </div>
+      </details>
+      <a class="wide" href="#how">How it works</a>
+      <a class="wide" href="#route">Route and access</a>
+      <a class="wide" href="#safety">Safety</a>
+      <a class="wide" href="#coming">Early access</a>
+    </div>
+    <button class="btn-demo" id="demo-open" type="button" aria-haspopup="dialog">
+      <span class="live"></span>Live dashboard
+    </button>
+    <span class="pill hide-sm"><span class="dot concept"></span>Commercial · concept</span>
+  </div>
+</nav>
+
+<header class="hero" id="top">
+  <div class="glow"></div>
+  <div class="grid-bg"></div>
+  <div class="wrap">
+    <div>
+      <div class="eyebrow b">Team Network Operator · commercial · concept</div>
+      <h1>One object per team. <span class="grad-b">Subnets, nodes and VPN access, in order.</span></h1>
+      <p class="lead">
+        A platform team writes one cluster-scoped <code>TeamNetwork</code>. The operator gives that team
+        <strong>its own subnet in every zone</strong>, a security group, Karpenter nodes, a VPN route and
+        <strong>VPN access for the team's group to exactly those CIDRs</strong> — and takes it all down
+        again in reverse.
+      </p>
+      <div class="cta">
+        <a class="btn btn-primary" href="mailto:feverondiva@proton.me?subject=Team%20Network%20Operator%20early%20access">Request early access <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+        <button class="btn btn-ghost" type="button" data-open-demo>Open the live dashboard</button>
+      </div>
+      <p class="contact-line">Early access by e-mail: <a href="mailto:feverondiva@proton.me?subject=Team%20Network%20Operator%20early%20access">feverondiva@proton.me</a></p>
+      <div class="hero-meta">
+        <span><svg viewBox="0 0 24 24"><use href="#i-check"/></svg>Commercial, in development</span>
+        <span><svg viewBox="0 0 24 24"><use href="#i-check"/></svg>Subnets via Subnet Operator</span>
+        <span><svg viewBox="0 0 24 24"><use href="#i-check"/></svg>Karpenter</span>
+        <span><svg viewBox="0 0 24 24"><use href="#i-check"/></svg>Tailscale first</span>
+      </div>
+    </div>
+    <div class="terminal reveal" role="img" aria-label="Example output of kubectl get teamnetworks: eight teams with their subnets, nodes, route mode, access state and readiness; payments waits for its proposed grant, analytics has a route that is not covered, risk is still allocating">
+      <div class="term-bar"><i></i><i></i><i></i><span>kubectl — prod</span></div>
+<div class="term-body"><span class="t-prompt">$</span> <span class="t-cmd">kubectl get teamnetworks</span>
+<span class="t-head">NAME        SUBNETS   NODES     ROUTE       ACCESS            READY   AGE</span>
+analytics   2         2         external    <span class="t-dim">WaitingForRoute</span>   <span class="t-bad">False</span>   6d
+checkout    2         4         external    <span class="t-bad">MarkersMissing</span>    <span class="t-bad">False</span>   12d
+data        2         8         connector   <span class="t-ok">Granted</span>           <span class="t-ok">True</span>    63d
+identity    2         2         external    <span class="t-ok">Granted</span>           <span class="t-ok">True</span>    18d
+ml          3         TagOnly   external    <span class="t-ok">InPolicy</span>          <span class="t-ok">True</span>    27d
+payments    2         3         external    <span class="t-warn">Proposed</span>          <span class="t-warn">False</span>   9d
+risk        1/2       0         external    <span class="t-dim">Waiting</span>           <span class="t-dim">False</span>   4m
+search      2         5         external    <span class="t-ok">Granted</span>           <span class="t-ok">True</span>    41d
+</div>
+    </div>
+  </div>
+</header>
+
+<section id="problem">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <div class="kicker b">The problem</div>
+      <h2>A new team touches four places by hand, and they drift apart.</h2>
+      <p>Each step lives in a different tool, owned by a different person. Six months later nobody can say which
+        subnet, node pool, route and rule belong together — or to whom.</p>
+    </div>
+    <div class="cards">
+      <div class="card reveal"><div class="icon b"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="8" height="8" rx="2"/><rect x="13" y="13" width="8" height="8" rx="2"/><path d="M11 7h4a2 2 0 0 1 2 2v4"/></svg></div><h3>1 · A CIDR request</h3><p>A ticket for free address space, a spreadsheet to check it against, a subnet per zone created by hand.</p></div>
+      <div class="card reveal"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.6 13.4l-7.2 7.2a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.5"/></svg></div><h3>2 · Subnet tags</h3><p>The tags Karpenter and the load balancers select on, typed again on every subnet, and wrong on one of them.</p></div>
+      <div class="card reveal"><div class="icon v"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="6" rx="2"/><rect x="3" y="14" width="18" height="6" rx="2"/><path d="M7 7h.01M7 17h.01"/></svg></div><h3>3 · NodeClass and NodePool</h3><p>A Karpenter EC2NodeClass and NodePool per team, copied from the last team's, with its taint and its subnet selector.</p></div>
+      <div class="card reveal"><div class="icon a"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22c5.5-2 8-6 8-11V5l-8-3-8 3v6c0 5 2.5 9 8 11z"/></svg></div><h3>4 · A VPN route and a rule</h3><p>A route on the subnet router, a rule in the tailnet policy file, edited in the admin console by whoever is around.</p></div>
+      <div class="card reveal"><div class="icon r"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg></div><h3>Access wider than needed</h3><p>The quick fix is a rule for the whole VPC. Every team can reach every other team's nodes, and nobody notices.</p></div>
+      <div class="card reveal"><div class="icon r"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6V14M12 17.5v.5"/></svg></div><h3>Whose route is this?</h3><p>A route nobody can map to a team stays forever, because removing it might break someone. Leaving teams leave holes.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="how" class="alt">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <div class="kicker b">What one object does</div>
+      <h2>Five steps, in order, each a condition you can read.</h2>
+      <p>Every step waits for the one before it and reports a condition with a reason and a message. <code>Ready</code>
+        is True when all five are.</p>
+    </div>
+    <div class="steps5">
+      <div class="step reveal"><div class="n">01 · SUBNETS</div><h4>A subnet per zone</h4><span class="cond">SubnetsReady</span><p>A <code>SubnetClaim</code> to the Subnet Operator: one free <code>/22</code> (or the size asked) in each zone, tagged <code>hs/team</code>.</p></div>
+      <div class="step reveal"><div class="n">02 · ISOLATION</div><h4>A team security group</h4><span class="cond">IsolationReady</span><p>Ingress only from the team's own CIDRs, the cluster and the VPN. A taint on the nodes and a NetworkPolicy for the pods.</p></div>
+      <div class="step reveal"><div class="n">03 · NODES</div><h4>Karpenter nodes</h4><span class="cond">NodesReady</span><p>An <code>EC2NodeClass</code> and <code>NodePool</code> on those subnets and that group — or, in <code>TagOnly</code>, just the tags for a team's own Karpenter.</p></div>
+      <div class="step reveal"><div class="n">04 · ROUTE</div><h4>A VPN route</h4><span class="cond">RouteReady</span><p>Checked on your existing subnet routers (<code>external</code>, the default), or advertised by a Connector of its own (<code>connector</code>).</p></div>
+      <div class="step reveal"><div class="n">05 · ACCESS</div><h4>Access for the group</h4><span class="cond">AccessGranted</span><p>A grant from the team's group to exactly its CIDRs: proposed for a person to paste (default), or written by the operator.</p></div>
+    </div>
+    <div class="order">
+      <div class="reveal"><b>Access is granted last and revoked first.</b> A team never gets a rule for a route that does not
+        work yet; on deletion the grant goes before the route, the nodes, the security group and finally the subnets.</div>
+      <div class="reveal"><b>Each failure stops the line where it happens.</b> A CIDR outside every approved route leaves
+        <code>RouteReady=False NotCovered</code>, with the CIDR and the route in the message, and no access at all.</div>
+    </div>
+    <div class="terminal wide kube reveal" role="img" aria-label="kubectl describe teamnetwork payments: the five step conditions True, AccessProposed with the grant to paste, Ready False waiting for approval; two subnets 10.20.8.0/22 and 10.20.12.0/22, security group, NodePool payments with three nodes, external route covered by 10.20.0.0/16">
+      <div class="term-bar"><i></i><i></i><i></i><span>kubectl — prod</span></div>
+<div class="term-body"><span class="t-prompt">$</span> <span class="t-cmd">kubectl describe teamnetwork payments</span>
+Name:         payments
+API Version:  teams.hypersurgery.dev/v1alpha1
+Kind:         TeamNetwork
+<span class="t-dim">…</span>
+Status:
+  Conditions:
+    <span class="t-head">TYPE             STATUS   REASON             MESSAGE</span>
+    SubnetsReady     <span class="t-ok">True</span>     Allocated          2 subnets in vpc-0a1b… (10.20.8.0/22, 10.20.12.0/22)
+    IsolationReady   <span class="t-ok">True</span>     Applied            sg-03e2… allows only 10.20.8.0/22, 10.20.12.0/22, the cluster and the router
+    NodesReady       <span class="t-ok">True</span>     NodePoolReady      NodePool payments: 3 nodes
+    RouteReady       <span class="t-ok">True</span>     Covered            10.20.8.0/22 and 10.20.12.0/22 are covered by 10.20.0.0/16, advertised and approved
+                                                 on router-euc1a, router-euc1b (tag:subnet-router)
+    AccessProposed   <span class="t-warn">True</span>     <span class="t-warn">Proposed</span>           Add this grant between // hs:team-network begin and end in the tailnet policy file
+    Ready            <span class="t-warn">False</span>    AwaitingApproval   Everything but access is in place; the proposed grant is not in the policy file yet
+  Subnets:
+    eu-central-1a   10.20.8.0/22    subnet-0968…
+    eu-central-1b   10.20.12.0/22   subnet-0938…
+  Security Group ID:  sg-03e2…
+  Node Class:         payments
+  Node Pool:          payments
+  Nodes:              3
+  Route:              external, covered by 10.20.0.0/16 via tag:subnet-router (router-euc1a, router-euc1b)
+  Access:
+    State:  <span class="t-warn">Proposed</span>
+    Rule:   <span class="t-vio">{"src": ["group:payments"], "dst": ["10.20.8.0/22", "10.20.12.0/22"], "ip": ["*"]}</span>
+</div>
+    </div>
+  </div>
+</section>
+
+<section id="see-it">
+  <div class="wrap">
+    <div class="demo-strip reveal">
+      <div>
+        <div class="kicker b">See it</div>
+        <h3>Every team, its five steps and the grant to paste.</h3>
+        <p>A demo on made-up data: eight teams in one VPC, two subnet routers, one team on a Connector, one in
+          <code>TagOnly</code>, one with a route that is not covered, one still allocating. Each team opens with its
+          conditions, subnets, security group rules, Karpenter objects, route and the exact grant.</p>
+        <div class="cta"><button class="btn btn-primary" type="button" data-open-demo>Open the live dashboard <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
+          <a class="btn btn-ghost" href="/team-network/dashboard/">Full screen</a></div>
+      </div>
+      <div class="mini" aria-label="Four teams from the demo">
+        <div><b>search</b><span>10.20.16.0/22 · 10.20.20.0/22</span><i class="ok">Ready</i></div>
+        <div><b>payments</b><span>grant proposed, waiting</span><i class="warn">Proposed</i></div>
+        <div><b>analytics</b><span>10.31.4.0/22 outside 10.20.0.0/16</span><i class="bad">NotCovered</i></div>
+        <div><b>checkout</b><span>no markers in the policy file</span><i class="bad">MarkersMissing</i></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="route" class="alt">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <div class="kicker b">Route modes</div>
+      <h2>Reuse the subnet routers you have, or give a team its own.</h2>
+      <p>Either way the route only makes the CIDRs reachable over the VPN. Who may use it is decided by the access
+        grant, which is per team.</p>
+    </div>
+    <div class="modes">
+      <div class="mode default reveal">
+        <div class="top"><span class="status def">DEFAULT</span><span class="status soon">route.mode: external</span></div>
+        <h3>External: check, change nothing</h3>
+        <p>An existing EC2 subnet router — ideally two, in different zones — advertises one broad route, such as the
+          whole VPC <code>10.20.0.0/16</code>, once.</p>
+        <ul>
+          <li>The operator changes nothing on the routers.</li>
+          <li>It checks via the Tailscale API that a device with the configured tag (<code>tag:subnet-router</code>)
+            advertises an <em>approved</em> route that covers every team CIDR.</li>
+          <li>A CIDR outside it, say in a secondary block <code>10.31.0.0/16</code>, is <code>RouteReady=False NotCovered</code>.</li>
+          <li>Team separation comes from the access grant, not from the route.</li>
+        </ul>
+        <div class="code"><div class="code-head"><b>TeamNetworkClass</b><span>spec.vpn.route</span></div>
+<pre><span class="k">mode</span>: <span class="s">external</span>
+<span class="k">external</span>:
+  <span class="k">deviceTag</span>: <span class="s">tag:subnet-router</span>
+  <span class="k">routerSecurityGroup</span>: <span class="s">sg-0e7f8091a2b3c4d5e</span></pre></div>
+      </div>
+      <div class="mode reveal">
+        <div class="top"><span class="status soon">route.mode: connector</span></div>
+        <h3>Connector: one per team</h3>
+        <p>An in-cluster Tailscale operator <code>Connector</code> per team advertises exactly the team's CIDRs, no
+          more.</p>
+        <ul>
+          <li>For CIDRs no shared router covers, or when a team's route must be its own.</li>
+          <li>Replicas and the device tag per team; the routes it advertises are the team's subnets.</li>
+          <li>Removed with the team, after its access.</li>
+        </ul>
+        <div class="code"><div class="code-head"><b>TeamNetwork</b><span>spec.vpn.route</span></div>
+<pre><span class="k">mode</span>: <span class="s">connector</span>
+<span class="k">connector</span>:
+  <span class="k">replicas</span>: <span class="n">2</span>
+  <span class="k">tag</span>: <span class="s">"tag:hs-team-data"</span></pre></div>
+      </div>
+    </div>
+
+    <div class="section-head reveal" style="margin-top:64px">
+      <div class="kicker b">Access approval</div>
+      <h2>Propose by default. Write only when you say so.</h2>
+      <p>The grant is always the same shape: the team's group, the team's CIDRs, nothing else.</p>
+    </div>
+    <div class="modes">
+      <div class="mode default reveal">
+        <div class="top"><span class="status def">DEFAULT</span><span class="status soon">approval: propose</span></div>
+        <h3>Propose: a person pastes it</h3>
+        <p>The operator never writes the tailnet policy file. It shows the exact grant to paste between
+          <code>// hs:team-network begin</code> and <code>// hs:team-network end</code>, in the object's status and in the dashboard,
+          and reports <code>AccessProposed</code>.</p>
+        <ul><li>Fits a policy file kept in Git and reviewed like code.</li></ul>
+      </div>
+      <div class="mode reveal">
+        <div class="top"><span class="status soon">approval: auto</span></div>
+        <h3>Auto: only its own marked section</h3>
+        <p>The operator writes the grants between the markers through the Tailscale API, and nothing outside them.</p>
+        <ul>
+          <li>Validates the new policy with Tailscale first.</li>
+          <li>Writes with <code>If-Match</code> on the ETag it read, so a concurrent edit is never overwritten.</li>
+          <li>No markers in the file: <code>AccessGranted=False MarkersMissing</code>, and it writes nothing.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="policy">
+      <div class="code reveal"><div class="code-head"><b>tailnet policy file</b><span>HuJSON</span></div>
+<pre><span class="k">"grants"</span>: [
+  <span class="c">// … your own grants, untouched …</span>
+  <span class="hl">// hs:team-network begin</span>
+  {<span class="k">"src"</span>: [<span class="s">"group:payments"</span>], <span class="k">"dst"</span>: [<span class="s">"10.20.8.0/22"</span>, <span class="s">"10.20.12.0/22"</span>], <span class="k">"ip"</span>: [<span class="s">"*"</span>]},
+  {<span class="k">"src"</span>: [<span class="s">"group:search"</span>], <span class="k">"dst"</span>: [<span class="s">"10.20.16.0/22"</span>, <span class="s">"10.20.20.0/22"</span>], <span class="k">"ip"</span>: [<span class="s">"*"</span>]},
+  <span class="hl">// hs:team-network end</span>
+]</pre></div>
+      <div class="fit reveal">
+        <div><b>src</b><span>The team's group only, and only one listed in the class's <code>allowedGroups</code>.</span></div>
+        <div><b>dst</b><span>The TeamNetwork's own CIDRs, never the VPC, never another team's.</span></div>
+        <div><b>where</b><span>Between the two marker lines. Everything else in the file is yours.</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="safety">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <div class="kicker b">Safety and isolation</div>
+      <h2>A team gets its own network, and nothing more.</h2>
+    </div>
+    <div class="principles">
+      <div class="principle reveal"><div class="icon b"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></div><div><h4>Three layers of isolation</h4><p>A security group that admits only the team's CIDRs, the cluster and the VPN; a taint so only the team's pods land on its nodes; a NetworkPolicy for the pods.</p></div></div>
+      <div class="principle reveal"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8 12h8"/></svg></div><div><h4>The grant names only its own CIDRs</h4><p>The <code>dst</code> of a grant is always the TeamNetwork's own subnets, computed from its status, never typed by hand and never wider.</p></div></div>
+      <div class="principle reveal"><div class="icon v"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 18h16"/><path d="M8 10h8v4H8z"/></svg></div><div><h4>Only the marked section</h4><p>In auto mode it writes between <code>// hs:team-network begin</code> and <code>end</code> and nowhere else; in propose mode it does not write the file at all.</p></div></div>
+      <div class="principle reveal"><div class="icon r"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/></svg></div><div><h4>Never 100.64.0.0/10</h4><p>Subnets are never handed out from Tailscale's own address range, so a team CIDR can never collide with a VPN device address.</p></div></div>
+      <div class="principle reveal"><div class="icon a"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22c5.5-2 8-6 8-11V5l-8-3-8 3v6c0 5 2.5 9 8 11z"/><path d="M9 12l2 2 4-4"/></svg></div><div><h4>Only the platform writes TeamNetworks</h4><p>RBAC gives the kind to the platform team. A team cannot widen its own access by editing its object.</p></div></div>
+      <div class="principle reveal"><div class="icon b"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M3 20a6 6 0 0 1 12 0"/><path d="M16 11l2 2 4-4"/></svg></div><div><h4>Groups from an allow-list</h4><p>The VPN group must be in the class's <code>allowedGroups</code>; any other group is refused before anything is created.</p></div></div>
+    </div>
+  </div>
+</section>
+
+<section id="object" class="alt">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <div class="kicker b">The object</div>
+      <h2>A few lines per team. The rest is the class.</h2>
+      <p>Both kinds are cluster-scoped. A <code>TeamNetworkClass</code> holds the platform's settings per environment,
+        like an IngressClass; a <code>TeamNetwork</code> per team refers to it. API sketch: <code>teams.hypersurgery.dev/v1alpha1</code>.</p>
+    </div>
+    <div class="code-grid">
+      <div class="code reveal"><div class="code-head"><b>teamnetwork-payments.yaml</b><span>one per team</span></div>
+<pre><span class="k">apiVersion</span>: <span class="s">teams.hypersurgery.dev/v1alpha1</span>
+<span class="k">kind</span>: <span class="s">TeamNetwork</span>
+<span class="k">metadata</span>:
+  <span class="k">name</span>: <span class="s">payments</span>
+<span class="k">spec</span>:
+  <span class="k">classRef</span>: <span class="s">prod</span>
+  <span class="k">team</span>: <span class="s">payments</span>  <span class="c"># hs/team tag, label, taint</span>
+  <span class="k">subnets</span>:
+    <span class="k">prefixLength</span>: <span class="n">22</span>
+    <span class="k">zones</span>: [<span class="s">eu-central-1a</span>, <span class="s">eu-central-1b</span>]
+  <span class="k">nodes</span>:
+    <span class="k">limits</span>: {<span class="k">cpu</span>: <span class="s">"64"</span>}
+  <span class="k">vpn</span>:
+    <span class="k">group</span>: <span class="s">"group:payments"</span>
+    <span class="k">approval</span>: <span class="s">propose</span>       <span class="c"># propose (default) | auto</span>
+    <span class="k">route</span>:
+      <span class="k">mode</span>: <span class="s">external</span>       <span class="c"># external (default) | connector</span></pre></div>
+      <div class="code reveal"><div class="code-head"><b>teamnetworkclass-prod.yaml</b><span>one per environment</span></div>
+<pre><span class="k">apiVersion</span>: <span class="s">teams.hypersurgery.dev/v1alpha1</span>
+<span class="k">kind</span>: <span class="s">TeamNetworkClass</span>
+<span class="k">metadata</span>:
+  <span class="k">name</span>: <span class="s">prod</span>
+<span class="k">spec</span>:
+  <span class="k">subnets</span>:
+    <span class="k">scopeRef</span>: <span class="s">organization</span>
+    <span class="k">account</span>: <span class="s">"222222222222"</span>
+    <span class="k">region</span>: <span class="s">eu-central-1</span>
+    <span class="k">networkID</span>: <span class="s">vpc-0a1b2c3d4e5f60718</span>
+    <span class="k">claimNamespace</span>: <span class="s">team-networks</span>
+  <span class="k">isolation</span>:
+    <span class="k">clusterSecurityGroup</span>: <span class="s">sg-0c1d2e3f405162738</span>
+  <span class="k">nodes</span>:
+    <span class="k">mode</span>: <span class="s">Managed</span>          <span class="c"># or TagOnly</span>
+  <span class="k">vpn</span>:
+    <span class="k">provider</span>: <span class="s">tailscale</span>
+    <span class="k">tailscale</span>:
+      <span class="k">tailnet</span>: <span class="s">example.com</span>
+      <span class="k">allowedGroups</span>: [<span class="s">"group:payments"</span>, <span class="s">"group:search"</span>]
+    <span class="k">route</span>:
+      <span class="k">mode</span>: <span class="s">external</span>
+      <span class="k">external</span>: {<span class="k">deviceTag</span>: <span class="s">"tag:subnet-router"</span>}</pre></div>
+    </div>
+  </div>
+</section>
+
+<section id="compare">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <div class="kicker b">How it compares</div>
+      <h2>Good tools cover parts of this job.</h2>
+    </div>
+    <div class="cmp-wrap reveal" tabindex="0" role="region" aria-label="Comparison with other tools">
+      <table class="cmp">
+        <thead><tr><th scope="col">Option</th><th scope="col">What it does</th><th scope="col">What's missing for this job</th></tr></thead>
+        <tbody>
+          <tr><th scope="row"><a href="https://www.crossplane.io/" rel="noopener">Crossplane</a> · <a href="https://kro.run/" rel="noopener">kro</a> + <a href="https://aws-controllers-k8s.github.io/community/" rel="noopener">ACK</a> · <a href="https://www.kratix.io/" rel="noopener">Kratix</a> <span>composition</span></th>
+            <td>The platform defines a "team onboarding" template and teams create instances. AWS promotes kro + ACK for EKS team onboarding.</td>
+            <td>A toolkit, not the product: you write the non-overlapping CIDR allocation, the route coverage checks and the safe tailnet policy edits yourself.</td></tr>
+          <tr><th scope="row"><a href="https://projectcapsule.dev/" rel="noopener">Capsule</a> <span>multi-tenancy</span></th>
+            <td>Tenant = team: namespaces, quotas, policies.</td>
+            <td>Inside the cluster only. No AWS subnets, nodes or VPN.</td></tr>
+          <tr><th scope="row"><a href="https://tailscale.com/docs/kubernetes-operator" rel="noopener">Tailscale Kubernetes operator</a></th>
+            <td>A Connector turns the cluster into a subnet router.</td>
+            <td>Doesn't manage per-team access rules; those stay manual or in Git.</td></tr>
+          <tr><th scope="row">Terraform <span><a href="https://registry.terraform.io/providers/hashicorp/aws/latest" rel="noopener">AWS</a> + <a href="https://registry.terraform.io/providers/tailscale/tailscale/latest" rel="noopener">Tailscale</a> providers</span></th>
+            <td>Subnet, Karpenter and Tailscale rule in one module.</td>
+            <td>Runs once and doesn't reconcile. Team removal and drift are caught by hand.</td></tr>
+          <tr><th scope="row"><a href="https://www.twingate.com/" rel="noopener">Twingate</a> · <a href="https://goteleport.com/" rel="noopener">Teleport</a> · <a href="https://delinea.com/strongdm" rel="noopener">StrongDM</a> <span>resource access</span></th>
+            <td>Group-based access to individual resources.</td>
+            <td>A different product that replaces the VPN. They don't do subnets or nodes.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="section-note reveal">Team Network Operator is designed to own the whole chain in one object and remove it cleanly in
+      reverse; to get non-overlapping CIDRs from the <a href="/subnet-operator/">Subnet Operator</a>; to propose VPN rules
+      instead of writing them, unless you choose auto; to check that the EC2 router's route really covers the team's
+      subnets; and to keep an audit of who opened access to what.</p>
+    <p class="section-note reveal">You can assemble this with a composition tool. You would then write the allocation, the route checks and the policy-file edits yourself.</p>
+  </div>
+</section>
+
+<section id="coming" class="alt">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <div class="kicker b">Coming</div>
+      <h2>A concept today. Early access before 0.1.</h2>
+      <p>Team Network Operator is a commercial product. Nothing is released yet: this page and the demo show the
+        design, and the API may still change before 0.1. Early-access teams help shape it.</p>
+    </div>
+    <div class="next3">
+      <div class="card reveal"><div class="top"><span class="status concept">NEXT · 0.1</span></div>
+        <h3>MVP</h3>
+        <ul>
+          <li>The core: subnets, isolation, nodes (Managed and TagOnly), ordered create and delete.</li>
+          <li>Tailscale with <code>propose</code> and <code>auto</code>.</li>
+          <li>Route modes <code>external</code> and <code>connector</code>.</li>
+          <li>Installation with early-access teams.</li>
+        </ul></div>
+      <div class="card reveal"><div class="top"><span class="status soon">LATER · 0.2</span></div>
+        <h3>AWS Client VPN</h3>
+        <ul>
+          <li>A second VPN provider: authorization rules per team group instead of tailnet grants.</li>
+          <li>The same five steps and the same conditions.</li>
+        </ul></div>
+      <div class="card reveal"><div class="top"><span class="status soon">LATER · 1.0</span></div>
+        <h3>Stable API</h3>
+        <ul>
+          <li><code>v1</code> of both kinds, with conversion from <code>v1alpha1</code>.</li>
+          <li>Metrics, alerts and a dashboard, as for every Hypersurgery operator.</li>
+        </ul></div>
+    </div>
+    <div class="cta reveal" style="margin-top:28px"><a class="btn btn-primary" href="mailto:feverondiva@proton.me?subject=Team%20Network%20Operator%20early%20access">Request early access <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a></div>
+    <p class="notin reveal">Write to <a class="inline-link" href="mailto:feverondiva@proton.me?subject=Team%20Network%20Operator%20early%20access">feverondiva@proton.me</a> with your setup and the
+      teams you would start with. It builds on the <a class="inline-link" href="/subnet-operator/">Subnet Operator</a>,
+      which allocates the subnets.</p>
+  </div>
+</section>
+
+<div class="demo-backdrop" id="demo" role="dialog" aria-modal="true" aria-label="Team networks demo dashboard">
+  <div id="demo-panel"></div>
+</div>
+
+<footer>
+  <div class="wrap">
+    <span><a href="/">Hypersurgery</a> · Team Network Operator · commercial · concept · 2026 · <a href="/team-network/dashboard/">Dashboard demo</a> · <a href="/subnet-operator/">Subnet Operator</a> · <a href="/alert-operator/">Alert Operator</a></span>
+    <span>Contact: <a href="mailto:feverondiva@proton.me">feverondiva@proton.me</a></span>
+  </div>
+</footer>
+
+<script>
+  // Reveal sections as they scroll into view; everything stays visible without JS.
+  (function () {
+    var els = document.querySelectorAll('.reveal');
+    if (!('IntersectionObserver' in window)) { els.forEach(function (e) { e.classList.add('in'); }); return; }
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (en) { if (en.isIntersecting) { en.target.classList.add('in'); io.unobserve(en.target); } });
+    }, { rootMargin: '0px 0px -8% 0px', threshold: 0.08 });
+    els.forEach(function (e) { io.observe(e); });
+  })();
+  // Close the Products menu on a click outside it or on Escape.
+  (function () {
+    var m = document.querySelector('.nav-menu');
+    if (!m) return;
+    document.addEventListener('click', function (e) { if (m.open && !m.contains(e.target)) m.open = false; });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && m.open) { m.open = false; m.querySelector('summary').focus(); } });
+  })();
+</script>
+<script src="/team-network/dashboard/data.js?v=1" defer></script>
+<script src="/team-network/dashboard/app.js?v=1" defer></script>
+<script>
+// Opens the demo dashboard in a modal; #dashboard links straight to it.
+window.addEventListener('DOMContentLoaded', function () {
+  var modal = document.getElementById('demo');
+  var panel = document.getElementById('demo-panel');
+  var opener = null, dash = null;
+  function show(from) {
+    opener = from || document.getElementById('demo-open');
+    if (location.hash !== '#dashboard') history.replaceState(null, '', '#dashboard');
+    modal.setAttribute('open', '');
+    document.body.style.overflow = 'hidden';
+    if (!dash) dash = window.TeamNetworkDashboard.mount(panel, { modal: true, onClose: hide });
+    var c = panel.querySelector('.tn-close'); if (c) c.focus();
+  }
+  function hide() {
+    if (dash && dash.isDetailOpen()) dash.closeDetail();
+    if (location.hash === '#dashboard') history.replaceState(null, '', location.pathname);
+    modal.removeAttribute('open');
+    document.body.style.overflow = '';
+    if (opener) opener.focus();
+  }
+  document.getElementById('demo-open').addEventListener('click', function (e) { show(e.currentTarget); });
+  Array.prototype.forEach.call(document.querySelectorAll('[data-open-demo]'), function (b) {
+    b.addEventListener('click', function () { show(b); });
+  });
+  modal.addEventListener('click', function (e) { if (e.target === modal) hide(); });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && modal.hasAttribute('open') && !(dash && dash.isDetailOpen())) hide();
+  });
+  if (location.hash === '#dashboard') show();
+  window.addEventListener('hashchange', function () { if (location.hash === '#dashboard' && !modal.hasAttribute('open')) show(); });
+});
+</script>
+
+<noscript><style>.reveal { opacity: 1; transform: none; }</style></noscript>
+</body>
+</html>

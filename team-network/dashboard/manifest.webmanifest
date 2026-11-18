@@ -1,0 +1,13 @@
+{
+  "name": "Team networks (demo)",
+  "short_name": "Team networks",
+  "description": "Demo of the Team Network Operator: subnets, isolation, nodes, VPN route and access per team.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f3f6fb",
+  "theme_color": "#ffffff",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
