@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Alert rule inventory — demo</title>
+<meta name="description" content="Demo of Alert Operator's inventory of Prometheus alert rules: owner, loaded or not, findings and history for every rule, on made-up data.">
+<meta name="theme-color" content="#ffffff">
+<link rel="canonical" href="https://hypersurgery.dev/alert-operator/dashboard/">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://hypersurgery.dev/alert-operator/dashboard/">
+<meta property="og:title" content="Alert rule inventory — live demo">
+<meta property="og:description" content="Every Prometheus alert rule with an owner and a verdict: not loaded, dead queries, noisy, flapping, always silenced, unowned.">
+<meta name="twitter:card" content="summary">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<!-- No web fonts and no other requests: the app uses the system fonts when it runs on its own. -->
+<link rel="stylesheet" href="app.css?v=1">
+<style>
+  html, body { margin: 0; background: #f3f6fb; }
+  body.dark { background: #0b1120; }
+  body { padding: 16px; padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 16px max(16px, env(safe-area-inset-left)); }
+  #app { max-width: 1320px; margin: 0 auto; }
+  .back { display: block; max-width: 1320px; margin: 14px auto 0; font: 600 13px "Inter", system-ui, sans-serif; color: #6d28d9; text-decoration: none; }
+  body.dark .back { color: #b49cff; }
+  .back:hover { text-decoration: underline; }
+  @media (max-width: 640px) { body { padding: 0 0 16px; } #app .ad { border-radius: 0; border-left: 0; border-right: 0; } .back { padding: 0 16px; } }
+</style>
+</head>
+<body>
+  <div id="app"></div>
+  <a class="back" href="/alert-operator/">← Alert Operator</a>
+<script src="data.js?v=1"></script>
+<script src="app.js?v=1"></script>
+<script>
+  window.AlertDashboard.mount(document.getElementById('app'), {
+    onTheme: function (t) { document.body.classList.toggle('dark', t === 'dark');
+      var m = document.querySelector('meta[name="theme-color"]'); if (m) m.content = t === 'dark' ? '#111a2e' : '#ffffff'; }
+  });
+</script>
+</body>
+</html>

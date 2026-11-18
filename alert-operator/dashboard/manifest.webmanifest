@@ -1,0 +1,13 @@
+{
+  "name": "Alert rule inventory (demo)",
+  "short_name": "Alert rules",
+  "description": "Demo of Alert Operator's alert rule inventory: owners, findings and history per Prometheus alerting rule.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f3f6fb",
+  "theme_color": "#ffffff",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
