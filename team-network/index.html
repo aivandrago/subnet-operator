@@ -269,10 +269,13 @@ footer a:hover { color: var(--text); text-decoration: underline; }
 
 .demo-backdrop {
   position: fixed; inset: 0; z-index: 100; display: none;
-  background: rgba(15, 23, 42, 0.45); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  background: rgba(15, 23, 42, 0.45);
   padding: 24px; overflow-y: auto;
 }
 .demo-backdrop[open] { display: block; }
+/* The blur sits on a pseudo-element: a backdrop-filter on the dialog itself would make it the containing
+   block of the demo's position:fixed detail drawer, which then scrolls away with the dialog. */
+.demo-backdrop::before { content: ""; position: fixed; inset: 0; z-index: -1; backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
 .demo-backdrop .dash { max-width: 1200px; margin: 0 auto; box-shadow: 0 40px 90px -30px rgba(15, 23, 42, 0.55); }
 @media (max-width: 640px) { .demo-backdrop { padding: 10px; } }
 
