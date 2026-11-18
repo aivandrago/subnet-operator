@@ -12,30 +12,33 @@
 <meta property="og:description" content="From nothing to a live subnet inventory in four steps: IAM, the chart repository, the first NetworkScope, change events, dashboard and the Google Sheet mirror.">
 <meta property="og:image" content="https://hypersurgery.dev/dashboard/icon-512.png">
 <meta name="twitter:card" content="summary">
-<link rel="icon" href="../favicon.ico" sizes="16x16 32x32 48x48">
+<link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230b1020'/%3E%3Cg fill='none' stroke='%232dd4bf' stroke-width='2.4'%3E%3Crect x='7' y='7' width='8' height='8' rx='2'/%3E%3Crect x='17' y='17' width='8' height='8' rx='2'/%3E%3C/g%3E%3Crect x='17' y='7' width='8' height='8' rx='2' fill='%238b5cf6'/%3E%3Crect x='7' y='17' width='8' height='8' rx='2' fill='%2360a5fa'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
 :root {
-  --bg: #070b16; --surface: #0f162a; --border: rgba(148, 163, 255, 0.12);
-  --border-strong: rgba(148, 163, 255, 0.22); --text: #e7eaf3; --muted: #8e97ad; --faint: #5d6680;
-  --teal: #2dd4bf; --violet: #8b5cf6; --blue: #60a5fa; --amber: #fbbf24; --red: #f87171; --green: #4ade80;
+  /* Light theme, the same tokens as the home page. Text colours meet WCAG AA on --bg. */
+  --bg: #f7f9fc; --surface: #ffffff; --surface-2: #f3f6fb; --border: rgba(15, 23, 42, 0.09);
+  --border-strong: rgba(15, 23, 42, 0.16); --text: #0f172a; --body: #334155; --muted: #475569; --faint: #5b6678;
+  --teal: #0f766e; --violet: #6d28d9; --blue: #1d4ed8; --amber: #b45309; --red: #b91c1c; --green: #15803d;
+  --ink: #0f172a; --ink-text: #dbe3ef; --ink-faint: #94a3b8;
   --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   --sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color-scheme: light;
 }
 * { box-sizing: border-box; }
 html { scroll-behavior: smooth; scroll-padding-top: 84px; }
 body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.7 var(--sans); -webkit-font-smoothing: antialiased; }
-a { color: var(--teal); text-decoration: none; }
+a { color: var(--teal); text-decoration: none; font-weight: 500; }
 a:hover { text-decoration: underline; }
 code, pre { font-family: var(--mono); }
 .wrap { max-width: 1160px; margin: 0 auto; padding: 0 24px; }
 
 nav {
   position: sticky; top: 0; z-index: 50; border-bottom: 1px solid var(--border);
-  background: rgba(7, 11, 22, 0.8); backdrop-filter: saturate(160%) blur(14px); -webkit-backdrop-filter: saturate(160%) blur(14px);
+  background: rgba(255, 255, 255, 0.85); backdrop-filter: saturate(160%) blur(14px); -webkit-backdrop-filter: saturate(160%) blur(14px);
 }
 nav .wrap { display: flex; align-items: center; gap: 24px; height: 64px; }
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; color: var(--text); letter-spacing: -0.01em; }
@@ -43,19 +46,21 @@ nav .wrap { display: flex; align-items: center; gap: 24px; height: 64px; }
 .brand svg { width: 28px; height: 28px; }
 .nav-right { margin-left: auto; display: flex; align-items: center; gap: 18px; font-size: 14px; }
 .nav-right a { color: var(--muted); }
+.nav-right a[aria-current] { color: var(--text); }
 .nav-right a:hover { color: var(--text); text-decoration: none; }
 .pill {
   display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600;
-  padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border-strong); color: var(--muted);
+  padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border-strong); color: var(--muted); background: var(--surface); white-space: nowrap;
 }
-.pill .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--amber); box-shadow: 0 0 10px var(--amber); }
+.pill .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); }
 
-header.page { padding: 56px 0 28px; border-bottom: 1px solid var(--border); }
+header.page { padding: 56px 0 28px; border-bottom: 1px solid var(--border); background: linear-gradient(160deg, rgba(20, 184, 166, 0.07), rgba(139, 92, 246, 0.06) 60%, transparent), var(--surface); }
 header.page .kicker { color: var(--violet); font-size: 13px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; }
 header.page h1 { font-size: clamp(32px, 4.4vw, 46px); line-height: 1.1; letter-spacing: -0.03em; margin: 10px 0 12px; font-weight: 800; }
 header.page p { color: var(--muted); font-size: 18px; margin: 0; max-width: 680px; }
 
-.layout { display: grid; grid-template-columns: 220px 1fr; gap: 48px; padding: 40px 0 80px; }
+.layout { display: grid; grid-template-columns: 220px 1fr; gap: 48px; padding-top: 40px; padding-bottom: 80px; }
+.layout > main { min-width: 0; }
 aside { position: sticky; top: 88px; align-self: start; font-size: 14px; }
 aside b { display: block; font-size: 11.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint); margin-bottom: 12px; }
 aside a { display: block; color: var(--muted); padding: 5px 0; border-left: 2px solid transparent; padding-left: 12px; margin-left: -14px; }
@@ -64,37 +69,38 @@ aside a:hover { color: var(--text); border-left-color: var(--border-strong); tex
 main h2 { font-size: 26px; letter-spacing: -0.02em; margin: 48px 0 12px; font-weight: 700; }
 main h2:first-child { margin-top: 0; }
 main h3 { font-size: 17px; margin: 28px 0 8px; font-weight: 600; }
-main p { color: #c3cadb; margin: 0 0 14px; }
-main ul, main ol { color: #c3cadb; padding-left: 20px; margin: 0 0 16px; }
+main p { color: var(--body); margin: 0 0 14px; }
+main ul, main ol { color: var(--body); padding-left: 20px; margin: 0 0 16px; }
 main li { margin-bottom: 6px; }
 main li::marker { color: var(--faint); }
 
 pre {
-  background: #0a1020; border: 1px solid var(--border-strong); border-radius: 12px;
-  padding: 16px 18px; overflow-x: auto; font-size: 13px; line-height: 1.7; color: #c9d1e6; margin: 0 0 18px;
+  background: var(--ink); border: 1px solid #1e293b; border-radius: 12px;
+  padding: 16px 18px; overflow-x: auto; font-size: 13px; line-height: 1.7; color: var(--ink-text); margin: 0 0 18px;
 }
-p code, li code, td code { background: rgba(148, 163, 255, 0.10); padding: 1.5px 6px; border-radius: 6px; font-size: 13px; color: #cfd6e6; }
-.c { color: var(--faint); } .s { color: #a7f3d0; } .k { color: #7dd3fc; } .n { color: #fcd34d; }
+p code, li code, td code { background: rgba(15, 23, 42, 0.06); padding: 1.5px 6px; border-radius: 6px; font-size: 13px; color: #1e293b; }
+pre .c { color: var(--ink-faint); } pre .s { color: #a7f3d0; } pre .k { color: #7dd3fc; } pre .n { color: #fcd34d; }
 
 .step { display: grid; grid-template-columns: 34px 1fr; gap: 16px; margin-bottom: 28px; }
 .step .num {
   width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center;
-  border: 1px solid var(--border-strong); color: var(--teal); font: 600 13px var(--mono); background: rgba(45,212,191,.08);
+  border: 1px solid var(--border-strong); color: var(--teal); font: 600 13px var(--mono); background: rgba(20, 184, 166, 0.10);
 }
 .step h3 { margin: 4px 0 8px; }
+.step > div { min-width: 0; }
 
 table { width: 100%; border-collapse: collapse; font-size: 14px; margin: 0 0 20px; }
 th { text-align: left; color: var(--faint); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; padding: 0 12px 10px 0; }
-td { padding: 9px 12px 9px 0; border-top: 1px solid var(--border); color: #c3cadb; vertical-align: top; }
+td { padding: 9px 12px 9px 0; border-top: 1px solid var(--border); color: var(--body); vertical-align: top; }
 
 .note, .warn {
   border-radius: 12px; padding: 14px 16px; margin: 0 0 18px; font-size: 14.5px;
-  border: 1px solid var(--border-strong); background: rgba(45, 212, 191, 0.06); color: #cdd3e3;
+  border: 1px solid rgba(15, 118, 110, 0.25); background: #f0fdfa; color: var(--body);
 }
-.warn { border-color: rgba(251, 191, 36, 0.45); background: rgba(251, 191, 36, 0.07); }
+.warn { border-color: rgba(180, 83, 9, 0.35); background: #fffbeb; }
 .note b, .warn b { color: var(--text); }
 
-footer { border-top: 1px solid var(--border); padding: 32px 0 48px; color: var(--faint); font-size: 13.5px; }
+footer { border-top: 1px solid var(--border); background: var(--surface); padding: 32px 0 48px; color: var(--faint); font-size: 13.5px; }
 footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 
 @media (max-width: 900px) {
@@ -103,7 +109,24 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wr
   aside a { display: inline-block; margin: 0 14px 0 0; padding-left: 0; border-left: 0; }
   .nav-right .hide-sm { display: none; }
 }
-@media (max-width: 640px) { .wrap { padding: 0 16px; } header.page { padding: 40px 0 24px; } }
+@media (max-width: 640px) { .wrap { padding: 0 16px; } header.page { padding: 40px 0 24px; } main table { display: block; overflow-x: auto; } }
+
+/* Products menu: one entry that opens the product list, so the menu does not grow with every product */
+.nav-menu { position: relative; }
+.nav-menu > summary { list-style: none; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
+.nav-menu > summary::-webkit-details-marker { display: none; }
+.nav-menu > summary::after { content: ""; width: 6px; height: 6px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: translateY(-2px) rotate(45deg); transition: transform .15s ease; }
+.nav-menu[open] > summary::after { transform: translateY(1px) rotate(-135deg); }
+.nav-menu > summary:hover, .nav-menu[open] > summary { color: var(--text); }
+.nav-menu > summary:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; border-radius: 4px; }
+.nav-menu .menu { position: absolute; top: calc(100% + 12px); left: -14px; z-index: 60; min-width: 260px; display: grid; gap: 2px; padding: 8px;
+  background: var(--surface); border: 1px solid var(--border-strong); border-radius: 12px; box-shadow: 0 12px 32px rgba(15, 23, 42, .14); white-space: normal; }
+.nav-menu .menu a { display: grid; gap: 2px; padding: 9px 12px; border-radius: 8px; color: var(--text); }
+.nav-menu .menu a:hover, .nav-menu .menu a:focus-visible { background: rgba(15, 23, 42, .05); }
+.nav-menu .menu b { font-size: 14px; font-weight: 600; }
+.nav-menu .menu span { font-size: 12.5px; color: var(--muted); font-weight: 400; }
+.nav-menu .menu .all { border-top: 1px solid var(--border); margin-top: 4px; padding-top: 10px; border-radius: 0 0 8px 8px; }
+@media (max-width: 640px) { .nav-menu .menu { position: fixed; top: calc(64px + env(safe-area-inset-top, 0px)); left: max(16px, env(safe-area-inset-left, 0px)); right: max(16px, env(safe-area-inset-right, 0px)); min-width: 0; } }
 </style>
 </head>
 <body>
@@ -111,13 +134,20 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wr
 <nav>
   <div class="wrap">
     <a class="brand" href="/">
-      <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="#0f162a" stroke="rgba(148,163,255,.25)"/><g fill="none" stroke="#2dd4bf" stroke-width="2.4"><rect x="7" y="7" width="8" height="8" rx="2"/><rect x="17" y="17" width="8" height="8" rx="2"/></g><rect x="17" y="7" width="8" height="8" rx="2" fill="#8b5cf6"/><rect x="7" y="17" width="8" height="8" rx="2" fill="#60a5fa"/></svg>
-      Subnet Operator
+      <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="#0f172a"/><g fill="none" stroke="#2dd4bf" stroke-width="2.4"><rect x="7" y="7" width="8" height="8" rx="2"/><rect x="17" y="17" width="8" height="8" rx="2"/></g><rect x="17" y="7" width="8" height="8" rx="2" fill="#8b5cf6"/><rect x="7" y="17" width="8" height="8" rx="2" fill="#60a5fa"/></svg>
+      Hypersurgery
     </a>
     <div class="nav-right">
-      <a href="/">Overview</a>
-      <a href="/dashboard/">Dashboard app</a>
-      <a href="/article/">Article</a>
+      <details class="nav-menu">
+        <summary>Products</summary>
+        <div class="menu">
+          <a href="/subnet-operator/"><b>Subnet Operator</b><span>Cloud network inventory · stable</span></a>
+          <a href="https://github.com/aivandrago/alert-operator"><b>Alert Operator</b><span>Prometheus alert rule inventory · alpha</span></a>
+          <a class="all" href="/#products"><b>All products</b></a>
+        </div>
+      </details>
+      <a href="/docs/" aria-current="page">Install</a>
+      <a class="hide-sm" href="/article/">Article</a>
       <a href="https://github.com/aivandrago/subnet-operator">GitHub</a>
       <span class="pill hide-sm"><span class="dot"></span>Stable · API v1</span>
     </div>
@@ -126,7 +156,7 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wr
 
 <header class="page">
   <div class="wrap">
-    <div class="kicker">Documentation</div>
+    <div class="kicker">Subnet Operator · Documentation</div>
     <h1>Install with Helm</h1>
     <p>From nothing to a live subnet inventory in four steps. The chart comes from
       <code>charts.hypersurgery.dev</code> (or, signed, from ghcr.io), and unless you turn writes on
@@ -781,7 +811,7 @@ EOF</pre>
       </tbody>
     </table>
     <p>Routing them into Slack or Teams is ordinary Alertmanager configuration; the
-      <a href="/#alerting">alerting section</a> on the project page shows both, including the button that
+      <a href="/subnet-operator/#alerting">alerting section</a> on the project page shows both, including the button that
       links back to the dashboard.</p>
     <div class="note">
       <b><code>UnmanagedNetworkResource</code> is the onboarding alert.</b> It fires once per resource that
@@ -1039,9 +1069,18 @@ rules:
 
 <footer>
   <div class="wrap">
-    <span>Subnet Operator · stable · 2026</span>
-    <span><a href="/">Overview</a> · <a href="https://charts.hypersurgery.dev">Chart repository</a> · Contact: <a href="mailto:feverondiva@proton.me">feverondiva@proton.me</a></span>
+    <span><a href="/">Hypersurgery</a> · Subnet Operator · stable · 2026</span>
+    <span><a href="/subnet-operator/">Overview</a> · <a href="/dashboard/">Dashboard app</a> · <a href="https://charts.hypersurgery.dev">Chart repository</a> · Contact: <a href="mailto:feverondiva@proton.me">feverondiva@proton.me</a></span>
   </div>
 </footer>
+<script>
+  // Close the Products menu on a click outside it or on Escape.
+  (function () {
+    var m = document.querySelector('.nav-menu');
+    if (!m) return;
+    document.addEventListener('click', function (e) { if (m.open && !m.contains(e.target)) m.open = false; });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && m.open) { m.open = false; m.querySelector('summary').focus(); } });
+  })();
+</script>
 </body>
 </html>

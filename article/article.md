@@ -319,7 +319,7 @@ If what comes back matches your spreadsheet, you have my respect and you do not 
 
 > I do not want to break your spreadsheet. I want it to be unnecessary.
 
-The operator is Apache-2.0 and lives at [github.com/aivandrago/subnet-operator](https://github.com/aivandrago/subnet-operator). The install guide is at [hypersurgery.dev/docs](https://hypersurgery.dev/docs/), the dashboard at [hypersurgery.dev/dashboard](https://hypersurgery.dev/dashboard/), and what CI thinks of all of it is on the [evidence section](https://hypersurgery.dev/#evidence) of the project page.
+The operator is Apache-2.0 and lives at [github.com/aivandrago/subnet-operator](https://github.com/aivandrago/subnet-operator). The install guide is at [hypersurgery.dev/docs](https://hypersurgery.dev/docs/), the dashboard at [hypersurgery.dev/dashboard](https://hypersurgery.dev/dashboard/), and what CI thinks of all of it is on the [evidence section](https://hypersurgery.dev/subnet-operator/#evidence) of the project page.
 
 ---
 

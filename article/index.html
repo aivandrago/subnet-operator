@@ -57,7 +57,8 @@ body {
   line-height: 1.68;
   -webkit-font-smoothing: antialiased;
 }
-a { color: var(--red); text-decoration: none; border-bottom: 1px solid rgba(193,18,31,.35); }
+a { color: var(--red); text-decoration: none; border-bottom: 1px solid rgba(193,18,31,.35); } 
+article a { overflow-wrap: anywhere; }
 a:hover { border-bottom-color: var(--red); }
 .wrap { max-width: var(--max); margin: 0 auto; padding: 0 20px; }
 
@@ -150,6 +151,7 @@ footer a:hover { color: var(--red); }
   body { font-size: 17px; }
   article p { text-align: left; }
   .standfirst { font-size: 19px; }
+  .strip .wrap { gap: 12px; letter-spacing: .04em; font-size: 12px; }
 }
 </style>
 </head>
@@ -157,8 +159,9 @@ footer a:hover { color: var(--red); }
 
 <div class="strip">
   <div class="wrap">
-    <a href="https://hypersurgery.dev">Subnet Operator</a>
+    <a href="https://hypersurgery.dev">Hypersurgery</a>
     <span class="sp"></span>
+    <a href="https://hypersurgery.dev/subnet-operator/">Subnet Operator</a>
     <a href="https://hypersurgery.dev/docs/">Install</a>
     <a href="https://hypersurgery.dev/dashboard/">Dashboard</a>
     <a href="https://github.com/aivandrago/subnet-operator">Source</a>
@@ -690,7 +693,7 @@ kubectl get hssubnet -o wide</code></pre>
     The install guide is at <a href="https://hypersurgery.dev/docs/">hypersurgery.dev/docs</a>,
     the dashboard at <a href="https://hypersurgery.dev/dashboard/">hypersurgery.dev/dashboard</a>,
     and what CI thinks of all of it is on the
-    <a href="https://hypersurgery.dev/#evidence">evidence section</a> of the project page.
+    <a href="https://hypersurgery.dev/subnet-operator/#evidence">evidence section</a> of the project page.
   </p>
 
 </div>
@@ -698,7 +701,7 @@ kubectl get hssubnet -o wide</code></pre>
 
 <footer>
   <div class="wrap">
-    <span><a href="https://hypersurgery.dev">Project page</a> · <a href="https://hypersurgery.dev/docs/">Install</a> · <a href="https://hypersurgery.dev/dashboard/">Dashboard</a> · <a href="https://github.com/aivandrago/subnet-operator">GitHub</a> · Contact: <a href="mailto:feverondiva@proton.me">feverondiva@proton.me</a></span>
+    <span><a href="https://hypersurgery.dev">Hypersurgery</a> · <a href="https://hypersurgery.dev/subnet-operator/">Subnet Operator</a> · <a href="https://hypersurgery.dev/docs/">Install</a> · <a href="https://hypersurgery.dev/dashboard/">Dashboard</a> · <a href="https://github.com/aivandrago/subnet-operator">GitHub</a> · Contact: <a href="mailto:feverondiva@proton.me">feverondiva@proton.me</a></span>
     <span>Apache-2.0 · 2026</span>
   </div>
   <div class="wrap">
