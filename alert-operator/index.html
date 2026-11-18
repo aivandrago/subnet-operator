@@ -474,7 +474,7 @@ footer a:hover { color: var(--text); text-decoration: underline; }
       <span class="live"></span>Live dashboard
     </button>
     <!-- RELEASE: the version pill -->
-    <span class="pill hide-sm"><span class="dot alpha"></span>Alpha · v0.1.0</span>
+    <span class="pill hide-sm"><span class="dot alpha"></span>Alpha · v0.2.0</span>
   </div>
 </nav>
 
@@ -553,7 +553,7 @@ PaymentsLedgerMismatch     0       <span class="t-bad">LoadError</span>
       <div class="fgroup warn"><h3><i></i>Warning</h3><div class="finding reveal"><h4>DeadQuery</h4><p>A selector matches no series: the metric was renamed or the exporter is gone, so the rule can never fire.</p><span class="src">from history</span></div><div class="finding reveal"><h4>Noisy</h4><p>More than 50 activations in the window. Rules like this teach people to ignore pages.</p><span class="src">from history</span></div><div class="finding reveal"><h4>Flapping</h4><p>More than 10 activations a day that last under 10 minutes each.</p><span class="src">from history</span></div><div class="finding reveal"><h4>AlwaysSilenced</h4><p>Over 80% of its firing time covered by an Alertmanager silence.</p><span class="src">from history</span></div><div class="finding reveal"><h4>Unowned</h4><p>No team from the rule label team, or hs/team on the PrometheusRule or its namespace.</p><span class="src">from inventory</span></div></div>
       <div class="fgroup info"><h3><i></i>Info</h3><div class="finding reveal"><h4>NeverFired</h4><p>No activation in the window, for a rule known for 30 days. Fine alone; not next to DeadQuery.</p><span class="src">from history</span></div><div class="finding reveal"><h4>NoRunbook</h4><p>No runbook_url annotation.</p><span class="src">from inventory</span></div><div class="finding reveal"><h4>NoSeverity</h4><p>No severity label, or one outside critical, warning, info.</p><span class="src">from inventory</span></div></div>
     </div>
-    <p class="section-note reveal">How each one is decided, its false positives and the fix: <a href="https://github.com/aivandrago/alert-operator/blob/v0.1.0/docs/findings.md">docs/findings.md</a>.</p>
+    <p class="section-note reveal">How each one is decided, its false positives and the fix: <a href="https://github.com/aivandrago/alert-operator/blob/v0.2.0/docs/findings.md">docs/findings.md</a>.</p>
   </div>
 </section>
 
@@ -759,7 +759,7 @@ Status:
       <div class="principle reveal"><div class="icon v"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22c5.5-2 8-6 8-11V5l-8-3-8 3v6c0 5 2.5 9 8 11z"/><path d="M9 12l2 2 4-4"/></svg></div><div><h4>Nobody else writes AlertRules</h4><p>A ValidatingAdmissionPolicy refuses edits by anyone but the operator. A verdict cannot be edited away; fix the rule instead.</p></div></div>
       <div class="principle reveal"><div class="icon a"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg></div><div><h4>It touches only what it created</h4><p>Objects without its labels are left alone and reported as conflicts; each AlertRule is garbage-collected with its PrometheusRule and never holds it back.</p></div></div>
     </div>
-    <p class="section-note reveal">The full list, with the test that enforces each point: <a href="https://github.com/aivandrago/alert-operator/blob/v0.1.0/docs/safety.md">docs/safety.md</a>.</p>
+    <p class="section-note reveal">The full list, with the test that enforces each point: <a href="https://github.com/aivandrago/alert-operator/blob/v0.2.0/docs/safety.md">docs/safety.md</a>.</p>
   </div>
 </section>
 
@@ -771,8 +771,8 @@ Status:
       <p>Needs Kubernetes 1.30 or later, prometheus-operator's CRDs (for example from kube-prometheus-stack) and a
         Prometheus the operator can reach. The image and the chart are signed with cosign keyless.</p>
       <div class="cta">
-        <a class="btn btn-primary" href="https://github.com/aivandrago/alert-operator/blob/v0.1.0/docs/install.md">Install guide <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
-        <a class="btn btn-ghost" href="https://github.com/aivandrago/alert-operator/releases/tag/v0.1.0">Release v0.1.0</a>
+        <a class="btn btn-primary" href="https://github.com/aivandrago/alert-operator/blob/v0.2.0/docs/install.md">Install guide <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+        <a class="btn btn-ghost" href="https://github.com/aivandrago/alert-operator/releases/tag/v0.2.0">Release v0.2.0</a>
         <a class="btn btn-ghost" href="https://github.com/aivandrago/alert-operator">GitHub</a>
       </div>
     </div>
@@ -781,7 +781,7 @@ Status:
         <div class="code-head"><b>shell</b><span>from charts.hypersurgery.dev</span></div>
 <pre><span class="c">$</span> helm repo add hypersurgery https://charts.hypersurgery.dev
 <span class="c">$</span> helm install alert-operator hypersurgery/alert-operator \
-    --version 0.1.0 --namespace alert-operator --create-namespace</pre>
+    --version 0.2.0 --namespace alert-operator --create-namespace</pre>
       </div>
       <div class="code" style="margin-top:14px">
         <div class="code-head"><b>alertscope.yaml</b><span>with kube-prometheus-stack as kps</span></div>
@@ -806,22 +806,22 @@ Status:
 <section id="next">
   <div class="wrap">
     <div class="section-head reveal">
-      <div class="kicker v">Coming next</div>
+      <div class="kicker v">New in 0.2</div>
       <h2>0.2: the same checks before a rule reaches the cluster.</h2>
-      <p>Not in 0.1. Planned for the next release and, like 0.1, writing nothing outside the operator's own objects.</p>
+      <p>Released in 0.2.0. Like 0.1, it writes nothing outside the operator's own objects; the webhook only answers admission requests.</p>
     </div>
     <div class="next">
-      <div class="card reveal"><div class="top"><span class="status soon">COMING · 0.2</span></div>
+      <div class="card reveal"><div class="top"><span class="status done">NEW · 0.2</span></div>
         <h3>Validation at the door</h3>
         <p>An opt-in validating webhook for <code>PrometheusRule</code>: a rule that will not load, has no owner, severity or
           runbook, or does not parse is refused or admitted with warnings, per namespace. Off by default, warn before enforce.</p></div>
-      <div class="card reveal"><div class="top"><span class="status soon">COMING · 0.2</span></div>
+      <div class="card reveal"><div class="top"><span class="status done">NEW · 0.2</span></div>
         <h3><code>hsalert lint</code> for CI</h3>
         <p>The same checks on rule files in a pull request, for PrometheusRule manifests and plain rule files, with
-          output a CI system can annotate.</p></div>
+          output a CI system can annotate. Signed binaries for Linux and macOS come with the <a class="inline-link" href="https://github.com/aivandrago/alert-operator/releases/tag/v0.2.0">release</a>.</p></div>
     </div>
-    <p class="notin reveal">Also not in 0.1: changing any rule, route or silence, and more than one cluster. The plans
-      after 0.2 are in the <a class="inline-link" href="https://github.com/aivandrago/alert-operator/blob/v0.1.0/docs/design.md#8-roadmap">design document</a>.</p>
+    <p class="notin reveal">Not yet: changing any rule, route or silence, and more than one cluster. The plans
+      after 0.2 are in the <a class="inline-link" href="https://github.com/aivandrago/alert-operator/blob/v0.2.0/docs/design.md">design document</a>.</p>
   </div>
 </section>
 
@@ -831,7 +831,7 @@ Status:
 
 <footer>
   <div class="wrap">
-    <span><a href="/">Hypersurgery</a> · Alert Operator · alpha · 2026 · <a href="/alert-operator/dashboard/">Dashboard demo</a> · <a href="https://github.com/aivandrago/alert-operator/blob/v0.1.0/docs/install.md">Install</a> · <a href="https://github.com/aivandrago/alert-operator/releases/tag/v0.1.0">Release v0.1.0</a> · <a href="https://github.com/aivandrago/alert-operator">GitHub</a> · <a href="/subnet-operator/">Subnet Operator</a></span>
+    <span><a href="/">Hypersurgery</a> · Alert Operator · alpha · 2026 · <a href="/alert-operator/dashboard/">Dashboard demo</a> · <a href="https://github.com/aivandrago/alert-operator/blob/v0.2.0/docs/install.md">Install</a> · <a href="https://github.com/aivandrago/alert-operator/releases/tag/v0.2.0">Release v0.2.0</a> · <a href="https://github.com/aivandrago/alert-operator">GitHub</a> · <a href="/subnet-operator/">Subnet Operator</a></span>
     <span>Contact: <a href="mailto:feverondiva@proton.me">feverondiva@proton.me</a></span>
   </div>
 </footer>
