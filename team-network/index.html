@@ -457,7 +457,7 @@ footer a:hover { color: var(--text); text-decoration: underline; }
     <button class="btn-demo" id="demo-open" type="button" aria-haspopup="dialog">
       <span class="live"></span>Live dashboard
     </button>
-    <span class="pill hide-sm"><span class="dot concept"></span>Commercial · concept</span>
+    <span class="pill hide-sm"><span class="dot concept"></span>Commercial · early access · v0.2.0</span>
   </div>
 </nav>
 
@@ -466,7 +466,7 @@ footer a:hover { color: var(--text); text-decoration: underline; }
   <div class="grid-bg"></div>
   <div class="wrap">
     <div>
-      <div class="eyebrow b">Team Network Operator · commercial · concept</div>
+      <div class="eyebrow b">Team Network Operator · commercial · early access</div>
       <h1>One object per team. <span class="grad-b">Subnets, nodes and VPN access, in order.</span></h1>
       <p class="lead">
         A platform team writes one cluster-scoped <code>TeamNetwork</code>. The operator gives that team
@@ -797,25 +797,26 @@ Status:
 <section id="coming" class="alt">
   <div class="wrap">
     <div class="section-head reveal">
-      <div class="kicker b">Coming</div>
-      <h2>A concept today. Early access before 0.1.</h2>
-      <p>Team Network Operator is a commercial product. Nothing is released yet: this page and the demo show the
-        design, and the API may still change before 0.1. Early-access teams help shape it.</p>
+      <div class="kicker b">Status</div>
+      <h2>In early access: 0.2.0.</h2>
+      <p>Team Network Operator is a commercial product, available to early-access teams. Releases are signed and shipped
+        from a private registry; each team gets its own read-only access. The API is <code>v1alpha1</code> and may still change before 1.0.</p>
     </div>
     <div class="next3">
-      <div class="card reveal"><div class="top"><span class="status concept">NEXT · 0.1</span></div>
+      <div class="card reveal"><div class="top"><span class="status done">RELEASED · 0.1</span></div>
         <h3>MVP</h3>
         <ul>
           <li>The core: subnets, isolation, nodes (Managed and TagOnly), ordered create and delete.</li>
           <li>Tailscale with <code>propose</code> and <code>auto</code>.</li>
           <li>Route modes <code>external</code> and <code>connector</code>.</li>
-          <li>Installation with early-access teams.</li>
+          <li>Signed image and chart in a private registry.</li>
         </ul></div>
-      <div class="card reveal"><div class="top"><span class="status soon">LATER · 0.2</span></div>
-        <h3>AWS Client VPN</h3>
+      <div class="card reveal"><div class="top"><span class="status done">RELEASED · 0.2</span></div>
+        <h3>AWS Client VPN and NetworkPolicy</h3>
         <ul>
           <li>A second VPN provider: authorization rules per team group instead of tailnet grants.</li>
           <li>The same five steps and the same conditions.</li>
+          <li>Default-deny NetworkPolicy in the team's namespaces (label <code>hs/team</code>), <code>propose</code> or <code>auto</code>.</li>
         </ul></div>
       <div class="card reveal"><div class="top"><span class="status soon">LATER · 1.0</span></div>
         <h3>Stable API</h3>
@@ -837,7 +838,7 @@ Status:
 
 <footer>
   <div class="wrap">
-    <span><a href="/">Hypersurgery</a> · Team Network Operator · commercial · concept · 2026 · <a href="/team-network/dashboard/">Dashboard demo</a> · <a href="/subnet-operator/">Subnet Operator</a> · <a href="/alert-operator/">Alert Operator</a></span>
+    <span><a href="/">Hypersurgery</a> · Team Network Operator · commercial · early access · 2026 · <a href="/team-network/dashboard/">Dashboard demo</a> · <a href="/subnet-operator/">Subnet Operator</a> · <a href="/alert-operator/">Alert Operator</a></span>
     <span>Contact: <a href="mailto:feverondiva@proton.me">feverondiva@proton.me</a></span>
   </div>
 </footer>
