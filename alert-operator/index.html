@@ -439,6 +439,22 @@ footer a:hover { color: var(--text); text-decoration: underline; }
   .gf { padding: 8px; }
 }
 
+
+/* In short: the product in plain words, right under the hero */
+.inshort { display: grid; grid-template-columns: 1.35fr 1fr; gap: 28px; align-items: start; }
+.inshort > * { min-width: 0; }
+.steps-plain { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; counter-reset: st; }
+.steps-plain li { counter-increment: st; display: grid; grid-template-columns: 34px 1fr; gap: 12px; align-items: start;
+  padding: 14px 16px; border-radius: 12px; background: var(--surface); border: 1px solid var(--border); font-size: 15px; color: var(--muted); }
+.steps-plain li::before { content: counter(st); display: grid; place-items: center; width: 30px; height: 30px; border-radius: 9px;
+  font-weight: 700; font-size: 14px; color: #fff; background: linear-gradient(135deg, #0d9488, #2563eb); }
+.steps-plain b { color: var(--text); font-weight: 600; }
+.steps-plain .opt { font-size: 12px; font-weight: 600; color: var(--violet); margin-left: 6px; }
+.safe-plain { padding: 20px 22px; border-radius: 12px; background: var(--surface); border: 1px solid var(--border); }
+.safe-plain h3 { margin: 0 0 10px; font-size: 16px; }
+.safe-plain ul { margin: 0; padding-left: 18px; color: var(--muted); font-size: 14.5px; display: grid; gap: 7px; }
+.safe-plain .ver { margin: 14px 0 0; padding-top: 12px; border-top: 1px solid var(--border); font-size: 13.5px; color: var(--muted); }
+@media (max-width: 900px) { .inshort { grid-template-columns: 1fr; } }
 </style>
 </head>
 <body>
@@ -522,6 +538,35 @@ PaymentsLedgerMismatch     0       <span class="t-bad">LoadError</span>
     </div>
   </div>
 </header>
+
+<section id="in-short">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <div class="kicker">In short</div>
+      <h2>Every alert rule, who owns it, and whether it will ever wake anyone.</h2>
+      <p>Point it at Prometheus, Thanos or Mimir with one <code>AlertScope</code>. Then:</p>
+    </div>
+    <div class="inshort reveal">
+      <ol class="steps-plain">
+        <li><span><b>Inventory</b> — it reads the rules Prometheus actually loaded and joins them with your <code>PrometheusRule</code> objects: one read-only <code>AlertRule</code> per rule.</span></li>
+        <li><span><b>Owner</b> — each rule gets its team, from its labels or its namespace.</span></li>
+        <li><span><b>Verdict</b> — from Prometheus' own history: not loaded, load error, dead query, never fired, noisy, flapping, always silenced, no owner, no runbook, no severity.</span></li>
+        <li><span><b>Checks at the door</b> <span class="opt">0.2</span> — an opt-in webhook warns about or refuses a bad rule, per namespace; <code>hsalert lint</code> runs the same checks in CI.</span></li>
+        <li><span><b>Silences with an owner</b> <span class="opt">0.3</span> — opt-in: an <code>AlertSilence</code> with an owner, a reason and an expiry; a team silences only its own alerts.</span></li>
+      </ol>
+      <div class="safe-plain">
+        <h3>Safe by design</h3>
+        <ul>
+          <li>Read-only until you switch writes on, and then only silences.</li>
+          <li>Silences made by people are never touched.</li>
+          <li>Every silence it writes is marked, owned and expires.</li>
+          <li>Prometheus metrics and a Grafana dashboard come with the chart.</li>
+        </ul>
+        <p class="ver">0.1 — inventory and verdicts · 0.2 — webhook and <code>hsalert lint</code> · 0.3 — silences. Open source, Apache-2.0.</p>
+      </div>
+    </div>
+  </div>
+</section>
 
 <section id="problem">
   <div class="wrap">

@@ -425,6 +425,22 @@ footer a:hover { color: var(--text); text-decoration: underline; }
   .policy .fit div { grid-template-columns: 1fr; }
   .mini div { grid-template-columns: 74px 1fr auto; }
 }
+
+/* In short: the product in plain words, right under the hero */
+.inshort { display: grid; grid-template-columns: 1.35fr 1fr; gap: 28px; align-items: start; }
+.inshort > * { min-width: 0; }
+.steps-plain { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; counter-reset: st; }
+.steps-plain li { counter-increment: st; display: grid; grid-template-columns: 34px 1fr; gap: 12px; align-items: start;
+  padding: 14px 16px; border-radius: 12px; background: var(--surface); border: 1px solid var(--border); font-size: 15px; color: var(--muted); }
+.steps-plain li::before { content: counter(st); display: grid; place-items: center; width: 30px; height: 30px; border-radius: 9px;
+  font-weight: 700; font-size: 14px; color: #fff; background: linear-gradient(135deg, #0d9488, #2563eb); }
+.steps-plain b { color: var(--text); font-weight: 600; }
+.steps-plain .opt { font-size: 12px; font-weight: 600; color: var(--violet); margin-left: 6px; }
+.safe-plain { padding: 20px 22px; border-radius: 12px; background: var(--surface); border: 1px solid var(--border); }
+.safe-plain h3 { margin: 0 0 10px; font-size: 16px; }
+.safe-plain ul { margin: 0; padding-left: 18px; color: var(--muted); font-size: 14.5px; display: grid; gap: 7px; }
+.safe-plain .ver { margin: 14px 0 0; padding-top: 12px; border-top: 1px solid var(--border); font-size: 13.5px; color: var(--muted); }
+@media (max-width: 900px) { .inshort { grid-template-columns: 1fr; } }
 </style>
 </head>
 <body>
@@ -502,6 +518,36 @@ search      2         5         external    <span class="t-ok">Granted</span>   
     </div>
   </div>
 </header>
+
+<section id="in-short">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <div class="kicker">In short</div>
+      <h2>One object per team: its subnets, its nodes, and VPN access to exactly those.</h2>
+      <p>The platform team creates one <code>TeamNetwork</code>, for example <code>payments</code>. The operator then works through five steps, in this order:</p>
+    </div>
+    <div class="inshort reveal">
+      <ol class="steps-plain">
+        <li><span><b>Subnets</b> — Subnet Operator allocates one subnet per zone, never overlapping another team's and never inside Tailscale's <code>100.64.0.0/10</code>.</span></li>
+        <li><span><b>Isolation</b> — a team security group: the team's nodes accept traffic only from its own subnets, the VPN router and the control plane. Optionally, a default-deny NetworkPolicy in the team's namespaces.</span></li>
+        <li><span><b>Nodes</b> — a Karpenter NodeClass and NodePool keep the team's nodes and pods in its subnets. If Karpenter lives in your GitOps, the operator only tags the subnets.</span></li>
+        <li><span><b>VPN route</b> — Tailscale on a separate EC2 router (the default: checked, never changed), Tailscale in the cluster, or AWS Client VPN.</span></li>
+        <li><span><b>Access</b> — one rule: the team's group reaches its subnets and nothing else. Proposed for a person to apply, or written into the operator's own marked block.</span></li>
+      </ol>
+      <div class="safe-plain">
+        <h3>Safe by design</h3>
+        <ul>
+          <li>Access is granted last and revoked first.</li>
+          <li>Never wider than the team's subnets; a request for another team's group is refused.</li>
+          <li>Objects and rules it did not create are left alone.</li>
+          <li>Every step shows its own condition; every change leaves an audit line.</li>
+          <li>Deleting the TeamNetwork undoes everything in reverse order.</li>
+        </ul>
+        <p class="ver">0.1 — subnets, isolation, nodes, Tailscale · 0.2 — NetworkPolicy and AWS Client VPN. Commercial; signed releases from a private registry.</p>
+      </div>
+    </div>
+  </div>
+</section>
 
 <section id="problem">
   <div class="wrap">
